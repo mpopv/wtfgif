@@ -1,3 +1,4 @@
+
 ![wtfgif logo](https://github.com/mpopv/wtfgif/blob/main/src/gifs/wtf.gif?raw=true)
 
 # wtfgif
@@ -13,11 +14,11 @@ npm install wtfgif
 ## Usage
 
 ```ts
-import { GifReader, GifWriter } from "wtfgif";
-import { readFileSync } from "node:fs";
+import { GifReader, GifWriter } from 'wtfgif';
+import { readFileSync } from 'node:fs';
 
 // Decode a GIF
-const data = readFileSync("some.gif");
+const data = readFileSync('some.gif');
 const reader = new GifReader(data);
 console.log(reader.width, reader.height);
 
@@ -32,6 +33,10 @@ writer.finish();
 - `npm run build` – bundle the library with type definitions.
 - `npm test` – run tests verifying behaviour against the latest `omggif`.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
 ## License
 
-MIT
+[MIT](LICENSE)
