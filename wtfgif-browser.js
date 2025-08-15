@@ -1,17 +1,15 @@
 "use strict";
 var wtfgif = (() => {
-  var __create = Object.create;
   var __defProp = Object.defineProperty;
   var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
   var __getOwnPropNames = Object.getOwnPropertyNames;
-  var __getProtoOf = Object.getPrototypeOf;
   var __hasOwnProp = Object.prototype.hasOwnProperty;
-  var __esm = (fn, res) => function __init() {
-    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
-  };
-  var __commonJS = (cb, mod) => function __require() {
-    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
-  };
+  var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
+    get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
+  }) : x)(function(x) {
+    if (typeof require !== "undefined") return require.apply(this, arguments);
+    throw Error('Dynamic require of "' + x + '" is not supported');
+  });
   var __export = (target, all) => {
     for (var name in all)
       __defProp(target, name, { get: all[name], enumerable: true });
@@ -24,468 +22,7 @@ var wtfgif = (() => {
     }
     return to;
   };
-  var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
-    // If the importer is in node compatibility mode or this is not an ESM
-    // file that has been converted to a CommonJS file using a Babel-
-    // compatible transform (i.e. "__esModule" has not been set), then set
-    // "default" to the CommonJS "module.exports" for node compatibility.
-    isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
-    mod
-  ));
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
-
-  // wasm-full/wasmDecoder.ts
-  var wasmDecoder_exports = {};
-  __export(wasmDecoder_exports, {
-    createWasmGifDecoder: () => createWasmGifDecoder,
-    createWasmWorkerPool: () => createWasmWorkerPool,
-    isWasmSIMDSupported: () => isWasmSIMDSupported,
-    isWasmSupported: () => isWasmSupported,
-    isWasmThreadsSupported: () => isWasmThreadsSupported
-  });
-  async function createWasmGifDecoder(wasmPath = "./wtfgif-full.wasm") {
-    try {
-      const memory = new WebAssembly.Memory({
-        initial: 64,
-        // 64 pages = 4MB
-        maximum: 256,
-        // 256 pages = 16MB
-        shared: true
-        // Enable SharedArrayBuffer for threading
-      });
-      const imports = {
-        env: {
-          memory,
-          // Add any required imports here
-          abort: () => {
-            throw new Error("Wasm module aborted");
-          }
-        }
-      };
-      const { instance } = await WebAssembly.instantiateStreaming(
-        fetch(wasmPath),
-        imports
-      );
-      const wasmInstance = new WasmDecoderInstance(instance, memory);
-      return wasmInstance.getDecoder();
-    } catch (error) {
-      console.error("Failed to load WebAssembly module:", error);
-      return null;
-    }
-  }
-  async function createWasmWorkerPool(wasmPath = "./wtfgif-full.wasm", numWorkers) {
-    return new WorkerPoolManager(numWorkers);
-  }
-  function isWasmSupported() {
-    return typeof WebAssembly === "object" && typeof WebAssembly.instantiate === "function";
-  }
-  function isWasmSIMDSupported() {
-    try {
-      return WebAssembly.validate(new Uint8Array([
-        0,
-        97,
-        115,
-        109,
-        1,
-        0,
-        0,
-        0,
-        1,
-        5,
-        1,
-        96,
-        0,
-        1,
-        123,
-        3,
-        2,
-        1,
-        0,
-        10,
-        10,
-        1,
-        8,
-        0,
-        253,
-        15,
-        253,
-        98,
-        11
-      ]));
-    } catch {
-      return false;
-    }
-  }
-  function isWasmThreadsSupported() {
-    return typeof SharedArrayBuffer !== "undefined" && typeof Atomics !== "undefined";
-  }
-  var WasmDecoderInstance, WorkerPoolManager;
-  var init_wasmDecoder = __esm({
-    "wasm-full/wasmDecoder.ts"() {
-      WasmDecoderInstance = class {
-        instance;
-        decoder;
-        constructor(instance, memory) {
-          this.instance = instance;
-          const exports = instance.exports;
-          this.decoder = {
-            memory,
-            decode_rgba: exports.decode_rgba,
-            decode_rgba_threaded: exports.decode_rgba_threaded,
-            init_heap: exports.init_heap,
-            reset_heap: exports.reset_heap,
-            get_heap_usage: exports.get_heap_usage,
-            test_simd: exports.test_simd,
-            wasm_malloc: exports.wasm_malloc,
-            wasm_free: exports.wasm_free,
-            heapU8: new Uint8Array(memory.buffer),
-            heapU32: new Uint32Array(memory.buffer)
-          };
-          this.decoder.init_heap();
-        }
-        getDecoder() {
-          return this.decoder;
-        }
-        updateViews() {
-          this.decoder.heapU8 = new Uint8Array(this.decoder.memory.buffer);
-          this.decoder.heapU32 = new Uint32Array(this.decoder.memory.buffer);
-        }
-        mallocCopy(data) {
-          const ptr = this.decoder.wasm_malloc(data.length);
-          if (ptr === 0) return 0;
-          this.decoder.heapU8.set(data, ptr);
-          return ptr;
-        }
-        free(ptr) {
-          if (ptr !== 0) {
-            this.decoder.wasm_free(ptr);
-          }
-        }
-        decodeFrame(gifData, frameIndex) {
-          const estimatedSize = 512 * 512;
-          const gifPtr = this.mallocCopy(gifData);
-          if (gifPtr === 0) {
-            console.error("Failed to allocate memory for GIF data");
-            return null;
-          }
-          const outPtr = this.decoder.wasm_malloc(estimatedSize * 4);
-          if (outPtr === 0) {
-            this.free(gifPtr);
-            console.error("Failed to allocate memory for output");
-            return null;
-          }
-          try {
-            const result = this.decoder.decode_rgba(
-              gifPtr,
-              gifData.length,
-              frameIndex,
-              outPtr >>> 2,
-              // Convert to u32 offset
-              estimatedSize
-            );
-            if (result > 1e3) {
-              console.error(`Wasm decode error: ${result}`);
-              return null;
-            }
-            const pixels = new Uint32Array(estimatedSize);
-            pixels.set(this.decoder.heapU32.subarray(outPtr >>> 2, (outPtr >>> 2) + estimatedSize));
-            return { pixels, delay: result };
-          } finally {
-            this.free(gifPtr);
-            this.free(outPtr);
-          }
-        }
-      };
-      WorkerPoolManager = class {
-        constructor(numWorkers = navigator.hardwareConcurrency || 4) {
-          this.numWorkers = numWorkers;
-          this.initializeWorkers();
-        }
-        workers = [];
-        activeJobs = 0;
-        completedJobs = 0;
-        totalDecodeTime = 0;
-        jobQueue = [];
-        initializeWorkers() {
-          for (let i = 0; i < this.numWorkers; i++) {
-            const worker = new Worker("wasmWorker.js");
-            worker.onmessage = this.handleWorkerMessage.bind(this);
-            worker.onerror = this.handleWorkerError.bind(this);
-            this.workers.push(worker);
-          }
-        }
-        handleWorkerMessage(event) {
-          const { jobId, result, error, decodeTime } = event.data;
-          if (error) {
-            console.error("Worker error:", error);
-            return;
-          }
-          this.activeJobs--;
-          this.completedJobs++;
-          this.totalDecodeTime += decodeTime || 0;
-          const jobIndex = this.jobQueue.findIndex((job) => job.data.jobId === jobId);
-          if (jobIndex >= 0) {
-            const job = this.jobQueue.splice(jobIndex, 1)[0];
-            job.resolve(result);
-          }
-          this.processNextJob();
-        }
-        handleWorkerError(error) {
-          console.error("Worker error:", error);
-        }
-        processNextJob() {
-          if (this.jobQueue.length === 0 || this.activeJobs >= this.numWorkers) {
-            return;
-          }
-          const job = this.jobQueue[0];
-          const availableWorker = this.workers[this.activeJobs];
-          if (availableWorker) {
-            availableWorker.postMessage(job.data);
-            this.activeJobs++;
-          }
-        }
-        async decode(gifData, frameIndex) {
-          return new Promise((resolve, reject) => {
-            const jobId = Math.random().toString(36);
-            this.jobQueue.push({
-              resolve,
-              reject,
-              data: {
-                jobId,
-                type: "decode",
-                gifData: gifData.buffer.slice(gifData.byteOffset, gifData.byteOffset + gifData.byteLength),
-                frameIndex
-              }
-            });
-            this.processNextJob();
-          });
-        }
-        async decodeParallel(gifData, frameIndices) {
-          const promises = frameIndices.map(
-            (frameIndex) => this.decode(gifData, frameIndex)
-          );
-          return Promise.all(promises);
-        }
-        terminate() {
-          this.workers.forEach((worker) => worker.terminate());
-          this.workers = [];
-          this.jobQueue = [];
-        }
-        getStats() {
-          return {
-            activeWorkers: this.activeJobs,
-            completedJobs: this.completedJobs,
-            avgDecodeTime: this.completedJobs > 0 ? this.totalDecodeTime / this.completedJobs : 0
-          };
-        }
-      };
-    }
-  });
-
-  // threaded-worker-pool.js
-  var require_threaded_worker_pool = __commonJS({
-    "threaded-worker-pool.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.WorkerPoolManager = void 0;
-      exports.createWorkerPool = createWorkerPool;
-      exports.getGlobalWorkerPool = getGlobalWorkerPool;
-      exports.terminateGlobalWorkerPool = terminateGlobalWorkerPool;
-      var WorkerPoolManager2 = class {
-        constructor(config = {}) {
-          this.workers = [];
-          this.workerQueue = [];
-          this.requestQueue = [];
-          this.pendingRequests = /* @__PURE__ */ new Map();
-          this.stats = {
-            completedJobs: 0,
-            totalDecodeTime: 0,
-            workerUtilization: []
-          };
-          this.nextWorkerId = 0;
-          this.nextRequestId = 0;
-          this.config = {
-            workerCount: config.workerCount || navigator.hardwareConcurrency || 4,
-            maxQueueSize: config.maxQueueSize || 100,
-            workerScript: config.workerScript || "./decoder-worker.js"
-          };
-          this.stats.workerUtilization = new Array(this.config.workerCount).fill(0);
-        }
-        async initialize() {
-          console.log(`Initializing threaded worker pool with ${this.config.workerCount} workers`);
-          const initPromises = Array.from({ length: this.config.workerCount }, (_, i) => this.createWorker(i));
-          await Promise.all(initPromises);
-          console.log(`Worker pool initialized: ${this.workers.length} workers ready`);
-        }
-        async createWorker(workerId) {
-          return new Promise((resolve, reject) => {
-            const worker = new Worker(this.config.workerScript);
-            let initTimeout;
-            const handleInitComplete = (event) => {
-              const { type, workerId: responseWorkerId, wasmAvailable } = event.data;
-              if (type === "init-complete" && responseWorkerId === workerId) {
-                clearTimeout(initTimeout);
-                worker.removeEventListener("message", handleInitComplete);
-                worker.onmessage = (e) => this.handleWorkerMessage(e, workerId);
-                worker.onerror = (e) => this.handleWorkerError(e, workerId);
-                this.workers[workerId] = worker;
-                this.workerQueue.push(workerId);
-                console.log(`Worker ${workerId}: Ready (Wasm: ${wasmAvailable ? "Yes" : "No"})`);
-                resolve();
-              }
-            };
-            worker.addEventListener("message", handleInitComplete);
-            worker.postMessage({
-              type: "init",
-              data: { workerId }
-            });
-            initTimeout = setTimeout(() => {
-              worker.removeEventListener("message", handleInitComplete);
-              reject(new Error(`Worker ${workerId} initialization timeout`));
-            }, 1e4);
-          });
-        }
-        handleWorkerMessage(event, workerId) {
-          const { type, data } = event.data;
-          if (type === "decode-complete") {
-            this.handleDecodeComplete(data, workerId);
-          } else if (type === "decode-error") {
-            this.handleDecodeError(data, workerId);
-          }
-        }
-        handleDecodeComplete(data, workerId) {
-          const { requestId, frameIndex, pixels, delay, decodeTime, wasmUsed } = data;
-          const pendingRequest = this.pendingRequests.get(requestId);
-          if (pendingRequest) {
-            this.stats.completedJobs++;
-            this.stats.totalDecodeTime += decodeTime;
-            this.stats.workerUtilization[workerId]++;
-            const pixelsArray = new Uint32Array(pixels);
-            pendingRequest.resolve({
-              requestId,
-              frameIndex,
-              pixels: pixelsArray,
-              delay,
-              decodeTime,
-              workerId,
-              wasmUsed
-            });
-            this.pendingRequests.delete(requestId);
-          }
-          this.workerQueue.push(workerId);
-          this.processQueue();
-        }
-        handleDecodeError(data, workerId) {
-          const { requestId, error } = data;
-          const pendingRequest = this.pendingRequests.get(requestId);
-          if (pendingRequest) {
-            pendingRequest.reject(new Error(`Worker ${workerId}: ${error}`));
-            this.pendingRequests.delete(requestId);
-          }
-          this.workerQueue.push(workerId);
-          this.processQueue();
-        }
-        handleWorkerError(error, workerId) {
-          console.error(`Worker ${workerId} error:`, error);
-          for (const [requestId, pending] of this.pendingRequests.entries()) {
-            if (requestId.includes(`-${workerId}-`)) {
-              pending.reject(new Error(`Worker ${workerId} crashed`));
-              this.pendingRequests.delete(requestId);
-            }
-          }
-        }
-        // Main API: Decode frame asynchronously using worker pool
-        async decodeFrame(gifData, frameIndex) {
-          return new Promise((resolve, reject) => {
-            const requestId = `${Date.now()}-${this.nextRequestId++}`;
-            const request = {
-              gifData: gifData.slice(),
-              // Copy to ensure transferable
-              frameIndex,
-              requestId
-            };
-            if (this.requestQueue.length >= this.config.maxQueueSize) {
-              reject(new Error("Worker pool queue is full"));
-              return;
-            }
-            this.requestQueue.push({ request, resolve, reject });
-            this.processQueue();
-          });
-        }
-        // Parallel decode multiple frames
-        async decodeFrames(gifData, frameIndices) {
-          const decodePromises = frameIndices.map((frameIndex) => this.decodeFrame(gifData, frameIndex));
-          return Promise.all(decodePromises);
-        }
-        processQueue() {
-          while (this.requestQueue.length > 0 && this.workerQueue.length > 0) {
-            const { request, resolve, reject } = this.requestQueue.shift();
-            const workerId = this.workerQueue.shift();
-            this.pendingRequests.set(request.requestId, {
-              resolve,
-              reject,
-              startTime: performance.now()
-            });
-            this.workers[workerId].postMessage({
-              type: "decode",
-              data: request
-            }, [request.gifData.buffer]);
-          }
-        }
-        getStats() {
-          const activeWorkers = this.workers.length - this.workerQueue.length;
-          const avgDecodeTime = this.stats.completedJobs > 0 ? this.stats.totalDecodeTime / this.stats.completedJobs : 0;
-          return {
-            activeWorkers,
-            queuedRequests: this.requestQueue.length,
-            completedJobs: this.stats.completedJobs,
-            avgDecodeTime,
-            totalDecodeTime: this.stats.totalDecodeTime,
-            workerUtilization: this.stats.workerUtilization.slice()
-          };
-        }
-        // Clean shutdown
-        async terminate() {
-          console.log("Terminating worker pool...");
-          for (const [requestId, pending] of this.pendingRequests.entries()) {
-            pending.reject(new Error("Worker pool terminated"));
-          }
-          this.pendingRequests.clear();
-          this.requestQueue.length = 0;
-          const terminatePromises = this.workers.map((worker, i) => {
-            return new Promise((resolve) => {
-              worker.postMessage({ type: "terminate" });
-              worker.terminate();
-              resolve();
-            });
-          });
-          await Promise.all(terminatePromises);
-          this.workers.length = 0;
-          this.workerQueue.length = 0;
-          console.log("Worker pool terminated");
-        }
-      };
-      exports.WorkerPoolManager = WorkerPoolManager2;
-      var globalWorkerPool = null;
-      async function createWorkerPool(config) {
-        const pool = new WorkerPoolManager2(config);
-        await pool.initialize();
-        return pool;
-      }
-      async function getGlobalWorkerPool(config) {
-        if (!globalWorkerPool) {
-          globalWorkerPool = await createWorkerPool(config);
-        }
-        return globalWorkerPool;
-      }
-      async function terminateGlobalWorkerPool() {
-        if (globalWorkerPool) {
-          await globalWorkerPool.terminate();
-          globalWorkerPool = null;
-        }
-      }
-    }
-  });
 
   // wtfgif.ts
   var wtfgif_exports = {};
@@ -496,35 +33,35 @@ var wtfgif = (() => {
     getWasmStatus: () => getWasmStatus,
     initializeWasmGlobally: () => initializeWasmGlobally
   });
-  var createWasmGifDecoder2;
-  var createWasmWorkerPool2;
-  var isWasmSupported2;
-  var isWasmSIMDSupported2;
-  var isWasmThreadsSupported2;
+  var createWasmGifDecoder;
+  var createWasmWorkerPool;
+  var isWasmSupported;
+  var isWasmSIMDSupported;
+  var isWasmThreadsSupported;
   var loadWasmModule = () => {
     try {
-      return init_wasmDecoder(), __toCommonJS(wasmDecoder_exports);
+      return __require("./wasm-full/wasmDecoder");
     } catch (error) {
       return null;
     }
   };
-  createWasmGifDecoder2 = async (...args) => {
+  createWasmGifDecoder = async (...args) => {
     const wasmModule = loadWasmModule();
     return wasmModule ? wasmModule.createWasmGifDecoder(...args) : null;
   };
-  createWasmWorkerPool2 = async (...args) => {
+  createWasmWorkerPool = async (...args) => {
     const wasmModule = loadWasmModule();
     return wasmModule ? wasmModule.createWasmWorkerPool(...args) : null;
   };
-  isWasmSupported2 = () => {
+  isWasmSupported = () => {
     const wasmModule = loadWasmModule();
     return wasmModule ? wasmModule.isWasmSupported() : false;
   };
-  isWasmSIMDSupported2 = () => {
+  isWasmSIMDSupported = () => {
     const wasmModule = loadWasmModule();
     return wasmModule ? wasmModule.isWasmSIMDSupported() : false;
   };
-  isWasmThreadsSupported2 = () => {
+  isWasmThreadsSupported = () => {
     const wasmModule = loadWasmModule();
     return wasmModule ? wasmModule.isWasmThreadsSupported() : false;
   };
@@ -532,15 +69,15 @@ var wtfgif = (() => {
   var globalWasmWorkerPool = null;
   var wasmInitPromise = null;
   var WASM_FEATURES = {
-    supported: isWasmSupported2(),
-    simd: isWasmSIMDSupported2(),
-    threads: isWasmThreadsSupported2()
+    supported: isWasmSupported(),
+    simd: isWasmSIMDSupported(),
+    threads: isWasmThreadsSupported()
   };
   var initializeGlobalWasm = async (wasmPath) => {
     try {
-      globalWasmDecoder = await createWasmGifDecoder2(wasmPath);
+      globalWasmDecoder = await createWasmGifDecoder(wasmPath);
       if (WASM_FEATURES.threads) {
-        globalWasmWorkerPool = await createWasmWorkerPool2(wasmPath);
+        globalWasmWorkerPool = await createWasmWorkerPool(wasmPath);
       }
       console.log("WebAssembly GIF decoder initialized:", {
         decoder: !!globalWasmDecoder,
@@ -1392,27 +929,10 @@ var wtfgif = (() => {
     /**
      * Initialize threaded worker pool for parallel frame decode
      * Alternative to WebAssembly threads when not available
-     */
-    async initWorkerPool(config) {
-      if (WASM_FEATURES.threads && globalWasmWorkerPool) {
-        console.log("WebAssembly threads available, skipping worker pool");
-        return false;
-      }
-      try {
-        const { getGlobalWorkerPool } = await Promise.resolve().then(() => __toESM(require_threaded_worker_pool()));
-        this.workerPool = await getGlobalWorkerPool({
-          workerCount: config?.workerCount || navigator.hardwareConcurrency || 4,
-          maxQueueSize: config?.maxQueueSize || 100,
-          workerScript: "./decoder-worker.js"
-        });
-        this.workerPoolEnabled = true;
-        console.log("Threaded worker pool initialized");
-        return true;
-      } catch (error) {
-        console.warn("Failed to initialize worker pool:", error);
-        this.workerPoolEnabled = false;
-        return false;
-      }
+    */
+    async initWorkerPool() {
+      this.workerPoolEnabled = false;
+      return false;
     }
     /**
      * Parallel frame decode using threaded worker pool

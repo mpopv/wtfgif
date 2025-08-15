@@ -1311,33 +1311,11 @@ export class GifReader {
   /**
    * Initialize threaded worker pool for parallel frame decode
    * Alternative to WebAssembly threads when not available
-   */
-  async initWorkerPool(config?: { workerCount?: number; maxQueueSize?: number }): Promise<boolean> {
-    // Skip if WebAssembly threads are already available
-    if (WASM_FEATURES.threads && globalWasmWorkerPool) {
-      console.log('WebAssembly threads available, skipping worker pool');
-      return false;
-    }
-
-    try {
-      // Dynamic import to avoid bundling if not needed
-      const { getGlobalWorkerPool } = await import('./threaded-worker-pool.js');
-      
-      this.workerPool = await getGlobalWorkerPool({
-        workerCount: config?.workerCount || navigator.hardwareConcurrency || 4,
-        maxQueueSize: config?.maxQueueSize || 100,
-        workerScript: './decoder-worker.js'
-      });
-      
-      this.workerPoolEnabled = true;
-      console.log('Threaded worker pool initialized');
-      return true;
-      
-    } catch (error) {
-      console.warn('Failed to initialize worker pool:', error);
-      this.workerPoolEnabled = false;
-      return false;
-    }
+  */
+  async initWorkerPool(): Promise<boolean> {
+    // Threaded worker pool support removed in cleanup build
+    this.workerPoolEnabled = false;
+    return false;
   }
 
   /**
