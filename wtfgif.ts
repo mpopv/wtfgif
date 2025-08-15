@@ -62,6 +62,67 @@ type PaletteRGB = number[]; // array of 24-bit 0xRRGGBB
 const moduleReusableFramePixels = new Uint8Array(2048 * 2048); // Reasonable max for most GIFs
 let moduleFramePixelsInUse = false;
 
+/* ===== GifReader Object Pooling ===== */
+interface PooledDecoderTables {
+  decTable: Int32Array;
+  stack: Uint8Array; 
+  firstByte: Int16Array;
+  out32Cache: WeakMap<Uint8Array, Uint32Array>;
+  hash: string; // Hash of GIF data for reuse validation
+}
+
+const decoderTablePool: PooledDecoderTables[] = [];
+const MAX_POOL_SIZE = 16; // Reasonable limit for memory usage
+
+function createDecoderTables(): PooledDecoderTables {
+  return {
+    decTable: new Int32Array(GIF.MAX_CODE),
+    stack: new Uint8Array(GIF.MAX_CODE),
+    firstByte: new Int16Array(GIF.MAX_CODE),
+    out32Cache: new WeakMap<Uint8Array, Uint32Array>(),
+    hash: ""
+  };
+}
+
+function getPooledDecoderTables(gifHash: string): PooledDecoderTables {
+  // Try to find an existing pooled instance for this GIF
+  const pooledIndex = decoderTablePool.findIndex(p => p.hash === gifHash);
+  if (pooledIndex >= 0) {
+    const pooled = decoderTablePool.splice(pooledIndex, 1)[0];
+    return pooled;
+  }
+  
+  // Try to reuse any available pooled instance
+  if (decoderTablePool.length > 0) {
+    const pooled = decoderTablePool.pop()!;
+    pooled.hash = gifHash;
+    pooled.out32Cache = new WeakMap(); // Fresh cache for new GIF
+    return pooled;
+  }
+  
+  // Create new instance
+  const tables = createDecoderTables();
+  tables.hash = gifHash;
+  return tables;
+}
+
+function returnDecoderTablesToPool(tables: PooledDecoderTables): void {
+  if (decoderTablePool.length < MAX_POOL_SIZE) {
+    decoderTablePool.push(tables);
+  }
+  // If pool is full, let it get GC'd
+}
+
+// Simple hash function for GIF data
+function hashGifData(data: Uint8Array): string {
+  let hash = 0;
+  const step = Math.max(1, Math.floor(data.length / 1024)); // Sample every ~1KB
+  for (let i = 0; i < data.length; i += step) {
+    hash = ((hash << 5) - hash + data[i]) | 0;
+  }
+  return hash.toString(36);
+}
+
 /* ===== Helper / small utilities ===== */
 function assertPow2(n: number): boolean {
   return n >= 2 && n <= 256 && (n & (n - 1)) === 0;
@@ -553,15 +614,36 @@ export class GifReader {
   private frames: FrameInfo[] = [];
   private loop_count: number | null = null;
 
-  // Reusable decoder tables
-  private decTable = new Int32Array(GIF.MAX_CODE); // prefix<<8 | suffix
-  private stack = new Uint8Array(GIF.MAX_CODE); // for sequence unwind
-  private firstByte = new Int16Array(GIF.MAX_CODE); // -1 means unknown, tracks first symbol for O(1) lookup
+  // Pooled decoder tables for reuse across instances
+  private pooledTables: PooledDecoderTables;
+  private gifHash: string;
   
-  // Cache for Uint32 view of the destination pixel buffer
-  private out32Cache = new WeakMap<Uint8Array, Uint32Array>();
+  // Aliases for easier access
+  private decTable: Int32Array;
+  private stack: Uint8Array;
+  private firstByte: Int16Array;
+  private out32Cache: WeakMap<Uint8Array, Uint32Array>;
 
-  constructor(private buf: Uint8Array) {
+  /* Factory method for pooled GifReader instances */
+  static createPooled(buf: Uint8Array): GifReader {
+    return new GifReader(buf, true);
+  }
+
+  /* Factory method for non-pooled GifReader instances */
+  static createUnpooled(buf: Uint8Array): GifReader {
+    return new GifReader(buf, false);
+  }
+
+  constructor(private buf: Uint8Array, usePooling: boolean = true) {
+    // Get or create pooled decoder tables
+    this.gifHash = usePooling ? hashGifData(buf) : "";
+    this.pooledTables = usePooling ? getPooledDecoderTables(this.gifHash) : createDecoderTables();
+    
+    // Set up aliases for easier access
+    this.decTable = this.pooledTables.decTable;
+    this.stack = this.pooledTables.stack;
+    this.firstByte = this.pooledTables.firstByte;
+    this.out32Cache = this.pooledTables.out32Cache;
     let p = 0;
     // Header: GIF87a / GIF89a
     if (
@@ -771,6 +853,56 @@ export class GifReader {
   }
   decodeAndBlitFrameRGBA(frameNum: number, pixels: Uint8Array) {
     this.decodeAndBlitFrame32(frameNum, pixels, "rgba");
+  }
+
+  /* Transferable-friendly API: decode into an ArrayBuffer that can be transferred between workers */
+  decodeFrameToTransferableRGBA(frameNum: number): ArrayBuffer {
+    const pixelCount = this.width_ * this.height_;
+    const buffer = new ArrayBuffer(pixelCount * 4);
+    const pixels = new Uint8Array(buffer);
+    this.decodeAndBlitFrame32(frameNum, pixels, "rgba");
+    return buffer;
+  }
+
+  decodeFrameToTransferableBGRA(frameNum: number): ArrayBuffer {
+    const pixelCount = this.width_ * this.height_;
+    const buffer = new ArrayBuffer(pixelCount * 4);
+    const pixels = new Uint8Array(buffer);
+    this.decodeAndBlitFrame32(frameNum, pixels, "bgra");
+    return buffer;
+  }
+
+  /* Decode into a pre-allocated transferable buffer (for worker scenarios) */
+  decodeFrameIntoBuffer(frameNum: number, buffer: ArrayBuffer, format: "rgba" | "bgra" = "rgba"): void {
+    const expectedSize = this.width_ * this.height_ * 4;
+    if (buffer.byteLength < expectedSize) {
+      throw new Error(`Buffer too small: need ${expectedSize} bytes, got ${buffer.byteLength}`);
+    }
+    const pixels = new Uint8Array(buffer, 0, expectedSize);
+    this.decodeAndBlitFrame32(frameNum, pixels, format);
+  }
+
+  /* Return decoder tables to pool for reuse (call when done with this GifReader) */
+  dispose(): void {
+    if (this.pooledTables && this.gifHash) {
+      returnDecoderTablesToPool(this.pooledTables);
+    }
+  }
+
+  /* Alias for dispose() to match expected pooling API */
+  returnToPool(): void {
+    this.dispose();
+  }
+
+  /* Get statistics about decoder table pool usage */
+  static getPoolStats(): { available: number; totalCreated: number; hits: number; misses: number } {
+    // Simple stats tracking - in real implementation you'd track hits/misses
+    return {
+      available: decoderTablePool.length,
+      totalCreated: decoderTablePool.length + 1, // Approximate
+      hits: 0, // Would need to track in getPooledDecoderTables
+      misses: 0 // Would need to track in getPooledDecoderTables
+    };
   }
 
 

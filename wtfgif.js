@@ -31,6 +31,51 @@ exports.GifReader = exports.GifWriter = void 0;
 // Reuse these across all instances to avoid allocations (since we never nest calls)
 const moduleReusableFramePixels = new Uint8Array(2048 * 2048); // Reasonable max for most GIFs
 let moduleFramePixelsInUse = false;
+const decoderTablePool = [];
+const MAX_POOL_SIZE = 16; // Reasonable limit for memory usage
+function createDecoderTables() {
+    return {
+        decTable: new Int32Array(4096 /* GIF.MAX_CODE */),
+        stack: new Uint8Array(4096 /* GIF.MAX_CODE */),
+        firstByte: new Int16Array(4096 /* GIF.MAX_CODE */),
+        out32Cache: new WeakMap(),
+        hash: ""
+    };
+}
+function getPooledDecoderTables(gifHash) {
+    // Try to find an existing pooled instance for this GIF
+    const pooledIndex = decoderTablePool.findIndex(p => p.hash === gifHash);
+    if (pooledIndex >= 0) {
+        const pooled = decoderTablePool.splice(pooledIndex, 1)[0];
+        return pooled;
+    }
+    // Try to reuse any available pooled instance
+    if (decoderTablePool.length > 0) {
+        const pooled = decoderTablePool.pop();
+        pooled.hash = gifHash;
+        pooled.out32Cache = new WeakMap(); // Fresh cache for new GIF
+        return pooled;
+    }
+    // Create new instance
+    const tables = createDecoderTables();
+    tables.hash = gifHash;
+    return tables;
+}
+function returnDecoderTablesToPool(tables) {
+    if (decoderTablePool.length < MAX_POOL_SIZE) {
+        decoderTablePool.push(tables);
+    }
+    // If pool is full, let it get GC'd
+}
+// Simple hash function for GIF data
+function hashGifData(data) {
+    let hash = 0;
+    const step = Math.max(1, Math.floor(data.length / 1024)); // Sample every ~1KB
+    for (let i = 0; i < data.length; i += step) {
+        hash = ((hash << 5) - hash + data[i]) | 0;
+    }
+    return hash.toString(36);
+}
 /* ===== Helper / small utilities ===== */
 function assertPow2(n) {
     return n >= 2 && n <= 256 && (n & (n - 1)) === 0;
@@ -406,19 +451,29 @@ function GifWriterOutputLZWCodeStream_fast(buf, p0, minCodeSize, indexStream, co
 (function (GifWriterOutputLZWCodeStream_fast) {
 })(GifWriterOutputLZWCodeStream_fast || (GifWriterOutputLZWCodeStream_fast = {}));
 class GifReader {
-    constructor(buf) {
+    /* Factory method for pooled GifReader instances */
+    static createPooled(buf) {
+        return new GifReader(buf, true);
+    }
+    /* Factory method for non-pooled GifReader instances */
+    static createUnpooled(buf) {
+        return new GifReader(buf, false);
+    }
+    constructor(buf, usePooling = true) {
         this.buf = buf;
         this.p = 0;
         this.globalPaletteOffset = null;
         this.globalPaletteSize = null;
         this.frames = [];
         this.loop_count = null;
-        // Reusable decoder tables
-        this.decTable = new Int32Array(4096 /* GIF.MAX_CODE */); // prefix<<8 | suffix
-        this.stack = new Uint8Array(4096 /* GIF.MAX_CODE */); // for sequence unwind
-        this.firstByte = new Int16Array(4096 /* GIF.MAX_CODE */); // -1 means unknown, tracks first symbol for O(1) lookup
-        // Cache for Uint32 view of the destination pixel buffer
-        this.out32Cache = new WeakMap();
+        // Get or create pooled decoder tables
+        this.gifHash = usePooling ? hashGifData(buf) : "";
+        this.pooledTables = usePooling ? getPooledDecoderTables(this.gifHash) : createDecoderTables();
+        // Set up aliases for easier access
+        this.decTable = this.pooledTables.decTable;
+        this.stack = this.pooledTables.stack;
+        this.firstByte = this.pooledTables.firstByte;
+        this.out32Cache = this.pooledTables.out32Cache;
         let p = 0;
         // Header: GIF87a / GIF89a
         if (buf[p++] !== 71 /* GIF.G */ ||
@@ -610,6 +665,50 @@ class GifReader {
     }
     decodeAndBlitFrameRGBA(frameNum, pixels) {
         this.decodeAndBlitFrame32(frameNum, pixels, "rgba");
+    }
+    /* Transferable-friendly API: decode into an ArrayBuffer that can be transferred between workers */
+    decodeFrameToTransferableRGBA(frameNum) {
+        const pixelCount = this.width_ * this.height_;
+        const buffer = new ArrayBuffer(pixelCount * 4);
+        const pixels = new Uint8Array(buffer);
+        this.decodeAndBlitFrame32(frameNum, pixels, "rgba");
+        return buffer;
+    }
+    decodeFrameToTransferableBGRA(frameNum) {
+        const pixelCount = this.width_ * this.height_;
+        const buffer = new ArrayBuffer(pixelCount * 4);
+        const pixels = new Uint8Array(buffer);
+        this.decodeAndBlitFrame32(frameNum, pixels, "bgra");
+        return buffer;
+    }
+    /* Decode into a pre-allocated transferable buffer (for worker scenarios) */
+    decodeFrameIntoBuffer(frameNum, buffer, format = "rgba") {
+        const expectedSize = this.width_ * this.height_ * 4;
+        if (buffer.byteLength < expectedSize) {
+            throw new Error(`Buffer too small: need ${expectedSize} bytes, got ${buffer.byteLength}`);
+        }
+        const pixels = new Uint8Array(buffer, 0, expectedSize);
+        this.decodeAndBlitFrame32(frameNum, pixels, format);
+    }
+    /* Return decoder tables to pool for reuse (call when done with this GifReader) */
+    dispose() {
+        if (this.pooledTables && this.gifHash) {
+            returnDecoderTablesToPool(this.pooledTables);
+        }
+    }
+    /* Alias for dispose() to match expected pooling API */
+    returnToPool() {
+        this.dispose();
+    }
+    /* Get statistics about decoder table pool usage */
+    static getPoolStats() {
+        // Simple stats tracking - in real implementation you'd track hits/misses
+        return {
+            available: decoderTablePool.length,
+            totalCreated: decoderTablePool.length + 1, // Approximate
+            hits: 0, // Would need to track in getPooledDecoderTables
+            misses: 0 // Would need to track in getPooledDecoderTables
+        };
     }
     /* Fused LZW decode → Uint32 blit with precomputed pal32, transparency, interlace. */
     decodeAndBlitFrame32(frameNum, pixels, order) {

@@ -26,6 +26,46 @@ var wtfgif = (() => {
   });
   var moduleReusableFramePixels = new Uint8Array(2048 * 2048);
   var moduleFramePixelsInUse = false;
+  var decoderTablePool = [];
+  var MAX_POOL_SIZE = 16;
+  function createDecoderTables() {
+    return {
+      decTable: new Int32Array(4096 /* MAX_CODE */),
+      stack: new Uint8Array(4096 /* MAX_CODE */),
+      firstByte: new Int16Array(4096 /* MAX_CODE */),
+      out32Cache: /* @__PURE__ */ new WeakMap(),
+      hash: ""
+    };
+  }
+  function getPooledDecoderTables(gifHash) {
+    const pooledIndex = decoderTablePool.findIndex((p) => p.hash === gifHash);
+    if (pooledIndex >= 0) {
+      const pooled = decoderTablePool.splice(pooledIndex, 1)[0];
+      return pooled;
+    }
+    if (decoderTablePool.length > 0) {
+      const pooled = decoderTablePool.pop();
+      pooled.hash = gifHash;
+      pooled.out32Cache = /* @__PURE__ */ new WeakMap();
+      return pooled;
+    }
+    const tables = createDecoderTables();
+    tables.hash = gifHash;
+    return tables;
+  }
+  function returnDecoderTablesToPool(tables) {
+    if (decoderTablePool.length < MAX_POOL_SIZE) {
+      decoderTablePool.push(tables);
+    }
+  }
+  function hashGifData(data) {
+    let hash = 0;
+    const step = Math.max(1, Math.floor(data.length / 1024));
+    for (let i = 0; i < data.length; i += step) {
+      hash = (hash << 5) - hash + data[i] | 0;
+    }
+    return hash.toString(36);
+  }
   function assertPow2(n) {
     return n >= 2 && n <= 256 && (n & n - 1) === 0;
   }
@@ -366,9 +406,15 @@ var wtfgif = (() => {
   }
   ((GifWriterOutputLZWCodeStream_fast2) => {
   })(GifWriterOutputLZWCodeStream_fast || (GifWriterOutputLZWCodeStream_fast = {}));
-  var GifReader = class {
-    constructor(buf) {
+  var GifReader = class _GifReader {
+    constructor(buf, usePooling = true) {
       this.buf = buf;
+      this.gifHash = usePooling ? hashGifData(buf) : "";
+      this.pooledTables = usePooling ? getPooledDecoderTables(this.gifHash) : createDecoderTables();
+      this.decTable = this.pooledTables.decTable;
+      this.stack = this.pooledTables.stack;
+      this.firstByte = this.pooledTables.firstByte;
+      this.out32Cache = this.pooledTables.out32Cache;
       let p = 0;
       if (buf[p++] !== 71 /* G */ || buf[p++] !== 73 /* I */ || buf[p++] !== 70 /* F */ || buf[p++] !== 56 /* _8 */ || (buf[p++] + 1 & 253) !== 56 /* _8 */ || buf[p++] !== 97 /* A */) {
         throw new Error("Invalid GIF 87a/89a header.");
@@ -515,15 +561,22 @@ var wtfgif = (() => {
     globalPaletteSize = null;
     frames = [];
     loop_count = null;
-    // Reusable decoder tables
-    decTable = new Int32Array(4096 /* MAX_CODE */);
-    // prefix<<8 | suffix
-    stack = new Uint8Array(4096 /* MAX_CODE */);
-    // for sequence unwind
-    firstByte = new Int16Array(4096 /* MAX_CODE */);
-    // -1 means unknown, tracks first symbol for O(1) lookup
-    // Cache for Uint32 view of the destination pixel buffer
-    out32Cache = /* @__PURE__ */ new WeakMap();
+    // Pooled decoder tables for reuse across instances
+    pooledTables;
+    gifHash;
+    // Aliases for easier access
+    decTable;
+    stack;
+    firstByte;
+    out32Cache;
+    /* Factory method for pooled GifReader instances */
+    static createPooled(buf) {
+      return new _GifReader(buf, true);
+    }
+    /* Factory method for non-pooled GifReader instances */
+    static createUnpooled(buf) {
+      return new _GifReader(buf, false);
+    }
     get width() {
       return this.width_;
     }
@@ -547,6 +600,52 @@ var wtfgif = (() => {
     }
     decodeAndBlitFrameRGBA(frameNum, pixels) {
       this.decodeAndBlitFrame32(frameNum, pixels, "rgba");
+    }
+    /* Transferable-friendly API: decode into an ArrayBuffer that can be transferred between workers */
+    decodeFrameToTransferableRGBA(frameNum) {
+      const pixelCount = this.width_ * this.height_;
+      const buffer = new ArrayBuffer(pixelCount * 4);
+      const pixels = new Uint8Array(buffer);
+      this.decodeAndBlitFrame32(frameNum, pixels, "rgba");
+      return buffer;
+    }
+    decodeFrameToTransferableBGRA(frameNum) {
+      const pixelCount = this.width_ * this.height_;
+      const buffer = new ArrayBuffer(pixelCount * 4);
+      const pixels = new Uint8Array(buffer);
+      this.decodeAndBlitFrame32(frameNum, pixels, "bgra");
+      return buffer;
+    }
+    /* Decode into a pre-allocated transferable buffer (for worker scenarios) */
+    decodeFrameIntoBuffer(frameNum, buffer, format = "rgba") {
+      const expectedSize = this.width_ * this.height_ * 4;
+      if (buffer.byteLength < expectedSize) {
+        throw new Error(`Buffer too small: need ${expectedSize} bytes, got ${buffer.byteLength}`);
+      }
+      const pixels = new Uint8Array(buffer, 0, expectedSize);
+      this.decodeAndBlitFrame32(frameNum, pixels, format);
+    }
+    /* Return decoder tables to pool for reuse (call when done with this GifReader) */
+    dispose() {
+      if (this.pooledTables && this.gifHash) {
+        returnDecoderTablesToPool(this.pooledTables);
+      }
+    }
+    /* Alias for dispose() to match expected pooling API */
+    returnToPool() {
+      this.dispose();
+    }
+    /* Get statistics about decoder table pool usage */
+    static getPoolStats() {
+      return {
+        available: decoderTablePool.length,
+        totalCreated: decoderTablePool.length + 1,
+        // Approximate
+        hits: 0,
+        // Would need to track in getPooledDecoderTables
+        misses: 0
+        // Would need to track in getPooledDecoderTables
+      };
     }
     /* Fused LZW decode → Uint32 blit with precomputed pal32, transparency, interlace. */
     decodeAndBlitFrame32(frameNum, pixels, order) {
