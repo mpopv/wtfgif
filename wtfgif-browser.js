@@ -569,6 +569,11 @@ var wtfgif = (() => {
     stack;
     firstByte;
     out32Cache;
+    // Optional Wasm color mapping helper (Tier 2 optimization)
+    colorMapWasm = null;
+    // ColorMapWasm type
+    wasmEnabled = false;
+    rowIndicesBuffer = null;
     /* Factory method for pooled GifReader instances */
     static createPooled(buf) {
       return new _GifReader(buf, true);
@@ -647,6 +652,23 @@ var wtfgif = (() => {
         // Would need to track in getPooledDecoderTables
       };
     }
+    /* Enable Wasm color mapping for faster palette lookups (Tier 2 optimization) */
+    enableWasmColorMapping(colorMapWasm) {
+      this.colorMapWasm = colorMapWasm;
+      this.wasmEnabled = true;
+      const maxRowWidth = Math.min(this.width_, colorMapWasm.maxRowWidth || 4096);
+      this.rowIndicesBuffer = new Uint8Array(maxRowWidth);
+    }
+    /* Disable Wasm color mapping (fallback to JS) */
+    disableWasmColorMapping() {
+      this.wasmEnabled = false;
+      this.colorMapWasm = null;
+      this.rowIndicesBuffer = null;
+    }
+    /* Check if Wasm color mapping is enabled */
+    isWasmEnabled() {
+      return this.wasmEnabled && this.colorMapWasm !== null;
+    }
     /* Fused LZW decode → Uint32 blit with precomputed pal32, transparency, interlace. */
     decodeAndBlitFrame32(frameNum, pixels, order) {
       const frame = this.frameInfo(frameNum);
@@ -696,78 +718,82 @@ var wtfgif = (() => {
         const rowStride32 = canvasWidth - fw >>> 0;
         let dst32 = fy * canvasWidth + fx >>> 0;
         if (!hasTrans) {
-          while (true) {
-            while (bitCount < codeSize && q < bytes.length) {
-              bits |= (bytes[q++] | 0) << bitCount;
-              bitCount += 8;
-            }
-            if (bitCount < codeSize) break;
-            let code = bits & codeMask;
-            bits >>>= codeSize;
-            bitCount -= codeSize;
-            if (code === CLEAR) {
-              nextCode = EOI + 1;
-              codeSize = minCodeSize + 1 | 0;
-              codeMask = (1 << codeSize) - 1;
-              prevCode = null;
-              for (let i = 0; i < CLEAR; i++) this.firstByte[i] = i;
-              continue;
-            } else if (code === EOI) {
-              break;
-            }
-            let outFirst;
-            let cur = code;
-            if (cur < CLEAR) {
-              outFirst = cur;
-              const b = outFirst & 255;
-              out32[dst32] = pal32[b] >>> 0;
-              dst32++;
-              if (--xleft === 0) {
-                dst32 += rowStride32;
-                xleft = fw;
+          if (this.wasmEnabled && this.colorMapWasm && fw <= (this.colorMapWasm.maxRowWidth || 4096)) {
+            this.lzwDecodeToPixelsWasm(bytes, minCodeSize, out32, canvasWidth, fw, fh, fx, fy, pal32);
+          } else {
+            while (true) {
+              while (bitCount < codeSize && q < bytes.length) {
+                bits |= (bytes[q++] | 0) << bitCount;
+                bitCount += 8;
               }
-            } else {
-              sp = 0;
-              if (cur >= nextCode) {
-                if (prevCode === null) break;
-                outFirst = this.firstByte[prevCode] | 0;
-                stack[sp++] = outFirst;
-                cur = prevCode;
-              } else {
-                outFirst = this.firstByte[cur] | 0;
+              if (bitCount < codeSize) break;
+              let code = bits & codeMask;
+              bits >>>= codeSize;
+              bitCount -= codeSize;
+              if (code === CLEAR) {
+                nextCode = EOI + 1;
+                codeSize = minCodeSize + 1 | 0;
+                codeMask = (1 << codeSize) - 1;
+                prevCode = null;
+                for (let i = 0; i < CLEAR; i++) this.firstByte[i] = i;
+                continue;
+              } else if (code === EOI) {
+                break;
               }
-              while (cur >= CLEAR) {
-                const entry = table[cur] | 0;
-                stack[sp++] = entry & 255;
-                cur = entry >>> 8;
-              }
-              const base = cur & 255;
-              out32[dst32] = pal32[base] >>> 0;
-              dst32++;
-              if (--xleft === 0) {
-                dst32 += rowStride32;
-                xleft = fw;
-              }
-              while (sp) {
-                const b = stack[--sp] & 255;
+              let outFirst;
+              let cur = code;
+              if (cur < CLEAR) {
+                outFirst = cur;
+                const b = outFirst & 255;
                 out32[dst32] = pal32[b] >>> 0;
                 dst32++;
                 if (--xleft === 0) {
                   dst32 += rowStride32;
                   xleft = fw;
                 }
+              } else {
+                sp = 0;
+                if (cur >= nextCode) {
+                  if (prevCode === null) break;
+                  outFirst = this.firstByte[prevCode] | 0;
+                  stack[sp++] = outFirst;
+                  cur = prevCode;
+                } else {
+                  outFirst = this.firstByte[cur] | 0;
+                }
+                while (cur >= CLEAR) {
+                  const entry = table[cur] | 0;
+                  stack[sp++] = entry & 255;
+                  cur = entry >>> 8;
+                }
+                const base = cur & 255;
+                out32[dst32] = pal32[base] >>> 0;
+                dst32++;
+                if (--xleft === 0) {
+                  dst32 += rowStride32;
+                  xleft = fw;
+                }
+                while (sp) {
+                  const b = stack[--sp] & 255;
+                  out32[dst32] = pal32[b] >>> 0;
+                  dst32++;
+                  if (--xleft === 0) {
+                    dst32 += rowStride32;
+                    xleft = fw;
+                  }
+                }
               }
-            }
-            if (prevCode !== null && nextCode < 4096 /* MAX_CODE */) {
-              table[nextCode] = (prevCode & 4095) << 8 | outFirst & 255;
-              this.firstByte[nextCode] = this.firstByte[prevCode];
-              nextCode++;
-              if (nextCode >= codeMask + 1 && codeSize < 12) {
-                codeSize++;
-                codeMask = codeMask << 1 | 1;
+              if (prevCode !== null && nextCode < 4096 /* MAX_CODE */) {
+                table[nextCode] = (prevCode & 4095) << 8 | outFirst & 255;
+                this.firstByte[nextCode] = this.firstByte[prevCode];
+                nextCode++;
+                if (nextCode >= codeMask + 1 && codeSize < 12) {
+                  codeSize++;
+                  codeMask = codeMask << 1 | 1;
+                }
               }
+              prevCode = code;
             }
-            prevCode = code;
           }
         } else {
           while (true) {
@@ -945,6 +971,127 @@ var wtfgif = (() => {
           moduleFramePixelsInUse = false;
         }
       }
+    }
+    /* Wasm-accelerated row-wise decode for non-interlaced, non-transparent frames */
+    lzwDecodeToPixelsWasm(bytes, minCodeSize, out32, canvasWidth, fw, fh, fx, fy, pal32) {
+      if (!this.colorMapWasm || !this.rowIndicesBuffer) return;
+      this.colorMapWasm.heapU32.set(pal32.subarray(0, 256), this.colorMapWasm.palPtr >>> 2);
+      let q = 0;
+      const CLEAR = 1 << minCodeSize;
+      const EOI = CLEAR + 1;
+      let nextCode = EOI + 1;
+      let codeSize = minCodeSize + 1 | 0;
+      let codeMask = (1 << codeSize) - 1;
+      for (let i = 0; i < CLEAR; i++) this.firstByte[i] = i;
+      let bits = 0;
+      let bitCount = 0;
+      const table = this.decTable;
+      const stack = this.stack;
+      let sp = 0;
+      let prevCode = null;
+      let xleft = fw;
+      const rowStride32 = canvasWidth - fw >>> 0;
+      let dst32 = fy * canvasWidth + fx >>> 0;
+      let rowCount = 0;
+      const idxRow = this.rowIndicesBuffer.subarray(0, fw);
+      while (true) {
+        while (bitCount < codeSize && q < bytes.length) {
+          bits |= (bytes[q++] | 0) << bitCount;
+          bitCount += 8;
+        }
+        if (bitCount < codeSize) break;
+        let code = bits & codeMask;
+        bits >>>= codeSize;
+        bitCount -= codeSize;
+        if (code === CLEAR) {
+          nextCode = EOI + 1;
+          codeSize = minCodeSize + 1 | 0;
+          codeMask = (1 << codeSize) - 1;
+          prevCode = null;
+          for (let i = 0; i < CLEAR; i++) this.firstByte[i] = i;
+          continue;
+        } else if (code === EOI) {
+          break;
+        }
+        let outFirst;
+        let cur = code;
+        if (cur < CLEAR) {
+          outFirst = cur;
+          const b = outFirst & 255;
+          idxRow[rowCount++] = b;
+          dst32++;
+          if (--xleft === 0) {
+            this.flushRowToWasm(idxRow, rowCount, out32, dst32 - fw, fw);
+            dst32 += rowStride32;
+            xleft = fw;
+            rowCount = 0;
+          }
+        } else {
+          sp = 0;
+          if (cur >= nextCode) {
+            if (prevCode === null) break;
+            outFirst = this.firstByte[prevCode] | 0;
+            stack[sp++] = outFirst;
+            cur = prevCode;
+          } else {
+            outFirst = this.firstByte[cur] | 0;
+          }
+          while (cur >= CLEAR) {
+            const entry = table[cur] | 0;
+            stack[sp++] = entry & 255;
+            cur = entry >>> 8;
+          }
+          const base = cur & 255;
+          idxRow[rowCount++] = base;
+          dst32++;
+          if (--xleft === 0) {
+            this.flushRowToWasm(idxRow, rowCount, out32, dst32 - fw, fw);
+            dst32 += rowStride32;
+            xleft = fw;
+            rowCount = 0;
+          }
+          while (sp) {
+            const b = stack[--sp] & 255;
+            idxRow[rowCount++] = b;
+            dst32++;
+            if (--xleft === 0) {
+              this.flushRowToWasm(idxRow, rowCount, out32, dst32 - fw, fw);
+              dst32 += rowStride32;
+              xleft = fw;
+              rowCount = 0;
+            }
+          }
+        }
+        if (prevCode !== null && nextCode < 4096 /* MAX_CODE */) {
+          table[nextCode] = (prevCode & 4095) << 8 | outFirst & 255;
+          this.firstByte[nextCode] = this.firstByte[prevCode];
+          nextCode++;
+          if (nextCode >= codeMask + 1 && codeSize < 12) {
+            codeSize++;
+            codeMask = codeMask << 1 | 1;
+          }
+        }
+        prevCode = code;
+      }
+      if (rowCount > 0) {
+        this.flushRowToWasm(idxRow, rowCount, out32, dst32 - rowCount, rowCount);
+      }
+    }
+    /* Helper to flush a row of indices through Wasm color mapping */
+    flushRowToWasm(idxRow, count, out32, startDst32, maxCount) {
+      if (!this.colorMapWasm) return;
+      this.colorMapWasm.heapU8.set(idxRow.subarray(0, count), this.colorMapWasm.idxPtr);
+      this.colorMapWasm.map32(
+        this.colorMapWasm.idxPtr,
+        this.colorMapWasm.outPtr,
+        this.colorMapWasm.palPtr,
+        count
+      );
+      const wasmOut32 = this.colorMapWasm.heapU32.subarray(
+        this.colorMapWasm.outPtr >>> 2,
+        (this.colorMapWasm.outPtr >>> 2) + count
+      );
+      out32.set(wasmOut32, startDst32);
     }
   };
   (function() {

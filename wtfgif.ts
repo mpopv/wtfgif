@@ -623,6 +623,11 @@ export class GifReader {
   private stack: Uint8Array;
   private firstByte: Int16Array;
   private out32Cache: WeakMap<Uint8Array, Uint32Array>;
+  
+  // Optional Wasm color mapping helper (Tier 2 optimization)
+  private colorMapWasm: any = null; // ColorMapWasm type
+  private wasmEnabled = false;
+  private rowIndicesBuffer: Uint8Array | null = null;
 
   /* Factory method for pooled GifReader instances */
   static createPooled(buf: Uint8Array): GifReader {
@@ -905,6 +910,28 @@ export class GifReader {
     };
   }
 
+  /* Enable Wasm color mapping for faster palette lookups (Tier 2 optimization) */
+  enableWasmColorMapping(colorMapWasm: any): void {
+    this.colorMapWasm = colorMapWasm;
+    this.wasmEnabled = true;
+    
+    // Pre-allocate row buffer for indices (reused across frames)
+    const maxRowWidth = Math.min(this.width_, colorMapWasm.maxRowWidth || 4096);
+    this.rowIndicesBuffer = new Uint8Array(maxRowWidth);
+  }
+
+  /* Disable Wasm color mapping (fallback to JS) */
+  disableWasmColorMapping(): void {
+    this.wasmEnabled = false;
+    this.colorMapWasm = null;
+    this.rowIndicesBuffer = null;
+  }
+
+  /* Check if Wasm color mapping is enabled */
+  isWasmEnabled(): boolean {
+    return this.wasmEnabled && this.colorMapWasm !== null;
+  }
+
 
   /* Fused LZW decode → Uint32 blit with precomputed pal32, transparency, interlace. */
   private decodeAndBlitFrame32(
@@ -994,8 +1021,12 @@ export class GifReader {
       let dst32 = ((fy * canvasWidth) + fx) >>> 0;
 
       if (!hasTrans) {
-        // FAST PATH: No transparency - always write pixels
-        while (true) {
+        // FAST PATH: No transparency - use Wasm if available and suitable
+        if (this.wasmEnabled && this.colorMapWasm && fw <= (this.colorMapWasm.maxRowWidth || 4096)) {
+          this.lzwDecodeToPixelsWasm(bytes, minCodeSize, out32, canvasWidth, fw, fh, fx, fy, pal32);
+        } else {
+          // Fallback to JS implementation
+          while (true) {
           // Fill bit buffer to have at least codeSize bits
           while (bitCount < codeSize && q < bytes.length) {
             bits |= (bytes[q++] | 0) << bitCount;
@@ -1074,6 +1105,7 @@ export class GifReader {
           }
 
           prevCode = code;
+          }
         }
       } else {
         // HAS TRANSPARENCY: Check each pixel
@@ -1284,6 +1316,184 @@ export class GifReader {
     }
 
     // Done
+  }
+
+  /* Wasm-accelerated row-wise decode for non-interlaced, non-transparent frames */
+  private lzwDecodeToPixelsWasm(
+    bytes: Uint8Array,
+    minCodeSize: number,
+    out32: Uint32Array,
+    canvasWidth: number,
+    fw: number,
+    fh: number,
+    fx: number,
+    fy: number,
+    pal32: Uint32Array
+  ) {
+    if (!this.colorMapWasm || !this.rowIndicesBuffer) return;
+    
+    // Copy palette to Wasm memory once per frame
+    this.colorMapWasm.heapU32.set(pal32.subarray(0, 256), this.colorMapWasm.palPtr >>> 2);
+    
+    let q = 0;
+    const CLEAR = 1 << minCodeSize;
+    const EOI = CLEAR + 1;
+    let nextCode = EOI + 1;
+    let codeSize = (minCodeSize + 1) | 0;
+    let codeMask = (1 << codeSize) - 1;
+    
+    // Initialize firstByte table for base codes
+    for (let i = 0; i < CLEAR; i++) this.firstByte[i] = i;
+    
+    let bits = 0;
+    let bitCount = 0;
+    const table = this.decTable;
+    const stack = this.stack;
+    let sp = 0;
+    let prevCode: number | null = null;
+    
+    // Row processing state
+    let xleft = fw;
+    const rowStride32 = (canvasWidth - fw) >>> 0;
+    let dst32 = ((fy * canvasWidth) + fx) >>> 0;
+    let rowCount = 0;
+    const idxRow = this.rowIndicesBuffer.subarray(0, fw);
+    
+    while (true) {
+      // Fill bit buffer
+      while (bitCount < codeSize && q < bytes.length) {
+        bits |= (bytes[q++] | 0) << bitCount;
+        bitCount += 8;
+      }
+      if (bitCount < codeSize) break;
+
+      let code = bits & codeMask;
+      bits >>>= codeSize;
+      bitCount -= codeSize;
+
+      if (code === CLEAR) {
+        nextCode = EOI + 1;
+        codeSize = (minCodeSize + 1) | 0;
+        codeMask = (1 << codeSize) - 1;
+        prevCode = null;
+        for (let i = 0; i < CLEAR; i++) this.firstByte[i] = i;
+        continue;
+      } else if (code === EOI) {
+        break;
+      }
+
+      // Decode sequence for 'code'
+      let outFirst: number;
+      let cur = code;
+
+      if (cur < CLEAR) {
+        // Single byte
+        outFirst = cur;
+        const b = outFirst & 0xff;
+        
+        // Stage into row buffer instead of direct write
+        idxRow[rowCount++] = b;
+        dst32++; // Still advance logical cursor
+        
+        if (--xleft === 0) {
+          // End of row - flush to Wasm and copy result
+          this.flushRowToWasm(idxRow, rowCount, out32, dst32 - fw, fw);
+          dst32 += rowStride32;
+          xleft = fw;
+          rowCount = 0;
+        }
+      } else {
+        // Chase with stack
+        sp = 0;
+        if (cur >= nextCode) {
+          if (prevCode === null) break;
+          outFirst = this.firstByte[prevCode] | 0;
+          stack[sp++] = outFirst;
+          cur = prevCode;
+        } else {
+          outFirst = this.firstByte[cur] | 0;
+        }
+        
+        // Unwind sequence
+        while (cur >= CLEAR) {
+          const entry = table[cur] | 0;
+          stack[sp++] = entry & 0xff;
+          cur = entry >>> 8;
+        }
+        
+        // Write first base
+        const base = cur & 0xff;
+        idxRow[rowCount++] = base;
+        dst32++;
+        if (--xleft === 0) {
+          this.flushRowToWasm(idxRow, rowCount, out32, dst32 - fw, fw);
+          dst32 += rowStride32;
+          xleft = fw;
+          rowCount = 0;
+        }
+        
+        // Write stack backwards
+        while (sp) {
+          const b = stack[--sp] & 0xff;
+          idxRow[rowCount++] = b;
+          dst32++;
+          if (--xleft === 0) {
+            this.flushRowToWasm(idxRow, rowCount, out32, dst32 - fw, fw);
+            dst32 += rowStride32;
+            xleft = fw;
+            rowCount = 0;
+          }
+        }
+      }
+
+      // Add new table entry
+      if (prevCode !== null && nextCode < GIF.MAX_CODE) {
+        table[nextCode] = ((prevCode & 0xfff) << 8) | (outFirst & 0xff);
+        this.firstByte[nextCode] = this.firstByte[prevCode];
+        nextCode++;
+        if (nextCode >= codeMask + 1 && codeSize < 12) {
+          codeSize++;
+          codeMask = (codeMask << 1) | 1;
+        }
+      }
+
+      prevCode = code;
+    }
+    
+    // Flush any remaining partial row
+    if (rowCount > 0) {
+      this.flushRowToWasm(idxRow, rowCount, out32, dst32 - rowCount, rowCount);
+    }
+  }
+  
+  /* Helper to flush a row of indices through Wasm color mapping */
+  private flushRowToWasm(
+    idxRow: Uint8Array, 
+    count: number, 
+    out32: Uint32Array, 
+    startDst32: number, 
+    maxCount: number
+  ) {
+    if (!this.colorMapWasm) return;
+    
+    // Copy indices to Wasm memory
+    this.colorMapWasm.heapU8.set(idxRow.subarray(0, count), this.colorMapWasm.idxPtr);
+    
+    // Call Wasm to map indices to colors
+    this.colorMapWasm.map32(
+      this.colorMapWasm.idxPtr,
+      this.colorMapWasm.outPtr,
+      this.colorMapWasm.palPtr,
+      count
+    );
+    
+    // Copy result back to output buffer
+    const wasmOut32 = this.colorMapWasm.heapU32.subarray(
+      this.colorMapWasm.outPtr >>> 2,
+      (this.colorMapWasm.outPtr >>> 2) + count
+    );
+    
+    out32.set(wasmOut32, startDst32);
   }
 
 }
