@@ -41,8 +41,11 @@ describe('GifReader parity with omggif', () => {
         wtf.decodeFrameIntoBuffer(i, abR, 'rgba');
         const abB = new ArrayBuffer(len);
         wtf.decodeFrameIntoBuffer(i, abB, 'bgra');
+        wtf.decodeAndBlitFrameRGBA(i, new Uint8Array(len));
+        wtf.decodeAndBlitFrameBGRA(i, new Uint8Array(len));
       }
 
+      expect(wtf.loopCount()).toBe(omg.loopCount());
       wtf.returnToPool();
     });
   }
@@ -107,4 +110,22 @@ describe('GifReader parity with omggif', () => {
       expect(wtfPixels).toStrictEqual(omgPixels);
     });
   });
+
+  test('local palette support', () => {
+    const width = 2;
+    const height = 2;
+    const palette = [0x000000, 0xffffff];
+    const frame = new Uint8Array([0, 1, 1, 0]);
+    const bufOmg = new Uint8Array(1000);
+    const bufWtf = new Uint8Array(1000);
+    const omgWriter = new OmgGifWriter(bufOmg, width, height);
+    omgWriter.addFrame(0, 0, width, height, frame, { palette });
+    const omgLen = omgWriter.end();
+    const wtfWriter = new WtfGifWriter(bufWtf, width, height);
+    wtfWriter.addFrame(0, 0, width, height, frame, { palette });
+    const wtfLen = wtfWriter.end();
+    expect(wtfLen).toBe(omgLen);
+    expect(bufWtf.slice(0, wtfLen)).toStrictEqual(bufOmg.slice(0, omgLen));
+  });
+});
 
