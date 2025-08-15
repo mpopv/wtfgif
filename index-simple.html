@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>wtfgif vs omggif Performance Test</title>
+</head>
+<body>
+    <h1>wtfgif vs omggif Performance Test</h1>
+    <p>Head-to-head comparison of GIF decoding performance</p>
+    <button id="runTests" onclick="runAllTests()">Run All Tests</button>
+    <div id="overallProgress" style="display: none;">
+        Progress: <span id="overallProgressBar">0%</span>
+    </div>
+    
+    <div id="testGrid"></div>
+    
+    <div id="summary" style="display: none;">
+        <h2>Summary</h2>
+        <div id="summaryContent"></div>
+    </div>
+
+    <script src="node_modules/omggif/omggif.js"></script>
+    <script>
+        // Store omggif constructors before they get overwritten
+        window.omggif = { GifReader: window.GifReader, GifWriter: window.GifWriter };
+    </script>
+    <script src="wtfgif-browser.js"></script>
+    <script>
+        const testFiles = [
+            '18d30677-d255-4cc9-9933-c8d35306c1d5.gif',
+            'Clap-1x.gif',
+            'Disappear Homer Simpson GIF.gif', 
+            'Dramatic Chipmunk GIF.gif',
+            'GIGACHAD-4x.gif',
+            'NODDERS-2x.gif',
+            'Proud Of You Yes GIF.gif',
+            'catJAM-3x.gif',
+            'excuseme.gif',
+            'party_blob.gif',
+            'partyparrot.gif',
+            'tenor.gif'
+        ];
+
+        let testResults = [];
+
+        async function loadGifData(filename) {
+            const response = await fetch(`test/gifs/${filename}`);
+            return new Uint8Array(await response.arrayBuffer());
+        }
+
+        async function loadFrameInfo(filename) {
+            const baseName = filename.replace('.gif', '');
+            const response = await fetch(`test/gifs/frames/${baseName}/info.json`);
+            return await response.json();
+        }
+
+        function benchmarkDecoding(gifData, library, iterations = 10) {
+            const reader = library === 'omggif' 
+                ? new window.omggif.GifReader(gifData)
+                : new window.wtfgif.GifReader(gifData);
+            
+            const pixels = new Uint8Array(reader.width * reader.height * 4);
+            const numFrames = reader.numFrames();
+            
+            // Warm up - 2 unmeasured runs to let JIT specialize
+            for (let w = 0; w < 2; w++) {
+                for (let frame = 0; frame < numFrames; frame++) {
+                    reader.decodeAndBlitFrameRGBA(frame, pixels);
+                }
+            }
+            
+            const times = [];
+            
+            for (let i = 0; i < iterations; i++) {
+                const start = performance.now();
+                
+                for (let frame = 0; frame < numFrames; frame++) {
+                    reader.decodeAndBlitFrameRGBA(frame, pixels);
+                }
+                
+                times.push(performance.now() - start);
+            }
+            
+            return {
+                mean: times.reduce((a, b) => a + b) / times.length,
+                min: Math.min(...times),
+                max: Math.max(...times),
+                times: times
+            };
+        }
+
+        async function testSingleGif(filename, index, total) {
+            console.log(`Testing ${filename}...`);
+            
+            const gifData = await loadGifData(filename);
+            const frameInfo = await loadFrameInfo(filename);
+            
+            const testItem = document.createElement('div');
+            testItem.innerHTML = `
+                <h3>${filename}</h3>
+                <p>${frameInfo.width}x${frameInfo.height} • ${frameInfo.numFrames} frames • ${(gifData.length / 1024).toFixed(1)}KB</p>
+                <p>Progress: <span id="progress-${index}">0%</span></p>
+                <div id="results-${index}">Testing...</div>
+                <hr>
+            `;
+            
+            document.getElementById('testGrid').appendChild(testItem);
+            
+            const progressSpan = document.getElementById(`progress-${index}`);
+            const resultsDiv = document.getElementById(`results-${index}`);
+            
+            // Test omggif
+            progressSpan.textContent = '25%';
+            const omggifResults = benchmarkDecoding(gifData, 'omggif');
+            
+            // Test wtfgif
+            progressSpan.textContent = '75%';
+            const wtfgifResults = benchmarkDecoding(gifData, 'wtfgif');
+            
+            progressSpan.textContent = '100%';
+            
+            const speedup = omggifResults.mean / wtfgifResults.mean;
+            const isFaster = speedup > 1;
+            
+            const result = {
+                filename,
+                omggif: omggifResults,
+                wtfgif: wtfgifResults,
+                speedup,
+                isFaster,
+                frameInfo
+            };
+            
+            testResults.push(result);
+            
+            resultsDiv.innerHTML = `
+                <div>omggif: ${omggifResults.mean.toFixed(2)}ms</div>
+                <div>wtfgif: ${wtfgifResults.mean.toFixed(2)}ms</div>
+                <div><strong>${isFaster ? `✓ ${speedup.toFixed(2)}x faster` : `✗ ${(1/speedup).toFixed(2)}x slower`}</strong></div>
+            `;
+            
+            // Update overall progress
+            const overallProgress = ((index + 1) / total * 100).toFixed(0);
+            document.getElementById('overallProgressBar').textContent = overallProgress + '%';
+        }
+
+        async function runAllTests() {
+            document.getElementById('runTests').disabled = true;
+            document.getElementById('overallProgress').style.display = 'block';
+            document.getElementById('testGrid').innerHTML = '';
+            document.getElementById('summary').style.display = 'none';
+            testResults = [];
+            
+            for (let i = 0; i < testFiles.length; i++) {
+                await testSingleGif(testFiles[i], i, testFiles.length);
+            }
+            
+            showSummary();
+            document.getElementById('runTests').disabled = false;
+        }
+
+        function showSummary() {
+            const fasterCount = testResults.filter(r => r.isFaster).length;
+            const avgSpeedup = testResults.reduce((sum, r) => sum + (r.isFaster ? r.speedup : 1/r.speedup), 0) / testResults.length;
+            const totalFrames = testResults.reduce((sum, r) => sum + r.frameInfo.numFrames, 0);
+            
+            const summaryHtml = `
+                <p>Tests completed: ${testResults.length}</p>
+                <p>wtfgif faster in: ${fasterCount}/${testResults.length} tests (${(fasterCount/testResults.length*100).toFixed(1)}%)</p>
+                <p>Average performance: ${avgSpeedup.toFixed(2)}x ${fasterCount >= testResults.length/2 ? 'faster' : 'slower'}</p>
+                <p>Total frames decoded: ${totalFrames}</p>
+                <p><strong>Best performance:</strong> ${testResults.sort((a,b) => b.speedup - a.speedup)[0].filename} (${testResults[0].speedup.toFixed(2)}x faster)</p>
+            `;
+            
+            document.getElementById('summaryContent').innerHTML = summaryHtml;
+            document.getElementById('summary').style.display = 'block';
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('Performance test ready. Click "Run All Tests" to begin.');
+            console.log('Available constructors:');
+            console.log('- omggif namespace:', typeof window.omggif);
+            console.log('- wtfgif namespace:', typeof window.wtfgif);
+            if (window.omggif) {
+                console.log('- omggif.GifReader:', typeof window.omggif.GifReader);
+            }
+            if (window.wtfgif) {
+                console.log('- wtfgif.GifReader:', typeof window.wtfgif.GifReader);
+            }
+        });
+    </script>
+</body>
+</html>

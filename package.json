@@ -3,18 +3,44 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
+    "build": "npx tsc wtfgif.ts --outDir . --target es2020 --module commonjs --skipLibCheck && npx esbuild wtfgif.ts --bundle --format=iife --global-name=wtfgif --outfile=wtfgif-browser.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/mpopv/wtfgif.git"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "gif",
+    "wtfgif",
+    "omggif",
+    "encoder",
+    "decoder",
+    "performance",
+    "compression",
+    "performant",
+    "fast",
+    "optimized",
+    "drop-in",
+    "replacement",
+    "typescript",
+    "javascript",
+    "node",
+    "browser"
+  ],
+  "author": "Matt Popovich",
+  "license": "MIT",
   "bugs": {
     "url": "https://github.com/mpopv/wtfgif/issues"
   },
   "homepage": "https://github.com/mpopv/wtfgif#readme",
-  "description": ""
+  "description": "A drop-in optimized replacement for omggif: - Fused LZW decode→blit - 32-bit palette, Uint32 stores - Interlace pass scheduling - Typed-array open-addressing hash for encoder",
+  "devDependencies": {
+    "@types/node": "^24.2.1",
+    "sharp": "^0.34.3",
+    "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "omggif": "^1.0.10"
+  }
 }
