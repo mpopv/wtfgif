@@ -27,6 +27,10 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.GifReader = exports.GifWriter = void 0;
+/* ===== Module-level reusable arrays ===== */
+// Reuse these across all instances to avoid allocations (since we never nest calls)
+const moduleReusableFramePixels = new Uint8Array(2048 * 2048); // Reasonable max for most GIFs
+let moduleFramePixelsInUse = false;
 /* ===== Helper / small utilities ===== */
 function assertPow2(n) {
     return n >= 2 && n <= 256 && (n & (n - 1)) === 0;
@@ -70,7 +74,7 @@ function concatSubBlocks(buf, offset) {
    For RGBA bytes in memory under little-endian, the Uint32 value must be (A<<24)|(B<<16)|(G<<8)|R.
    For BGRA bytes in memory, it's (A<<24)|(R<<16)|(G<<8)|B.
 */
-function buildPal32(buf, paletteOffset, paletteSize, order) {
+function buildPal32(buf, paletteOffset, paletteSize, order, transparentIndex = null) {
     const pal32 = new Uint32Array(256); // up to 256 entries
     const limit = Math.min(paletteSize, 256);
     if (order === "rgba") {
@@ -78,7 +82,9 @@ function buildPal32(buf, paletteOffset, paletteSize, order) {
             const r = buf[paletteOffset + i * 3] | 0;
             const g = buf[paletteOffset + i * 3 + 1] | 0;
             const b = buf[paletteOffset + i * 3 + 2] | 0;
-            pal32[i] = (255 << 24) | (b << 16) | (g << 8) | r;
+            // Set alpha to 0 for transparent index to avoid unnecessary writes
+            const alpha = (transparentIndex !== null && i === transparentIndex) ? 0 : 255;
+            pal32[i] = (alpha << 24) | (b << 16) | (g << 8) | r;
         }
     }
     else {
@@ -87,7 +93,9 @@ function buildPal32(buf, paletteOffset, paletteSize, order) {
             const r = buf[paletteOffset + i * 3] | 0;
             const g = buf[paletteOffset + i * 3 + 1] | 0;
             const b = buf[paletteOffset + i * 3 + 2] | 0;
-            pal32[i] = (255 << 24) | (r << 16) | (g << 8) | b;
+            // Set alpha to 0 for transparent index to avoid unnecessary writes
+            const alpha = (transparentIndex !== null && i === transparentIndex) ? 0 : 255;
+            pal32[i] = (alpha << 24) | (r << 16) | (g << 8) | b;
         }
     }
     // Others remain 0; caller should ensure indices are valid.
@@ -542,9 +550,9 @@ class GifReader {
                     }
                     // NEW: flatten payload & capture min code size
                     const { bytes: codes, mcs } = concatSubBlocks(buf, data_offset);
-                    // NEW: prebuild pal32 variants once per frame
-                    const pal32rgba = buildPal32(buf, (palette_offset ?? 0), (palette_size ?? 0), "rgba");
-                    const pal32bgra = buildPal32(buf, (palette_offset ?? 0), (palette_size ?? 0), "bgra");
+                    // NEW: prebuild pal32 variants once per frame with transparent index optimization
+                    const pal32rgba = buildPal32(buf, (palette_offset ?? 0), (palette_size ?? 0), "rgba", transparent_index);
+                    const pal32bgra = buildPal32(buf, (palette_offset ?? 0), (palette_size ?? 0), "bgra", transparent_index);
                     this.frames.push({
                         x,
                         y,
@@ -846,8 +854,17 @@ class GifReader {
         }
         else {
             // INTERLACED PATH: Use pass-loops with inline pixel positioning
-            // First decode all pixels into a temporary buffer
-            const framePixels = new Uint8Array(fw * fh);
+            // First decode all pixels into a temporary buffer (reuse module-level array)
+            const frameSize = fw * fh;
+            let framePixels;
+            if (!moduleFramePixelsInUse && frameSize <= moduleReusableFramePixels.length) {
+                moduleFramePixelsInUse = true;
+                framePixels = moduleReusableFramePixels.subarray(0, frameSize);
+            }
+            else {
+                // Fallback to allocation if reusable array is in use or too small
+                framePixels = new Uint8Array(frameSize);
+            }
             let pixelIndex = 0;
             // Decode all LZW symbols into linear pixel array
             while (true) {
@@ -951,7 +968,7 @@ class GifReader {
                             out32[dst32] = pal32[b] >>> 0;
                         }
                         else {
-                            // Check transparency
+                            // Check transparency - but palette already has alpha=0 for transparent index
                             if (b !== transparentIndex)
                                 out32[dst32] = pal32[b] >>> 0;
                         }
@@ -959,15 +976,12 @@ class GifReader {
                     }
                 }
             }
+            // Release module-level array if we were using it
+            if (framePixels === moduleReusableFramePixels.subarray(0, frameSize)) {
+                moduleFramePixelsInUse = false;
+            }
         }
         // Done
-    }
-    // Helper: chase to get first byte of sequence for 'code'
-    firstByteOf(code, table, CLEAR) {
-        while (code >= CLEAR) {
-            code = (table[code] >>> 8) | 0;
-        }
-        return code & 0xff;
     }
 }
 exports.GifReader = GifReader;

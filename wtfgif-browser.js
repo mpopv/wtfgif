@@ -24,6 +24,8 @@ var wtfgif = (() => {
     GifReader: () => GifReader,
     GifWriter: () => GifWriter
   });
+  var moduleReusableFramePixels = new Uint8Array(2048 * 2048);
+  var moduleFramePixelsInUse = false;
   function assertPow2(n) {
     return n >= 2 && n <= 256 && (n & n - 1) === 0;
   }
@@ -58,7 +60,7 @@ var wtfgif = (() => {
     }
     return { bytes: out, mcs };
   }
-  function buildPal32(buf, paletteOffset, paletteSize, order) {
+  function buildPal32(buf, paletteOffset, paletteSize, order, transparentIndex = null) {
     const pal32 = new Uint32Array(256);
     const limit = Math.min(paletteSize, 256);
     if (order === "rgba") {
@@ -66,14 +68,16 @@ var wtfgif = (() => {
         const r = buf[paletteOffset + i * 3] | 0;
         const g = buf[paletteOffset + i * 3 + 1] | 0;
         const b = buf[paletteOffset + i * 3 + 2] | 0;
-        pal32[i] = 255 << 24 | b << 16 | g << 8 | r;
+        const alpha = transparentIndex !== null && i === transparentIndex ? 0 : 255;
+        pal32[i] = alpha << 24 | b << 16 | g << 8 | r;
       }
     } else {
       for (let i = 0; i < limit; i++) {
         const r = buf[paletteOffset + i * 3] | 0;
         const g = buf[paletteOffset + i * 3 + 1] | 0;
         const b = buf[paletteOffset + i * 3 + 2] | 0;
-        pal32[i] = 255 << 24 | r << 16 | g << 8 | b;
+        const alpha = transparentIndex !== null && i === transparentIndex ? 0 : 255;
+        pal32[i] = alpha << 24 | r << 16 | g << 8 | b;
       }
     }
     return pal32;
@@ -466,8 +470,8 @@ var wtfgif = (() => {
               p += size;
             }
             const { bytes: codes, mcs } = concatSubBlocks(buf, data_offset);
-            const pal32rgba = buildPal32(buf, palette_offset ?? 0, palette_size ?? 0, "rgba");
-            const pal32bgra = buildPal32(buf, palette_offset ?? 0, palette_size ?? 0, "bgra");
+            const pal32rgba = buildPal32(buf, palette_offset ?? 0, palette_size ?? 0, "rgba", transparent_index);
+            const pal32bgra = buildPal32(buf, palette_offset ?? 0, palette_size ?? 0, "bgra", transparent_index);
             this.frames.push({
               x,
               y,
@@ -742,7 +746,14 @@ var wtfgif = (() => {
           }
         }
       } else {
-        const framePixels = new Uint8Array(fw * fh);
+        const frameSize = fw * fh;
+        let framePixels;
+        if (!moduleFramePixelsInUse && frameSize <= moduleReusableFramePixels.length) {
+          moduleFramePixelsInUse = true;
+          framePixels = moduleReusableFramePixels.subarray(0, frameSize);
+        } else {
+          framePixels = new Uint8Array(frameSize);
+        }
         let pixelIndex = 0;
         while (true) {
           while (bitCount < codeSize && q < bytes.length) {
@@ -831,14 +842,10 @@ var wtfgif = (() => {
             }
           }
         }
+        if (framePixels === moduleReusableFramePixels.subarray(0, frameSize)) {
+          moduleFramePixelsInUse = false;
+        }
       }
-    }
-    // Helper: chase to get first byte of sequence for 'code'
-    firstByteOf(code, table, CLEAR) {
-      while (code >= CLEAR) {
-        code = table[code] >>> 8 | 0;
-      }
-      return code & 255;
     }
   };
   (function() {
