@@ -576,13 +576,14 @@ function GifWriterOutputLZWCodeStream_fast(
     CAP
   ));
   const gen = (GifWriterOutputLZWCodeStream_fast._gen ??= new Int32Array(CAP));
-  let EPOCH = (GifWriterOutputLZWCodeStream_fast._epoch ?? 1) | 0;
-  GifWriterOutputLZWCodeStream_fast._epoch = (EPOCH + 1) | 0;
-  if (GifWriterOutputLZWCodeStream_fast._epoch <= 0) {
+  let epoch = ((GifWriterOutputLZWCodeStream_fast._epoch ?? 0) + 1) | 0;
+  GifWriterOutputLZWCodeStream_fast._epoch = epoch;
+  if (epoch <= 0) {
     gen.fill(0);
-    GifWriterOutputLZWCodeStream_fast._epoch = 1;
-    EPOCH = 1;
+    epoch = 1;
+    GifWriterOutputLZWCodeStream_fast._epoch = epoch;
   }
+  let EPOCH = epoch;
 
   function tableReset() {
     // Instead of clearing arrays, bump generation.
@@ -633,6 +634,9 @@ function GifWriterOutputLZWCodeStream_fast(
     }
   }
 
+  // Ensure fresh dictionary per image
+  tableReset();
+
   // Emit initial clear
   emit(CLEAR);
 
@@ -644,7 +648,7 @@ function GifWriterOutputLZWCodeStream_fast(
     const k = (indexStream[i] as number) & mask;
     const key = (ib << 8) | k;
     const found = tableGet(key);
-    if (found >= 0) {
+    if (found >= 0 && found < nextCode) {
       ib = found;
       continue;
     }

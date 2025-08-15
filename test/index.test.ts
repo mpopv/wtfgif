@@ -86,7 +86,30 @@ describe('GifWriter parity with omggif', () => {
     const wtfPixels = new Uint8Array(len);
     omgReader.decodeAndBlitFrameRGBA(0, omgPixels);
     wtfReader.decodeAndBlitFrameRGBA(0, wtfPixels);
-    expect(wtfPixels).toStrictEqual(omgPixels);
+      expect(wtfPixels).toStrictEqual(omgPixels);
+    });
+
+    test('clears dictionary between frames', () => {
+      const width = 2;
+      const height = 2;
+      const palette = [0x000000, 0xffffff];
+      const frame1 = new Uint8Array([0, 1, 1, 0]);
+      const frame2 = new Uint8Array([1, 0, 0, 1]);
+      const buf = new Uint8Array(1000);
+      const writer = new WtfGifWriter(buf, width, height, { palette });
+      writer.addFrame(0, 0, width, height, frame1);
+      writer.addFrame(0, 0, width, height, frame2);
+      const len = writer.end();
+      const gif = buf.slice(0, len);
+      const omgReader = new OmgGifReader(gif);
+      const wtfReader = new WtfGifReader(gif);
+      const outLen = width * height * 4;
+      const omgPixels = new Uint8Array(outLen);
+      const wtfPixels = new Uint8Array(outLen);
+      omgReader.decodeAndBlitFrameRGBA(1, omgPixels);
+      wtfReader.decodeAndBlitFrameRGBA(1, wtfPixels);
+      expect(wtfPixels).toStrictEqual(omgPixels);
+    });
   });
 
   test('local palette support', () => {
