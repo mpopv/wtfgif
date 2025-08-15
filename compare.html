@@ -102,10 +102,17 @@
     async function reconstructWithWtfgif(data) {
       const reader = new wtfgif.GifReader(data);
       const writerBuf = new Uint8Array(data.length * 2);
-      const writer = new wtfgif.GifWriter(writerBuf, reader.width(), reader.height(), { loop: reader.loopCount() || 0 });
+      // width and height are exposed as properties on wtfgif's GifReader
+      const writer = new wtfgif.GifWriter(
+        writerBuf,
+        reader.width,
+        reader.height,
+        { loop: reader.loopCount() || 0 }
+      );
       for (let i = 0; i < reader.numFrames(); i++) {
         const fi = reader.frameInfo(i);
         const indices = await reader.decodeFrameIndices(i);
+        if (!indices) continue;
         const palette = buildPalette(reader.buf, fi.palette_offset, fi.palette_size);
         writer.addFrame(fi.x, fi.y, fi.width, fi.height, indices, {
           palette,
