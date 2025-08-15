@@ -1,3 +1,5 @@
+![wtfgif logo](https://github.com/mpopv/wtfgif/blob/main/wtf.gif?raw=true)
+
 # wtfgif
 
 A drop-in optimized replacement for [omggif](https://www.npmjs.com/package/omggif): fused decode→blit, 32-bit palettes, interlace pass scheduling and typed-array hashing. Runs in Node and the browser.
@@ -11,11 +13,11 @@ npm install wtfgif
 ## Usage
 
 ```ts
-import { GifReader, GifWriter } from 'wtfgif';
-import { readFileSync } from 'node:fs';
+import { GifReader, GifWriter } from "wtfgif";
+import { readFileSync } from "node:fs";
 
 // Decode a GIF
-const data = readFileSync('some.gif');
+const data = readFileSync("some.gif");
 const reader = new GifReader(data);
 console.log(reader.width, reader.height);
 
