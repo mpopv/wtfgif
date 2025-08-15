@@ -71,7 +71,7 @@ interface WasmWorkerPool {
 // Lazy-load WebAssembly module functions
 const loadWasmModule = () => {
   try {
-    return require('./wasm-full/wasmDecoder');
+    return require('../wasm-full/wasmDecoder');
   } catch (error) {
     return null;
   }
@@ -1141,7 +1141,7 @@ export class GifReader {
         this.gpuRenderer = new gpuModule.UnifiedGPUGifRenderer();
       }
       
-      const success = await this.gpuRenderer.initialize(canvas);
+      const success = await this.gpuRenderer!.initialize(canvas);
       this.gpuEnabled = success;
       return success;
       
@@ -1176,20 +1176,22 @@ export class GifReader {
     }
     
     // Use GPU for palette expansion
+    if (!this.gpuRenderer) return null;
+
     if (targetCanvas) {
       const success = await this.gpuRenderer.renderToCanvas(
-        indexData, 
-        frame.pal32rgba || new Uint32Array(256), 
-        frame.width, 
-        frame.height, 
+        indexData,
+        frame.pal32rgba || new Uint32Array(256),
+        frame.width,
+        frame.height,
         targetCanvas
       );
       return success ? targetCanvas : null;
     } else {
       return await this.gpuRenderer.renderFrame(
-        indexData, 
-        frame.pal32rgba || new Uint32Array(256), 
-        frame.width, 
+        indexData,
+        frame.pal32rgba || new Uint32Array(256),
+        frame.width,
         frame.height
       );
     }
@@ -1251,6 +1253,7 @@ export class GifReader {
     
     if (!indexData) return null;
     
+    if (!this.gpuRenderer) return null;
     const success = await this.gpuRenderer.renderToCanvas(
       indexData,
       frame.pal32rgba || new Uint32Array(256),
@@ -1282,6 +1285,7 @@ export class GifReader {
     
     if (!indexData) return null;
     
+    if (!this.gpuRenderer) return null;
     const success = await this.gpuRenderer.renderToCanvas(
       indexData,
       frame.pal32rgba || new Uint32Array(256),
