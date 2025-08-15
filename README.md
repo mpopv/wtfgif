@@ -1,6 +1,9 @@
+
+![wtfgif logo](https://github.com/mpopv/wtfgif/blob/main/src/gifs/wtf.gif?raw=true)
+
 # wtfgif
 
-A drop-in optimized replacement for [omggif](https://www.npmjs.com/package/omggif): fused decode→blit, 32-bit palettes, interlace pass scheduling and typed-array hashing. Runs in Node and the browser.
+![animated fire emoji](https://github.com/mpopv/wtfgif/blob/main/src/gifs/fire.gif?raw=true) A drop-in optimized replacement for [omggif](https://www.npmjs.com/package/omggif) for Node and the browser ![animated fire emoji](https://github.com/mpopv/wtfgif/blob/main/src/gifs/fire.gif?raw=true)
 
 ## Installation
 
@@ -32,7 +35,7 @@ writer.finish();
 
 ## Contributing
 
-Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## License
 
