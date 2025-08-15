@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>wtfgif vs omggif comparison</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      background: #fafafa;
+      color: #222;
+      margin: 0;
+      padding: 2rem;
+    }
+    h1 {
+      text-align: center;
+      margin-top: 0;
+    }
+    #upload {
+      margin: 1rem 0;
+    }
+    .gif-row {
+      margin-bottom: 2rem;
+    }
+    .gif-row h3 {
+      margin: 0 0 0.5rem 0;
+      font-size: 1rem;
+    }
+    .gif-images {
+      display: flex;
+      gap: 1.5rem;
+    }
+    .gif-col {
+      text-align: center;
+      flex: 1;
+    }
+    .gif-col img {
+      max-width: 200px;
+      border: 1px solid #ccc;
+      background: #fff;
+    }
+  </style>
+  <script src="node_modules/omggif/omggif.js"></script>
+  <script type="module" src="dist/index.mjs"></script>
+</head>
+<body>
+  <h1>wtfgif vs omggif</h1>
+  <input id="upload" type="file" accept="image/gif" multiple />
+  <div id="results"></div>
+  <script type="module">
+    const testGifs = [
+      "18d30677-d255-4cc9-9933-c8d35306c1d5.gif",
+      "Clap-1x.gif",
+      "Disappear Homer Simpson GIF.gif",
+      "Dramatic Chipmunk GIF.gif",
+      "GIGACHAD-4x.gif",
+      "NODDERS-2x.gif",
+      "Proud Of You Yes GIF.gif",
+      "catJAM-3x.gif",
+      "excuseme.gif",
+      "party_blob.gif",
+      "partyparrot.gif",
+      "tenor.gif"
+    ];
+
+    const results = document.getElementById('results');
+
+    async function fetchArrayBuffer(path) {
+      const res = await fetch(path);
+      return await res.arrayBuffer();
+    }
+
+    function buildPalette(buf, offset, size) {
+      const palette = [];
+      for (let i = 0; i < size; i++) {
+        const o = offset + i * 3;
+        palette.push((buf[o] << 16) | (buf[o + 1] << 8) | buf[o + 2]);
+      }
+      return palette;
+    }
+
+    async function reconstructWithOmggif(data) {
+      const reader = new GifReader(data);
+      const writerBuf = new Uint8Array(data.length * 2);
+      const writer = new GifWriter(writerBuf, reader.width, reader.height, { loop: reader.loopCount() || 0 });
+      for (let i = 0; i < reader.numFrames(); i++) {
+        const fi = reader.frameInfo(i);
+        const numPixels = fi.width * fi.height;
+        const indices = new Uint8Array(numPixels);
+        GifReaderLZWOutputIndexStream(data, fi.data_offset, indices, numPixels);
+        const palette = buildPalette(data, fi.palette_offset, fi.palette_size);
+        writer.addFrame(fi.x, fi.y, fi.width, fi.height, indices, {
+          palette,
+          delay: fi.delay,
+          disposal: fi.disposal,
+          transparent: fi.transparent_index === null ? undefined : fi.transparent_index
+        });
+      }
+      const len = writer.end();
+      return writerBuf.slice(0, len);
+    }
+
+    async function reconstructWithWtfgif(data) {
+      const reader = new wtfgif.GifReader(data);
+      const writerBuf = new Uint8Array(data.length * 2);
+      const writer = new wtfgif.GifWriter(writerBuf, reader.width(), reader.height(), { loop: reader.loopCount() || 0 });
+      for (let i = 0; i < reader.numFrames(); i++) {
+        const fi = reader.frameInfo(i);
+        const indices = await reader.decodeFrameIndices(i);
+        const palette = buildPalette(reader.buf, fi.palette_offset, fi.palette_size);
+        writer.addFrame(fi.x, fi.y, fi.width, fi.height, indices, {
+          palette,
+          delay: fi.delay,
+          disposal: fi.disposal,
+          transparent: fi.transparent_index === null ? undefined : fi.transparent_index
+        });
+      }
+      const len = writer.end();
+      return writerBuf.slice(0, len);
+    }
+
+    function createCol(label, data) {
+      const col = document.createElement('div');
+      col.className = 'gif-col';
+      const lab = document.createElement('div');
+      lab.textContent = label;
+      const img = document.createElement('img');
+      img.src = URL.createObjectURL(new Blob([data], { type: 'image/gif' }));
+      col.appendChild(lab);
+      col.appendChild(img);
+      return col;
+    }
+
+    function addResult(name, original, omg, wtf) {
+      const row = document.createElement('div');
+      row.className = 'gif-row';
+      const title = document.createElement('h3');
+      title.textContent = name;
+      const imgs = document.createElement('div');
+      imgs.className = 'gif-images';
+      imgs.appendChild(createCol('Original', original));
+      imgs.appendChild(createCol('omggif', omg));
+      imgs.appendChild(createCol('wtfgif', wtf));
+      row.appendChild(title);
+      row.appendChild(imgs);
+      results.appendChild(row);
+    }
+
+    async function process(name, arrayBuffer) {
+      const data = new Uint8Array(arrayBuffer);
+      const [omg, wtf] = await Promise.all([
+        reconstructWithOmggif(data),
+        reconstructWithWtfgif(data)
+      ]);
+      addResult(name, data, omg, wtf);
+    }
+
+    async function loadTestGifs() {
+      for (const name of testGifs) {
+        try {
+          const buf = await fetchArrayBuffer('test/gifs/' + name);
+          await process(name, buf);
+        } catch (e) {
+          console.error('Failed to load', name, e);
+        }
+      }
+    }
+
+    document.getElementById('upload').addEventListener('change', async (e) => {
+      const files = e.target.files;
+      for (const file of files) {
+        const buf = await file.arrayBuffer();
+        await process(file.name, buf);
+      }
+    });
+
+    loadTestGifs();
+  </script>
+</body>
+</html>
