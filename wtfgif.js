@@ -26,7 +26,77 @@
 // and a typed-array hash encoder. It runs in browsers and Node.
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.GifReader = exports.GifWriter = void 0;
+exports.cleanupWasm = exports.getWasmStatus = exports.initializeWasmGlobally = exports.GifReader = exports.GifWriter = void 0;
+/* ===== WebAssembly Integration ===== */
+// Import Wasm decoder types and factory functions
+let createWasmGifDecoder;
+let createWasmWorkerPool;
+let isWasmSupported;
+let isWasmSIMDSupported;
+let isWasmThreadsSupported;
+// Lazy-load WebAssembly module functions
+const loadWasmModule = () => {
+    try {
+        return require('./wasm-full/wasmDecoder');
+    }
+    catch (error) {
+        return null;
+    }
+};
+// Initialize WebAssembly functions with lazy loading
+createWasmGifDecoder = async (...args) => {
+    const wasmModule = loadWasmModule();
+    return wasmModule ? wasmModule.createWasmGifDecoder(...args) : null;
+};
+createWasmWorkerPool = async (...args) => {
+    const wasmModule = loadWasmModule();
+    return wasmModule ? wasmModule.createWasmWorkerPool(...args) : null;
+};
+isWasmSupported = () => {
+    const wasmModule = loadWasmModule();
+    return wasmModule ? wasmModule.isWasmSupported() : false;
+};
+isWasmSIMDSupported = () => {
+    const wasmModule = loadWasmModule();
+    return wasmModule ? wasmModule.isWasmSIMDSupported() : false;
+};
+isWasmThreadsSupported = () => {
+    const wasmModule = loadWasmModule();
+    return wasmModule ? wasmModule.isWasmThreadsSupported() : false;
+};
+// Global Wasm instances (lazy-loaded)
+let globalWasmDecoder = null;
+let globalWasmWorkerPool = null;
+let wasmInitPromise = null;
+// Wasm feature flags
+const WASM_FEATURES = {
+    supported: isWasmSupported(),
+    simd: isWasmSIMDSupported(),
+    threads: isWasmThreadsSupported(),
+};
+/**
+ * Initialize global WebAssembly decoder and worker pool
+ */
+const initializeGlobalWasm = async (wasmPath) => {
+    try {
+        // Initialize main decoder
+        globalWasmDecoder = await createWasmGifDecoder(wasmPath);
+        // Initialize worker pool if threading is supported
+        if (WASM_FEATURES.threads) {
+            globalWasmWorkerPool = await createWasmWorkerPool(wasmPath);
+        }
+        console.log('WebAssembly GIF decoder initialized:', {
+            decoder: !!globalWasmDecoder,
+            workerPool: !!globalWasmWorkerPool,
+            features: WASM_FEATURES,
+        });
+    }
+    catch (error) {
+        console.warn('Failed to initialize WebAssembly decoder:', error);
+        globalWasmDecoder = null;
+        globalWasmWorkerPool = null;
+    }
+};
 /* ===== Module-level reusable arrays ===== */
 // Reuse these across all instances to avoid allocations (since we never nest calls)
 const moduleReusableFramePixels = new Uint8Array(2048 * 2048); // Reasonable max for most GIFs
@@ -470,6 +540,9 @@ class GifReader {
         this.colorMapWasm = null; // ColorMapWasm type
         this.wasmEnabled = false;
         this.rowIndicesBuffer = null;
+        // GPU palette expansion (Tier 4 optimization)
+        this.gpuRenderer = null;
+        this.gpuEnabled = false;
         // Get or create pooled decoder tables
         this.gifHash = usePooling ? hashGifData(buf) : "";
         this.pooledTables = usePooling ? getPooledDecoderTables(this.gifHash) : createDecoderTables();
@@ -651,6 +724,336 @@ class GifReader {
     }
     get height() {
         return this.height_;
+    }
+    /* ===== WebAssembly Integration Methods ===== */
+    /**
+     * Initialize WebAssembly decoder for this GifReader instance
+     */
+    async initWasm(wasmPath) {
+        if (!WASM_FEATURES.supported) {
+            return false;
+        }
+        if (!globalWasmDecoder && !wasmInitPromise) {
+            wasmInitPromise = initializeGlobalWasm(wasmPath);
+        }
+        if (wasmInitPromise) {
+            await wasmInitPromise;
+        }
+        return globalWasmDecoder !== null;
+    }
+    /**
+     * Check if WebAssembly decoder is available and initialized
+     */
+    isWasmReady() {
+        return globalWasmDecoder !== null;
+    }
+    /**
+     * Decode frame using WebAssembly (with fallback to JavaScript)
+     */
+    async framePixelsWasm(frameIndex, pixels) {
+        // Try Wasm first if available
+        if (this.isWasmReady() && globalWasmDecoder) {
+            try {
+                const result = await this.decodeFrameWasm(frameIndex, pixels);
+                if (result) {
+                    return result;
+                }
+            }
+            catch (error) {
+                console.warn('Wasm decode failed, falling back to JavaScript:', error);
+            }
+        }
+        // Fallback to JavaScript decoder
+        const outputSize = this.width_ * this.height_;
+        if (!pixels || pixels.length < outputSize) {
+            pixels = new Uint32Array(outputSize);
+        }
+        // Use the existing JavaScript decoder
+        const uint8Buffer = new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.byteLength);
+        this.decodeAndBlitFrameRGBA(frameIndex, uint8Buffer);
+        return pixels;
+    }
+    /**
+     * Internal Wasm frame decoder
+     */
+    async decodeFrameWasm(frameIndex, pixels) {
+        if (!globalWasmDecoder) {
+            return null;
+        }
+        if (frameIndex < 0 || frameIndex >= this.frames.length) {
+            throw new Error("Frame index out of bounds");
+        }
+        // Calculate required output size
+        const outputSize = this.width_ * this.height_;
+        // Allocate or reuse output buffer
+        if (!pixels || pixels.length < outputSize) {
+            pixels = new Uint32Array(outputSize);
+        }
+        // Allocate GIF data in Wasm heap
+        const gifPtr = globalWasmDecoder.wasm_malloc(this.buf.length);
+        if (gifPtr === 0) {
+            throw new Error('Failed to allocate Wasm memory for GIF data');
+        }
+        const outPtr = globalWasmDecoder.wasm_malloc(outputSize * 4);
+        if (outPtr === 0) {
+            globalWasmDecoder.wasm_free(gifPtr);
+            throw new Error('Failed to allocate Wasm memory for output');
+        }
+        try {
+            // Copy GIF data to Wasm heap
+            globalWasmDecoder.heapU8.set(this.buf, gifPtr);
+            // Call Wasm decoder
+            const result = globalWasmDecoder.decode_rgba(gifPtr, this.buf.length, frameIndex, outPtr >>> 2, // Convert to u32 offset
+            outputSize);
+            // Check for errors
+            if (result > 1000) {
+                throw new Error(`Wasm decode error: ${result}`);
+            }
+            // Copy result back to JavaScript
+            const wasmOutput = globalWasmDecoder.heapU32.subarray(outPtr >>> 2, (outPtr >>> 2) + outputSize);
+            pixels.set(wasmOutput);
+            return pixels;
+        }
+        finally {
+            globalWasmDecoder.wasm_free(gifPtr);
+            globalWasmDecoder.wasm_free(outPtr);
+        }
+    }
+    /**
+     * Decode multiple frames in parallel using Wasm worker pool
+     */
+    async framePixelsParallel(frameIndices) {
+        if (!WASM_FEATURES.threads || !globalWasmWorkerPool) {
+            // Fallback: decode sequentially using regular method
+            const results = [];
+            for (const frameIndex of frameIndices) {
+                const pixels = await this.framePixelsWasm(frameIndex);
+                const delay = this.frameInfo(frameIndex).delay || 100;
+                results.push({ pixels, delay });
+            }
+            return results;
+        }
+        // Use worker pool for parallel decode
+        return globalWasmWorkerPool.decodeParallel(this.buf, frameIndices);
+    }
+    /**
+     * Get WebAssembly performance statistics
+     */
+    getWasmStats() {
+        return {
+            ...WASM_FEATURES,
+            heapUsage: globalWasmDecoder?.get_heap_usage(),
+        };
+    }
+    /* ===== GPU Palette Expansion Methods (Tier 4) ===== */
+    /**
+     * Initialize GPU palette expansion for ultra-fast rendering
+     */
+    async initGPU(canvas) {
+        try {
+            // Lazy-load GPU renderer
+            if (!this.gpuRenderer) {
+                const gpuModule = this.loadGPUModule();
+                if (!gpuModule) {
+                    return false;
+                }
+                this.gpuRenderer = new gpuModule.UnifiedGPUGifRenderer();
+            }
+            const success = await this.gpuRenderer.initialize(canvas);
+            this.gpuEnabled = success;
+            return success;
+        }
+        catch (error) {
+            console.warn('GPU palette expansion failed to initialize:', error);
+            this.gpuEnabled = false;
+            return false;
+        }
+    }
+    /**
+     * Decode frame using GPU acceleration (fastest possible path)
+     */
+    async framePixelsGPU(frameIndex, targetCanvas) {
+        if (!this.gpuEnabled || !this.gpuRenderer) {
+            // Auto-initialize GPU if not done yet
+            if (!(await this.initGPU())) {
+                return null; // GPU not available, use other methods
+            }
+        }
+        if (frameIndex < 0 || frameIndex >= this.frames.length) {
+            throw new Error("Frame index out of bounds");
+        }
+        // Get frame info and decode indices using JavaScript LZW decoder
+        const frame = this.frameInfo(frameIndex);
+        const indexData = await this.decodeFrameIndices(frameIndex);
+        if (!indexData) {
+            return null;
+        }
+        // Use GPU for palette expansion
+        if (targetCanvas) {
+            const success = await this.gpuRenderer.renderToCanvas(indexData, frame.pal32rgba || new Uint32Array(256), frame.width, frame.height, targetCanvas);
+            return success ? targetCanvas : null;
+        }
+        else {
+            return await this.gpuRenderer.renderFrame(indexData, frame.pal32rgba || new Uint32Array(256), frame.width, frame.height);
+        }
+    }
+    /**
+     * Decode frame to index data only (for GPU palette expansion)
+     */
+    async decodeFrameIndices(frameIndex) {
+        try {
+            const frame = this.frameInfo(frameIndex);
+            const frameSize = frame.width * frame.height;
+            const indexData = new Uint8Array(frameSize);
+            // Use simplified LZW decoder that outputs indices directly
+            this.lzwDecodeToIndices(frame, indexData);
+            return indexData;
+        }
+        catch (error) {
+            console.error('Failed to decode frame indices:', error);
+            return null;
+        }
+    }
+    /**
+     * Simplified LZW decoder that outputs palette indices instead of RGBA
+     */
+    lzwDecodeToIndices(frame, outputIndices) {
+        const bytes = frame.codes;
+        const minCodeSize = frame.min_code_size | 0;
+        let q = 0;
+        const CLEAR = 1 << minCodeSize;
+        const EOI = CLEAR + 1;
+        let nextCode = EOI + 1;
+        let codeSize = (minCodeSize + 1) | 0;
+        let codeMask = (1 << codeSize) - 1;
+        // Initialize firstByte table for base codes
+        for (let i = 0; i < CLEAR; i++) {
+            this.firstByte[i] = i;
+        }
+        let bits = 0;
+        let bitCount = 0;
+        let pixelIndex = 0;
+        const table = this.decTable;
+        const stack = this.stack;
+        let sp = 0;
+        let prevCode = null;
+        while (true) {
+            // Fill bit buffer
+            while (bitCount < codeSize && q < bytes.length) {
+                bits |= (bytes[q++] | 0) << bitCount;
+                bitCount += 8;
+            }
+            if (bitCount < codeSize)
+                break;
+            let code = bits & codeMask;
+            bits >>>= codeSize;
+            bitCount -= codeSize;
+            if (code === CLEAR) {
+                nextCode = EOI + 1;
+                codeSize = (minCodeSize + 1) | 0;
+                codeMask = (1 << codeSize) - 1;
+                prevCode = null;
+                for (let i = 0; i < CLEAR; i++) {
+                    this.firstByte[i] = i;
+                }
+                continue;
+            }
+            else if (code === EOI) {
+                break;
+            }
+            let outFirst;
+            let cur = code;
+            if (cur < CLEAR) {
+                // Single byte
+                outFirst = cur;
+                if (pixelIndex < outputIndices.length) {
+                    outputIndices[pixelIndex++] = outFirst & 0xFF;
+                }
+            }
+            else {
+                // Multi-byte sequence
+                sp = 0;
+                if (cur >= nextCode) {
+                    if (prevCode === null)
+                        break;
+                    outFirst = this.firstByte[prevCode] | 0;
+                    stack[sp++] = outFirst;
+                    cur = prevCode;
+                }
+                else {
+                    outFirst = this.firstByte[cur] | 0;
+                }
+                while (cur >= CLEAR) {
+                    const entry = table[cur] | 0;
+                    stack[sp++] = entry & 0xFF;
+                    cur = entry >>> 8;
+                }
+                // Output base symbol
+                const base = cur & 0xFF;
+                if (pixelIndex < outputIndices.length) {
+                    outputIndices[pixelIndex++] = base;
+                }
+                // Output stack in reverse
+                while (sp && pixelIndex < outputIndices.length) {
+                    outputIndices[pixelIndex++] = stack[--sp] & 0xFF;
+                }
+            }
+            // Add new table entry
+            if (prevCode !== null && nextCode < 4096 /* GIF.MAX_CODE */) {
+                table[nextCode] = ((prevCode & 0xFFF) << 8) | (outFirst & 0xFF);
+                this.firstByte[nextCode] = this.firstByte[prevCode];
+                nextCode++;
+                if (nextCode >= codeMask + 1 && codeSize < 12) {
+                    codeSize++;
+                    codeMask = (codeMask << 1) | 1;
+                }
+            }
+            prevCode = code;
+        }
+    }
+    /**
+     * Check if GPU acceleration is available and enabled
+     */
+    isGPUEnabled() {
+        return this.gpuEnabled && this.gpuRenderer !== null;
+    }
+    /**
+     * Get GPU backend information
+     */
+    getGPUBackend() {
+        return this.gpuRenderer?.getBackend() || 'none';
+    }
+    /**
+     * Benchmark GPU performance
+     */
+    async benchmarkGPU(width = 512, height = 512) {
+        if (!this.gpuEnabled || !this.gpuRenderer) {
+            return null;
+        }
+        return await this.gpuRenderer.benchmark(width, height);
+    }
+    /**
+     * Disable GPU acceleration
+     */
+    disableGPU() {
+        if (this.gpuRenderer) {
+            this.gpuRenderer.dispose();
+            this.gpuRenderer = null;
+        }
+        this.gpuEnabled = false;
+    }
+    /**
+     * Lazy-load GPU module to avoid startup cost
+     */
+    loadGPUModule() {
+        try {
+            // In a real implementation, this would be a dynamic import
+            // For now, return null to indicate GPU module not available
+            return null;
+        }
+        catch (error) {
+            return null;
+        }
     }
     numFrames() {
         return this.frames.length;
@@ -1251,12 +1654,45 @@ class GifReader {
     }
 }
 exports.GifReader = GifReader;
+/* ===== Module-level WebAssembly Exports ===== */
+/**
+ * Initialize WebAssembly globally (can be called before creating any GifReader instances)
+ */
+exports.initializeWasmGlobally = initializeGlobalWasm;
+/**
+ * Get global WebAssembly feature support and status
+ */
+const getWasmStatus = () => ({
+    ...WASM_FEATURES,
+    initialized: globalWasmDecoder !== null,
+    workerPoolAvailable: globalWasmWorkerPool !== null,
+});
+exports.getWasmStatus = getWasmStatus;
+/**
+ * Cleanup global WebAssembly resources
+ */
+const cleanupWasm = () => {
+    if (globalWasmWorkerPool) {
+        globalWasmWorkerPool.terminate();
+        globalWasmWorkerPool = null;
+    }
+    globalWasmDecoder = null;
+    wasmInitPromise = null;
+};
+exports.cleanupWasm = cleanupWasm;
 // Browser global export under wtfgif namespace
 (function () {
+    const browserExports = {
+        GifWriter,
+        GifReader,
+        initializeWasmGlobally: exports.initializeWasmGlobally,
+        getWasmStatus: exports.getWasmStatus,
+        cleanupWasm: exports.cleanupWasm
+    };
     if (typeof window !== 'undefined') {
-        window.wtfgif = { GifWriter, GifReader };
+        window.wtfgif = browserExports;
     }
     else if (typeof globalThis !== 'undefined') {
-        globalThis.wtfgif = { GifWriter, GifReader };
+        globalThis.wtfgif = browserExports;
     }
 })();

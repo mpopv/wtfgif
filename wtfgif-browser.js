@@ -4,6 +4,9 @@ var wtfgif = (() => {
   var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
   var __getOwnPropNames = Object.getOwnPropertyNames;
   var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __esm = (fn, res) => function __init() {
+    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+  };
   var __export = (target, all) => {
     for (var name in all)
       __defProp(target, name, { get: all[name], enumerable: true });
@@ -18,12 +21,320 @@ var wtfgif = (() => {
   };
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
+  // wasm-full/wasmDecoder.ts
+  var wasmDecoder_exports = {};
+  __export(wasmDecoder_exports, {
+    createWasmGifDecoder: () => createWasmGifDecoder,
+    createWasmWorkerPool: () => createWasmWorkerPool,
+    isWasmSIMDSupported: () => isWasmSIMDSupported,
+    isWasmSupported: () => isWasmSupported,
+    isWasmThreadsSupported: () => isWasmThreadsSupported
+  });
+  async function createWasmGifDecoder(wasmPath = "./wtfgif-full.wasm") {
+    try {
+      const memory = new WebAssembly.Memory({
+        initial: 64,
+        // 64 pages = 4MB
+        maximum: 256,
+        // 256 pages = 16MB
+        shared: true
+        // Enable SharedArrayBuffer for threading
+      });
+      const imports = {
+        env: {
+          memory,
+          // Add any required imports here
+          abort: () => {
+            throw new Error("Wasm module aborted");
+          }
+        }
+      };
+      const { instance } = await WebAssembly.instantiateStreaming(
+        fetch(wasmPath),
+        imports
+      );
+      const wasmInstance = new WasmDecoderInstance(instance, memory);
+      return wasmInstance.getDecoder();
+    } catch (error) {
+      console.error("Failed to load WebAssembly module:", error);
+      return null;
+    }
+  }
+  async function createWasmWorkerPool(wasmPath = "./wtfgif-full.wasm", numWorkers) {
+    return new WorkerPoolManager(numWorkers);
+  }
+  function isWasmSupported() {
+    return typeof WebAssembly === "object" && typeof WebAssembly.instantiate === "function";
+  }
+  function isWasmSIMDSupported() {
+    try {
+      return WebAssembly.validate(new Uint8Array([
+        0,
+        97,
+        115,
+        109,
+        1,
+        0,
+        0,
+        0,
+        1,
+        5,
+        1,
+        96,
+        0,
+        1,
+        123,
+        3,
+        2,
+        1,
+        0,
+        10,
+        10,
+        1,
+        8,
+        0,
+        253,
+        15,
+        253,
+        98,
+        11
+      ]));
+    } catch {
+      return false;
+    }
+  }
+  function isWasmThreadsSupported() {
+    return typeof SharedArrayBuffer !== "undefined" && typeof Atomics !== "undefined";
+  }
+  var WasmDecoderInstance, WorkerPoolManager;
+  var init_wasmDecoder = __esm({
+    "wasm-full/wasmDecoder.ts"() {
+      WasmDecoderInstance = class {
+        instance;
+        decoder;
+        constructor(instance, memory) {
+          this.instance = instance;
+          const exports = instance.exports;
+          this.decoder = {
+            memory,
+            decode_rgba: exports.decode_rgba,
+            decode_rgba_threaded: exports.decode_rgba_threaded,
+            init_heap: exports.init_heap,
+            reset_heap: exports.reset_heap,
+            get_heap_usage: exports.get_heap_usage,
+            test_simd: exports.test_simd,
+            wasm_malloc: exports.wasm_malloc,
+            wasm_free: exports.wasm_free,
+            heapU8: new Uint8Array(memory.buffer),
+            heapU32: new Uint32Array(memory.buffer)
+          };
+          this.decoder.init_heap();
+        }
+        getDecoder() {
+          return this.decoder;
+        }
+        updateViews() {
+          this.decoder.heapU8 = new Uint8Array(this.decoder.memory.buffer);
+          this.decoder.heapU32 = new Uint32Array(this.decoder.memory.buffer);
+        }
+        mallocCopy(data) {
+          const ptr = this.decoder.wasm_malloc(data.length);
+          if (ptr === 0) return 0;
+          this.decoder.heapU8.set(data, ptr);
+          return ptr;
+        }
+        free(ptr) {
+          if (ptr !== 0) {
+            this.decoder.wasm_free(ptr);
+          }
+        }
+        decodeFrame(gifData, frameIndex) {
+          const estimatedSize = 512 * 512;
+          const gifPtr = this.mallocCopy(gifData);
+          if (gifPtr === 0) {
+            console.error("Failed to allocate memory for GIF data");
+            return null;
+          }
+          const outPtr = this.decoder.wasm_malloc(estimatedSize * 4);
+          if (outPtr === 0) {
+            this.free(gifPtr);
+            console.error("Failed to allocate memory for output");
+            return null;
+          }
+          try {
+            const result = this.decoder.decode_rgba(
+              gifPtr,
+              gifData.length,
+              frameIndex,
+              outPtr >>> 2,
+              // Convert to u32 offset
+              estimatedSize
+            );
+            if (result > 1e3) {
+              console.error(`Wasm decode error: ${result}`);
+              return null;
+            }
+            const pixels = new Uint32Array(estimatedSize);
+            pixels.set(this.decoder.heapU32.subarray(outPtr >>> 2, (outPtr >>> 2) + estimatedSize));
+            return { pixels, delay: result };
+          } finally {
+            this.free(gifPtr);
+            this.free(outPtr);
+          }
+        }
+      };
+      WorkerPoolManager = class {
+        constructor(numWorkers = navigator.hardwareConcurrency || 4) {
+          this.numWorkers = numWorkers;
+          this.initializeWorkers();
+        }
+        workers = [];
+        activeJobs = 0;
+        completedJobs = 0;
+        totalDecodeTime = 0;
+        jobQueue = [];
+        initializeWorkers() {
+          for (let i = 0; i < this.numWorkers; i++) {
+            const worker = new Worker("wasmWorker.js");
+            worker.onmessage = this.handleWorkerMessage.bind(this);
+            worker.onerror = this.handleWorkerError.bind(this);
+            this.workers.push(worker);
+          }
+        }
+        handleWorkerMessage(event) {
+          const { jobId, result, error, decodeTime } = event.data;
+          if (error) {
+            console.error("Worker error:", error);
+            return;
+          }
+          this.activeJobs--;
+          this.completedJobs++;
+          this.totalDecodeTime += decodeTime || 0;
+          const jobIndex = this.jobQueue.findIndex((job) => job.data.jobId === jobId);
+          if (jobIndex >= 0) {
+            const job = this.jobQueue.splice(jobIndex, 1)[0];
+            job.resolve(result);
+          }
+          this.processNextJob();
+        }
+        handleWorkerError(error) {
+          console.error("Worker error:", error);
+        }
+        processNextJob() {
+          if (this.jobQueue.length === 0 || this.activeJobs >= this.numWorkers) {
+            return;
+          }
+          const job = this.jobQueue[0];
+          const availableWorker = this.workers[this.activeJobs];
+          if (availableWorker) {
+            availableWorker.postMessage(job.data);
+            this.activeJobs++;
+          }
+        }
+        async decode(gifData, frameIndex) {
+          return new Promise((resolve, reject) => {
+            const jobId = Math.random().toString(36);
+            this.jobQueue.push({
+              resolve,
+              reject,
+              data: {
+                jobId,
+                type: "decode",
+                gifData: gifData.buffer.slice(gifData.byteOffset, gifData.byteOffset + gifData.byteLength),
+                frameIndex
+              }
+            });
+            this.processNextJob();
+          });
+        }
+        async decodeParallel(gifData, frameIndices) {
+          const promises = frameIndices.map(
+            (frameIndex) => this.decode(gifData, frameIndex)
+          );
+          return Promise.all(promises);
+        }
+        terminate() {
+          this.workers.forEach((worker) => worker.terminate());
+          this.workers = [];
+          this.jobQueue = [];
+        }
+        getStats() {
+          return {
+            activeWorkers: this.activeJobs,
+            completedJobs: this.completedJobs,
+            avgDecodeTime: this.completedJobs > 0 ? this.totalDecodeTime / this.completedJobs : 0
+          };
+        }
+      };
+    }
+  });
+
   // wtfgif.ts
   var wtfgif_exports = {};
   __export(wtfgif_exports, {
     GifReader: () => GifReader,
-    GifWriter: () => GifWriter
+    GifWriter: () => GifWriter,
+    cleanupWasm: () => cleanupWasm,
+    getWasmStatus: () => getWasmStatus,
+    initializeWasmGlobally: () => initializeWasmGlobally
   });
+  var createWasmGifDecoder2;
+  var createWasmWorkerPool2;
+  var isWasmSupported2;
+  var isWasmSIMDSupported2;
+  var isWasmThreadsSupported2;
+  var loadWasmModule = () => {
+    try {
+      return init_wasmDecoder(), __toCommonJS(wasmDecoder_exports);
+    } catch (error) {
+      return null;
+    }
+  };
+  createWasmGifDecoder2 = async (...args) => {
+    const wasmModule = loadWasmModule();
+    return wasmModule ? wasmModule.createWasmGifDecoder(...args) : null;
+  };
+  createWasmWorkerPool2 = async (...args) => {
+    const wasmModule = loadWasmModule();
+    return wasmModule ? wasmModule.createWasmWorkerPool(...args) : null;
+  };
+  isWasmSupported2 = () => {
+    const wasmModule = loadWasmModule();
+    return wasmModule ? wasmModule.isWasmSupported() : false;
+  };
+  isWasmSIMDSupported2 = () => {
+    const wasmModule = loadWasmModule();
+    return wasmModule ? wasmModule.isWasmSIMDSupported() : false;
+  };
+  isWasmThreadsSupported2 = () => {
+    const wasmModule = loadWasmModule();
+    return wasmModule ? wasmModule.isWasmThreadsSupported() : false;
+  };
+  var globalWasmDecoder = null;
+  var globalWasmWorkerPool = null;
+  var wasmInitPromise = null;
+  var WASM_FEATURES = {
+    supported: isWasmSupported2(),
+    simd: isWasmSIMDSupported2(),
+    threads: isWasmThreadsSupported2()
+  };
+  var initializeGlobalWasm = async (wasmPath) => {
+    try {
+      globalWasmDecoder = await createWasmGifDecoder2(wasmPath);
+      if (WASM_FEATURES.threads) {
+        globalWasmWorkerPool = await createWasmWorkerPool2(wasmPath);
+      }
+      console.log("WebAssembly GIF decoder initialized:", {
+        decoder: !!globalWasmDecoder,
+        workerPool: !!globalWasmWorkerPool,
+        features: WASM_FEATURES
+      });
+    } catch (error) {
+      console.warn("Failed to initialize WebAssembly decoder:", error);
+      globalWasmDecoder = null;
+      globalWasmWorkerPool = null;
+    }
+  };
   var moduleReusableFramePixels = new Uint8Array(2048 * 2048);
   var moduleFramePixelsInUse = false;
   var decoderTablePool = [];
@@ -574,6 +885,9 @@ var wtfgif = (() => {
     // ColorMapWasm type
     wasmEnabled = false;
     rowIndicesBuffer = null;
+    // GPU palette expansion (Tier 4 optimization)
+    gpuRenderer = null;
+    gpuEnabled = false;
     /* Factory method for pooled GifReader instances */
     static createPooled(buf) {
       return new _GifReader(buf, true);
@@ -587,6 +901,319 @@ var wtfgif = (() => {
     }
     get height() {
       return this.height_;
+    }
+    /* ===== WebAssembly Integration Methods ===== */
+    /**
+     * Initialize WebAssembly decoder for this GifReader instance
+     */
+    async initWasm(wasmPath) {
+      if (!WASM_FEATURES.supported) {
+        return false;
+      }
+      if (!globalWasmDecoder && !wasmInitPromise) {
+        wasmInitPromise = initializeGlobalWasm(wasmPath);
+      }
+      if (wasmInitPromise) {
+        await wasmInitPromise;
+      }
+      return globalWasmDecoder !== null;
+    }
+    /**
+     * Check if WebAssembly decoder is available and initialized
+     */
+    isWasmReady() {
+      return globalWasmDecoder !== null;
+    }
+    /**
+     * Decode frame using WebAssembly (with fallback to JavaScript)
+     */
+    async framePixelsWasm(frameIndex, pixels) {
+      if (this.isWasmReady() && globalWasmDecoder) {
+        try {
+          const result = await this.decodeFrameWasm(frameIndex, pixels);
+          if (result) {
+            return result;
+          }
+        } catch (error) {
+          console.warn("Wasm decode failed, falling back to JavaScript:", error);
+        }
+      }
+      const outputSize = this.width_ * this.height_;
+      if (!pixels || pixels.length < outputSize) {
+        pixels = new Uint32Array(outputSize);
+      }
+      const uint8Buffer = new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.byteLength);
+      this.decodeAndBlitFrameRGBA(frameIndex, uint8Buffer);
+      return pixels;
+    }
+    /**
+     * Internal Wasm frame decoder
+     */
+    async decodeFrameWasm(frameIndex, pixels) {
+      if (!globalWasmDecoder) {
+        return null;
+      }
+      if (frameIndex < 0 || frameIndex >= this.frames.length) {
+        throw new Error("Frame index out of bounds");
+      }
+      const outputSize = this.width_ * this.height_;
+      if (!pixels || pixels.length < outputSize) {
+        pixels = new Uint32Array(outputSize);
+      }
+      const gifPtr = globalWasmDecoder.wasm_malloc(this.buf.length);
+      if (gifPtr === 0) {
+        throw new Error("Failed to allocate Wasm memory for GIF data");
+      }
+      const outPtr = globalWasmDecoder.wasm_malloc(outputSize * 4);
+      if (outPtr === 0) {
+        globalWasmDecoder.wasm_free(gifPtr);
+        throw new Error("Failed to allocate Wasm memory for output");
+      }
+      try {
+        globalWasmDecoder.heapU8.set(this.buf, gifPtr);
+        const result = globalWasmDecoder.decode_rgba(
+          gifPtr,
+          this.buf.length,
+          frameIndex,
+          outPtr >>> 2,
+          // Convert to u32 offset
+          outputSize
+        );
+        if (result > 1e3) {
+          throw new Error(`Wasm decode error: ${result}`);
+        }
+        const wasmOutput = globalWasmDecoder.heapU32.subarray(
+          outPtr >>> 2,
+          (outPtr >>> 2) + outputSize
+        );
+        pixels.set(wasmOutput);
+        return pixels;
+      } finally {
+        globalWasmDecoder.wasm_free(gifPtr);
+        globalWasmDecoder.wasm_free(outPtr);
+      }
+    }
+    /**
+     * Decode multiple frames in parallel using Wasm worker pool
+     */
+    async framePixelsParallel(frameIndices) {
+      if (!WASM_FEATURES.threads || !globalWasmWorkerPool) {
+        const results = [];
+        for (const frameIndex of frameIndices) {
+          const pixels = await this.framePixelsWasm(frameIndex);
+          const delay = this.frameInfo(frameIndex).delay || 100;
+          results.push({ pixels, delay });
+        }
+        return results;
+      }
+      return globalWasmWorkerPool.decodeParallel(this.buf, frameIndices);
+    }
+    /**
+     * Get WebAssembly performance statistics
+     */
+    getWasmStats() {
+      return {
+        ...WASM_FEATURES,
+        heapUsage: globalWasmDecoder?.get_heap_usage()
+      };
+    }
+    /* ===== GPU Palette Expansion Methods (Tier 4) ===== */
+    /**
+     * Initialize GPU palette expansion for ultra-fast rendering
+     */
+    async initGPU(canvas) {
+      try {
+        if (!this.gpuRenderer) {
+          const gpuModule = this.loadGPUModule();
+          if (!gpuModule) {
+            return false;
+          }
+          this.gpuRenderer = new gpuModule.UnifiedGPUGifRenderer();
+        }
+        const success = await this.gpuRenderer.initialize(canvas);
+        this.gpuEnabled = success;
+        return success;
+      } catch (error) {
+        console.warn("GPU palette expansion failed to initialize:", error);
+        this.gpuEnabled = false;
+        return false;
+      }
+    }
+    /**
+     * Decode frame using GPU acceleration (fastest possible path)
+     */
+    async framePixelsGPU(frameIndex, targetCanvas) {
+      if (!this.gpuEnabled || !this.gpuRenderer) {
+        if (!await this.initGPU()) {
+          return null;
+        }
+      }
+      if (frameIndex < 0 || frameIndex >= this.frames.length) {
+        throw new Error("Frame index out of bounds");
+      }
+      const frame = this.frameInfo(frameIndex);
+      const indexData = await this.decodeFrameIndices(frameIndex);
+      if (!indexData) {
+        return null;
+      }
+      if (targetCanvas) {
+        const success = await this.gpuRenderer.renderToCanvas(
+          indexData,
+          frame.pal32rgba || new Uint32Array(256),
+          frame.width,
+          frame.height,
+          targetCanvas
+        );
+        return success ? targetCanvas : null;
+      } else {
+        return await this.gpuRenderer.renderFrame(
+          indexData,
+          frame.pal32rgba || new Uint32Array(256),
+          frame.width,
+          frame.height
+        );
+      }
+    }
+    /**
+     * Decode frame to index data only (for GPU palette expansion)
+     */
+    async decodeFrameIndices(frameIndex) {
+      try {
+        const frame = this.frameInfo(frameIndex);
+        const frameSize = frame.width * frame.height;
+        const indexData = new Uint8Array(frameSize);
+        this.lzwDecodeToIndices(frame, indexData);
+        return indexData;
+      } catch (error) {
+        console.error("Failed to decode frame indices:", error);
+        return null;
+      }
+    }
+    /**
+     * Simplified LZW decoder that outputs palette indices instead of RGBA
+     */
+    lzwDecodeToIndices(frame, outputIndices) {
+      const bytes = frame.codes;
+      const minCodeSize = frame.min_code_size | 0;
+      let q = 0;
+      const CLEAR = 1 << minCodeSize;
+      const EOI = CLEAR + 1;
+      let nextCode = EOI + 1;
+      let codeSize = minCodeSize + 1 | 0;
+      let codeMask = (1 << codeSize) - 1;
+      for (let i = 0; i < CLEAR; i++) {
+        this.firstByte[i] = i;
+      }
+      let bits = 0;
+      let bitCount = 0;
+      let pixelIndex = 0;
+      const table = this.decTable;
+      const stack = this.stack;
+      let sp = 0;
+      let prevCode = null;
+      while (true) {
+        while (bitCount < codeSize && q < bytes.length) {
+          bits |= (bytes[q++] | 0) << bitCount;
+          bitCount += 8;
+        }
+        if (bitCount < codeSize) break;
+        let code = bits & codeMask;
+        bits >>>= codeSize;
+        bitCount -= codeSize;
+        if (code === CLEAR) {
+          nextCode = EOI + 1;
+          codeSize = minCodeSize + 1 | 0;
+          codeMask = (1 << codeSize) - 1;
+          prevCode = null;
+          for (let i = 0; i < CLEAR; i++) {
+            this.firstByte[i] = i;
+          }
+          continue;
+        } else if (code === EOI) {
+          break;
+        }
+        let outFirst;
+        let cur = code;
+        if (cur < CLEAR) {
+          outFirst = cur;
+          if (pixelIndex < outputIndices.length) {
+            outputIndices[pixelIndex++] = outFirst & 255;
+          }
+        } else {
+          sp = 0;
+          if (cur >= nextCode) {
+            if (prevCode === null) break;
+            outFirst = this.firstByte[prevCode] | 0;
+            stack[sp++] = outFirst;
+            cur = prevCode;
+          } else {
+            outFirst = this.firstByte[cur] | 0;
+          }
+          while (cur >= CLEAR) {
+            const entry = table[cur] | 0;
+            stack[sp++] = entry & 255;
+            cur = entry >>> 8;
+          }
+          const base = cur & 255;
+          if (pixelIndex < outputIndices.length) {
+            outputIndices[pixelIndex++] = base;
+          }
+          while (sp && pixelIndex < outputIndices.length) {
+            outputIndices[pixelIndex++] = stack[--sp] & 255;
+          }
+        }
+        if (prevCode !== null && nextCode < 4096 /* MAX_CODE */) {
+          table[nextCode] = (prevCode & 4095) << 8 | outFirst & 255;
+          this.firstByte[nextCode] = this.firstByte[prevCode];
+          nextCode++;
+          if (nextCode >= codeMask + 1 && codeSize < 12) {
+            codeSize++;
+            codeMask = codeMask << 1 | 1;
+          }
+        }
+        prevCode = code;
+      }
+    }
+    /**
+     * Check if GPU acceleration is available and enabled
+     */
+    isGPUEnabled() {
+      return this.gpuEnabled && this.gpuRenderer !== null;
+    }
+    /**
+     * Get GPU backend information
+     */
+    getGPUBackend() {
+      return this.gpuRenderer?.getBackend() || "none";
+    }
+    /**
+     * Benchmark GPU performance
+     */
+    async benchmarkGPU(width = 512, height = 512) {
+      if (!this.gpuEnabled || !this.gpuRenderer) {
+        return null;
+      }
+      return await this.gpuRenderer.benchmark(width, height);
+    }
+    /**
+     * Disable GPU acceleration
+     */
+    disableGPU() {
+      if (this.gpuRenderer) {
+        this.gpuRenderer.dispose();
+        this.gpuRenderer = null;
+      }
+      this.gpuEnabled = false;
+    }
+    /**
+     * Lazy-load GPU module to avoid startup cost
+     */
+    loadGPUModule() {
+      try {
+        return null;
+      } catch (error) {
+        return null;
+      }
     }
     numFrames() {
       return this.frames.length;
@@ -1094,11 +1721,32 @@ var wtfgif = (() => {
       out32.set(wasmOut32, startDst32);
     }
   };
+  var initializeWasmGlobally = initializeGlobalWasm;
+  var getWasmStatus = () => ({
+    ...WASM_FEATURES,
+    initialized: globalWasmDecoder !== null,
+    workerPoolAvailable: globalWasmWorkerPool !== null
+  });
+  var cleanupWasm = () => {
+    if (globalWasmWorkerPool) {
+      globalWasmWorkerPool.terminate();
+      globalWasmWorkerPool = null;
+    }
+    globalWasmDecoder = null;
+    wasmInitPromise = null;
+  };
   (function() {
+    const browserExports = {
+      GifWriter,
+      GifReader,
+      initializeWasmGlobally,
+      getWasmStatus,
+      cleanupWasm
+    };
     if (typeof window !== "undefined") {
-      window.wtfgif = { GifWriter, GifReader };
+      window.wtfgif = browserExports;
     } else if (typeof globalThis !== "undefined") {
-      globalThis.wtfgif = { GifWriter, GifReader };
+      globalThis.wtfgif = browserExports;
     }
   })();
   return __toCommonJS(wtfgif_exports);
