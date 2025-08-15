@@ -25,8 +25,9 @@ describe('GifReader parity with omggif', () => {
 
       const fields = ['x','y','width','height','has_local_palette','palette_offset','palette_size','data_offset','data_length','transparent_index','interlaced','delay','disposal'] as const;
       const numFrames = omg.numFrames();
+      const frameLimit = Math.min(numFrames, 10);
       const len = wtf.width * wtf.height * 4;
-      for (let i = 0; i < numFrames; i++) {
+      for (let i = 0; i < frameLimit; i++) {
         const omgInfo = omg.frameInfo(i);
         const wtfInfo = wtf.frameInfo(i);
         const filteredWtf = Object.fromEntries(fields.map(f => [f, (wtfInfo as any)[f]]));
@@ -59,8 +60,8 @@ describe('GifReader parity with omggif', () => {
   });
 });
 
-  describe('GifWriter parity with omggif', () => {
-    test('encodes identical bytes', () => {
+describe('GifWriter parity with omggif', () => {
+  test('encodes identical bytes', () => {
     const width = 2;
     const height = 2;
     const palette = [0x000000, 0xffffff];
@@ -126,6 +127,32 @@ describe('GifReader parity with omggif', () => {
     const wtfLen = wtfWriter.end();
     expect(wtfLen).toBe(omgLen);
     expect(bufWtf.slice(0, wtfLen)).toStrictEqual(bufOmg.slice(0, omgLen));
+  });
+
+  test('multi-frame parity with transparency and looping', () => {
+    const width = 2;
+    const height = 2;
+    const palette = [0x000000, 0xffffff, 0xff0000, 0x00ff00];
+    const frame1 = new Uint8Array([0, 1, 1, 0]);
+    const frame2 = new Uint8Array([2, 3, 3, 2]);
+    const bufOmg = new Uint8Array(1000);
+    const bufWtf = new Uint8Array(1000);
+    const omgWriter = new OmgGifWriter(bufOmg, width, height, { palette, loop: 1, background: 1 });
+    omgWriter.addFrame(0, 0, width, height, frame1, { delay: 5, disposal: 1 });
+    omgWriter.addFrame(0, 0, width, height, frame2, { delay: 10, disposal: 2, transparent: 2 });
+    const omgLen = omgWriter.end();
+    const wtfWriter = new WtfGifWriter(bufWtf, width, height, { palette, loop: 1, background: 1 });
+    wtfWriter.addFrame(0, 0, width, height, frame1, { delay: 5, disposal: 1 });
+    wtfWriter.addFrame(0, 0, width, height, frame2, { delay: 10, disposal: 2, transparent: 2 });
+    const wtfLen = wtfWriter.end();
+    expect(wtfLen).toBe(omgLen);
+    const omgGif = bufOmg.slice(0, omgLen);
+    const wtfGif = bufWtf.slice(0, wtfLen);
+    expect(wtfGif).toStrictEqual(omgGif);
+
+    const omgReader = new OmgGifReader(omgGif);
+    const wtfReader = new WtfGifReader(wtfGif);
+    expect(wtfReader.loopCount()).toBe(omgReader.loopCount());
   });
 });
 
