@@ -3,7 +3,7 @@
 
 export interface WebGL2PaletteRenderer {
   render: (indexData: Uint8Array, palette: Uint32Array, width: number, height: number) => HTMLCanvasElement;
-  renderToCanvas: (indexData: Uint8Array, palette: Uint32Array, width: number, height: number, targetCanvas: HTMLCanvasElement) => void;
+  renderToCanvas: (indexData: Uint8Array, palette: Uint32Array, width: number, height: number, targetCanvas: HTMLCanvasElement | OffscreenCanvas) => void;
   updatePalette: (palette: Uint32Array) => void;
   dispose: () => void;
   isSupported: () => boolean;
@@ -187,7 +187,7 @@ void main() {
     }
   }
   
-  renderToCanvas(indexData: Uint8Array, palette: Uint32Array, width: number, height: number, targetCanvas: HTMLCanvasElement): void {
+  renderToCanvas(indexData: Uint8Array, palette: Uint32Array, width: number, height: number, targetCanvas: HTMLCanvasElement | OffscreenCanvas): void {
     const gl = this.gl;
     
     // Update palette if needed

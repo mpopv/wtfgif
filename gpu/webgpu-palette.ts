@@ -3,7 +3,7 @@
 
 export interface WebGPUPaletteRenderer {
   render: (indexData: Uint8Array, palette: Uint32Array, width: number, height: number) => Promise<HTMLCanvasElement>;
-  renderToCanvas: (indexData: Uint8Array, palette: Uint32Array, width: number, height: number, targetCanvas: HTMLCanvasElement) => Promise<void>;
+  renderToCanvas: (indexData: Uint8Array, palette: Uint32Array, width: number, height: number, targetCanvas: HTMLCanvasElement | OffscreenCanvas) => Promise<void>;
   updatePalette: (palette: Uint32Array) => void;
   dispose: () => void;
   isSupported: () => boolean;
@@ -238,7 +238,7 @@ fn main(@location(0) texCoord: vec2<f32>) -> @location(0) vec4<f32> {
     this.device.queue.writeBuffer(this.paletteBuffer, 0, paletteFloat);
   }
   
-  async renderToCanvas(indexData: Uint8Array, palette: Uint32Array, width: number, height: number, targetCanvas: HTMLCanvasElement): Promise<void> {
+  async renderToCanvas(indexData: Uint8Array, palette: Uint32Array, width: number, height: number, targetCanvas: HTMLCanvasElement | OffscreenCanvas): Promise<void> {
     const device = this.device;
     
     // Update palette

@@ -536,6 +536,8 @@ class GifReader {
         this.globalPaletteSize = null;
         this.frames = [];
         this.loop_count = null;
+        // Zero-copy canvas support
+        this.zeroCopyBuffers = new Map();
         // Optional Wasm color mapping helper (Tier 2 optimization)
         this.colorMapWasm = null; // ColorMapWasm type
         this.wasmEnabled = false;
@@ -543,6 +545,9 @@ class GifReader {
         // GPU palette expansion (Tier 4 optimization)
         this.gpuRenderer = null;
         this.gpuEnabled = false;
+        // Threaded worker pool support (when Wasm threads aren't available)
+        this.workerPool = null; // WorkerPoolManager
+        this.workerPoolEnabled = false;
         // Get or create pooled decoder tables
         this.gifHash = usePooling ? hashGifData(buf) : "";
         this.pooledTables = usePooling ? getPooledDecoderTables(this.gifHash) : createDecoderTables();
@@ -895,6 +900,198 @@ class GifReader {
         }
         else {
             return await this.gpuRenderer.renderFrame(indexData, frame.pal32rgba || new Uint32Array(256), frame.width, frame.height);
+        }
+    }
+    /**
+     * Zero-copy canvas presentation using WebAssembly persistent buffer
+     * Allocates buffer once, reuses for all frames of same size
+     */
+    frameImageDataZeroCopy(frameIndex, ctx2d) {
+        if (!this.isWasmReady() || !globalWasmDecoder) {
+            throw new Error("WebAssembly not available for zero-copy presentation");
+        }
+        const frame = this.frameInfo(frameIndex);
+        const w = frame.width;
+        const h = frame.height;
+        const bufferKey = `${w}x${h}`;
+        let buffer = this.zeroCopyBuffers.get(bufferKey);
+        if (!buffer) {
+            // Allocate persistent WebAssembly buffer
+            const outPtr = globalWasmDecoder.wasm_malloc(w * h * 4);
+            const rgbaU8 = new Uint8ClampedArray(globalWasmDecoder.memory.buffer, outPtr, w * h * 4);
+            const imageData = new ImageData(rgbaU8, w, h); // shares the same buffer
+            buffer = { wasmPtr: outPtr, rgbaU8, imageData };
+            this.zeroCopyBuffers.set(bufferKey, buffer);
+        }
+        // Decode frame directly into persistent buffer
+        globalWasmDecoder.decode_rgba(this.buf.byteOffset || 0, this.buf.length, frameIndex, buffer.wasmPtr, w * h);
+        // Zero-copy presentation - no .set(), no GC
+        ctx2d.putImageData(buffer.imageData, 0, 0);
+    }
+    /**
+     * GPU zero-copy with OffscreenCanvas and ImageBitmap transfer
+     */
+    async frameImageBitmapGPU(frameIndex) {
+        if (!this.gpuEnabled || !this.gpuRenderer) {
+            if (!(await this.initGPU())) {
+                return null;
+            }
+        }
+        // Render to OffscreenCanvas
+        const frame = this.frameInfo(frameIndex);
+        const offscreen = new OffscreenCanvas(frame.width, frame.height);
+        const indexData = await this.decodeFrameIndices(frameIndex);
+        if (!indexData)
+            return null;
+        const success = await this.gpuRenderer.renderToCanvas(indexData, frame.pal32rgba || new Uint32Array(256), frame.width, frame.height, offscreen // OffscreenCanvas compatible with HTMLCanvasElement interface
+        );
+        if (!success)
+            return null;
+        // Create ImageBitmap for efficient transfer and drawing
+        return createImageBitmap(offscreen);
+    }
+    /**
+     * Worker-compatible GPU decode with transferToImageBitmap
+     * Use this pattern in a worker for maximum performance
+     */
+    async frameTransferBitmapGPU(frameIndex) {
+        if (!this.gpuEnabled || !this.gpuRenderer) {
+            if (!(await this.initGPU())) {
+                return null;
+            }
+        }
+        const frame = this.frameInfo(frameIndex);
+        const offscreen = new OffscreenCanvas(frame.width, frame.height);
+        const indexData = await this.decodeFrameIndices(frameIndex);
+        if (!indexData)
+            return null;
+        const success = await this.gpuRenderer.renderToCanvas(indexData, frame.pal32rgba || new Uint32Array(256), frame.width, frame.height, offscreen);
+        if (!success)
+            return null;
+        // Transfer ownership to ImageBitmap (can be posted to main thread)
+        return offscreen.transferToImageBitmap();
+    }
+    /**
+     * Cleanup zero-copy buffers when done
+     */
+    cleanupZeroCopyBuffers() {
+        if (globalWasmDecoder) {
+            for (const buffer of this.zeroCopyBuffers.values()) {
+                globalWasmDecoder.wasm_free(buffer.wasmPtr);
+            }
+        }
+        this.zeroCopyBuffers.clear();
+    }
+    /**
+     * Initialize threaded worker pool for parallel frame decode
+     * Alternative to WebAssembly threads when not available
+     */
+    async initWorkerPool(config) {
+        // Skip if WebAssembly threads are already available
+        if (WASM_FEATURES.threads && globalWasmWorkerPool) {
+            console.log('WebAssembly threads available, skipping worker pool');
+            return false;
+        }
+        try {
+            // Dynamic import to avoid bundling if not needed
+            const { getGlobalWorkerPool } = await Promise.resolve().then(() => require('./threaded-worker-pool.js'));
+            this.workerPool = await getGlobalWorkerPool({
+                workerCount: config?.workerCount || navigator.hardwareConcurrency || 4,
+                maxQueueSize: config?.maxQueueSize || 100,
+                workerScript: './decoder-worker.js'
+            });
+            this.workerPoolEnabled = true;
+            console.log('Threaded worker pool initialized');
+            return true;
+        }
+        catch (error) {
+            console.warn('Failed to initialize worker pool:', error);
+            this.workerPoolEnabled = false;
+            return false;
+        }
+    }
+    /**
+     * Parallel frame decode using threaded worker pool
+     * Each worker has its own Wasm instance and LZW tables
+     */
+    async framePixelsThreadedPool(frameIndices) {
+        if (!this.workerPoolEnabled || !this.workerPool) {
+            // Auto-initialize worker pool
+            const initialized = await this.initWorkerPool();
+            if (!initialized) {
+                // Fallback to sequential decode
+                const results = [];
+                for (const frameIndex of frameIndices) {
+                    const pixels = await this.framePixelsWasm(frameIndex);
+                    const delay = this.frameInfo(frameIndex).delay || 100;
+                    results.push({ pixels, delay });
+                }
+                return results;
+            }
+        }
+        try {
+            // Decode frames in parallel using worker pool
+            const decodeResults = await this.workerPool.decodeFrames(this.buf, frameIndices);
+            // Convert worker results to expected format
+            return decodeResults.map((result) => ({
+                pixels: result.pixels,
+                delay: result.delay
+            }));
+        }
+        catch (error) {
+            console.warn('Worker pool decode failed, falling back to sequential:', error);
+            // Sequential fallback
+            const results = [];
+            for (const frameIndex of frameIndices) {
+                const pixels = await this.framePixelsWasm(frameIndex);
+                const delay = this.frameInfo(frameIndex).delay || 100;
+                results.push({ pixels, delay });
+            }
+            return results;
+        }
+    }
+    /**
+     * Single frame decode using worker pool with load balancing
+     */
+    async framePixelsWorkerPool(frameIndex) {
+        if (!this.workerPoolEnabled || !this.workerPool) {
+            await this.initWorkerPool();
+        }
+        if (this.workerPoolEnabled && this.workerPool) {
+            try {
+                const result = await this.workerPool.decodeFrame(this.buf, frameIndex);
+                return result.pixels;
+            }
+            catch (error) {
+                console.warn('Worker pool single frame decode failed:', error);
+            }
+        }
+        // Fallback to regular method
+        return this.framePixelsWasm(frameIndex);
+    }
+    /**
+     * Get worker pool statistics and performance metrics
+     */
+    getWorkerPoolStats() {
+        if (!this.workerPoolEnabled || !this.workerPool) {
+            return null;
+        }
+        return this.workerPool.getStats();
+    }
+    /**
+     * Check if worker pool is available and ready
+     */
+    isWorkerPoolReady() {
+        return this.workerPoolEnabled && this.workerPool !== null;
+    }
+    /**
+     * Cleanup worker pool resources
+     */
+    async cleanupWorkerPool() {
+        if (this.workerPool) {
+            await this.workerPool.terminate();
+            this.workerPool = null;
+            this.workerPoolEnabled = false;
         }
     }
     /**

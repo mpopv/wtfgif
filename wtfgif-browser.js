@@ -1,11 +1,16 @@
 "use strict";
 var wtfgif = (() => {
+  var __create = Object.create;
   var __defProp = Object.defineProperty;
   var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
   var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __getProtoOf = Object.getPrototypeOf;
   var __hasOwnProp = Object.prototype.hasOwnProperty;
   var __esm = (fn, res) => function __init() {
     return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+  };
+  var __commonJS = (cb, mod) => function __require() {
+    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
   };
   var __export = (target, all) => {
     for (var name in all)
@@ -19,6 +24,14 @@ var wtfgif = (() => {
     }
     return to;
   };
+  var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+    // If the importer is in node compatibility mode or this is not an ESM
+    // file that has been converted to a CommonJS file using a Babel-
+    // compatible transform (i.e. "__esModule" has not been set), then set
+    // "default" to the CommonJS "module.exports" for node compatibility.
+    isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+    mod
+  ));
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
   // wasm-full/wasmDecoder.ts
@@ -266,6 +279,211 @@ var wtfgif = (() => {
           };
         }
       };
+    }
+  });
+
+  // threaded-worker-pool.js
+  var require_threaded_worker_pool = __commonJS({
+    "threaded-worker-pool.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.WorkerPoolManager = void 0;
+      exports.createWorkerPool = createWorkerPool;
+      exports.getGlobalWorkerPool = getGlobalWorkerPool;
+      exports.terminateGlobalWorkerPool = terminateGlobalWorkerPool;
+      var WorkerPoolManager2 = class {
+        constructor(config = {}) {
+          this.workers = [];
+          this.workerQueue = [];
+          this.requestQueue = [];
+          this.pendingRequests = /* @__PURE__ */ new Map();
+          this.stats = {
+            completedJobs: 0,
+            totalDecodeTime: 0,
+            workerUtilization: []
+          };
+          this.nextWorkerId = 0;
+          this.nextRequestId = 0;
+          this.config = {
+            workerCount: config.workerCount || navigator.hardwareConcurrency || 4,
+            maxQueueSize: config.maxQueueSize || 100,
+            workerScript: config.workerScript || "./decoder-worker.js"
+          };
+          this.stats.workerUtilization = new Array(this.config.workerCount).fill(0);
+        }
+        async initialize() {
+          console.log(`Initializing threaded worker pool with ${this.config.workerCount} workers`);
+          const initPromises = Array.from({ length: this.config.workerCount }, (_, i) => this.createWorker(i));
+          await Promise.all(initPromises);
+          console.log(`Worker pool initialized: ${this.workers.length} workers ready`);
+        }
+        async createWorker(workerId) {
+          return new Promise((resolve, reject) => {
+            const worker = new Worker(this.config.workerScript);
+            let initTimeout;
+            const handleInitComplete = (event) => {
+              const { type, workerId: responseWorkerId, wasmAvailable } = event.data;
+              if (type === "init-complete" && responseWorkerId === workerId) {
+                clearTimeout(initTimeout);
+                worker.removeEventListener("message", handleInitComplete);
+                worker.onmessage = (e) => this.handleWorkerMessage(e, workerId);
+                worker.onerror = (e) => this.handleWorkerError(e, workerId);
+                this.workers[workerId] = worker;
+                this.workerQueue.push(workerId);
+                console.log(`Worker ${workerId}: Ready (Wasm: ${wasmAvailable ? "Yes" : "No"})`);
+                resolve();
+              }
+            };
+            worker.addEventListener("message", handleInitComplete);
+            worker.postMessage({
+              type: "init",
+              data: { workerId }
+            });
+            initTimeout = setTimeout(() => {
+              worker.removeEventListener("message", handleInitComplete);
+              reject(new Error(`Worker ${workerId} initialization timeout`));
+            }, 1e4);
+          });
+        }
+        handleWorkerMessage(event, workerId) {
+          const { type, data } = event.data;
+          if (type === "decode-complete") {
+            this.handleDecodeComplete(data, workerId);
+          } else if (type === "decode-error") {
+            this.handleDecodeError(data, workerId);
+          }
+        }
+        handleDecodeComplete(data, workerId) {
+          const { requestId, frameIndex, pixels, delay, decodeTime, wasmUsed } = data;
+          const pendingRequest = this.pendingRequests.get(requestId);
+          if (pendingRequest) {
+            this.stats.completedJobs++;
+            this.stats.totalDecodeTime += decodeTime;
+            this.stats.workerUtilization[workerId]++;
+            const pixelsArray = new Uint32Array(pixels);
+            pendingRequest.resolve({
+              requestId,
+              frameIndex,
+              pixels: pixelsArray,
+              delay,
+              decodeTime,
+              workerId,
+              wasmUsed
+            });
+            this.pendingRequests.delete(requestId);
+          }
+          this.workerQueue.push(workerId);
+          this.processQueue();
+        }
+        handleDecodeError(data, workerId) {
+          const { requestId, error } = data;
+          const pendingRequest = this.pendingRequests.get(requestId);
+          if (pendingRequest) {
+            pendingRequest.reject(new Error(`Worker ${workerId}: ${error}`));
+            this.pendingRequests.delete(requestId);
+          }
+          this.workerQueue.push(workerId);
+          this.processQueue();
+        }
+        handleWorkerError(error, workerId) {
+          console.error(`Worker ${workerId} error:`, error);
+          for (const [requestId, pending] of this.pendingRequests.entries()) {
+            if (requestId.includes(`-${workerId}-`)) {
+              pending.reject(new Error(`Worker ${workerId} crashed`));
+              this.pendingRequests.delete(requestId);
+            }
+          }
+        }
+        // Main API: Decode frame asynchronously using worker pool
+        async decodeFrame(gifData, frameIndex) {
+          return new Promise((resolve, reject) => {
+            const requestId = `${Date.now()}-${this.nextRequestId++}`;
+            const request = {
+              gifData: gifData.slice(),
+              // Copy to ensure transferable
+              frameIndex,
+              requestId
+            };
+            if (this.requestQueue.length >= this.config.maxQueueSize) {
+              reject(new Error("Worker pool queue is full"));
+              return;
+            }
+            this.requestQueue.push({ request, resolve, reject });
+            this.processQueue();
+          });
+        }
+        // Parallel decode multiple frames
+        async decodeFrames(gifData, frameIndices) {
+          const decodePromises = frameIndices.map((frameIndex) => this.decodeFrame(gifData, frameIndex));
+          return Promise.all(decodePromises);
+        }
+        processQueue() {
+          while (this.requestQueue.length > 0 && this.workerQueue.length > 0) {
+            const { request, resolve, reject } = this.requestQueue.shift();
+            const workerId = this.workerQueue.shift();
+            this.pendingRequests.set(request.requestId, {
+              resolve,
+              reject,
+              startTime: performance.now()
+            });
+            this.workers[workerId].postMessage({
+              type: "decode",
+              data: request
+            }, [request.gifData.buffer]);
+          }
+        }
+        getStats() {
+          const activeWorkers = this.workers.length - this.workerQueue.length;
+          const avgDecodeTime = this.stats.completedJobs > 0 ? this.stats.totalDecodeTime / this.stats.completedJobs : 0;
+          return {
+            activeWorkers,
+            queuedRequests: this.requestQueue.length,
+            completedJobs: this.stats.completedJobs,
+            avgDecodeTime,
+            totalDecodeTime: this.stats.totalDecodeTime,
+            workerUtilization: this.stats.workerUtilization.slice()
+          };
+        }
+        // Clean shutdown
+        async terminate() {
+          console.log("Terminating worker pool...");
+          for (const [requestId, pending] of this.pendingRequests.entries()) {
+            pending.reject(new Error("Worker pool terminated"));
+          }
+          this.pendingRequests.clear();
+          this.requestQueue.length = 0;
+          const terminatePromises = this.workers.map((worker, i) => {
+            return new Promise((resolve) => {
+              worker.postMessage({ type: "terminate" });
+              worker.terminate();
+              resolve();
+            });
+          });
+          await Promise.all(terminatePromises);
+          this.workers.length = 0;
+          this.workerQueue.length = 0;
+          console.log("Worker pool terminated");
+        }
+      };
+      exports.WorkerPoolManager = WorkerPoolManager2;
+      var globalWorkerPool = null;
+      async function createWorkerPool(config) {
+        const pool = new WorkerPoolManager2(config);
+        await pool.initialize();
+        return pool;
+      }
+      async function getGlobalWorkerPool(config) {
+        if (!globalWorkerPool) {
+          globalWorkerPool = await createWorkerPool(config);
+        }
+        return globalWorkerPool;
+      }
+      async function terminateGlobalWorkerPool() {
+        if (globalWorkerPool) {
+          await globalWorkerPool.terminate();
+          globalWorkerPool = null;
+        }
+      }
     }
   });
 
@@ -880,6 +1098,8 @@ var wtfgif = (() => {
     stack;
     firstByte;
     out32Cache;
+    // Zero-copy canvas support
+    zeroCopyBuffers = /* @__PURE__ */ new Map();
     // Optional Wasm color mapping helper (Tier 2 optimization)
     colorMapWasm = null;
     // ColorMapWasm type
@@ -888,6 +1108,10 @@ var wtfgif = (() => {
     // GPU palette expansion (Tier 4 optimization)
     gpuRenderer = null;
     gpuEnabled = false;
+    // Threaded worker pool support (when Wasm threads aren't available)
+    workerPool = null;
+    // WorkerPoolManager
+    workerPoolEnabled = false;
     /* Factory method for pooled GifReader instances */
     static createPooled(buf) {
       return new _GifReader(buf, true);
@@ -1072,6 +1296,195 @@ var wtfgif = (() => {
           frame.width,
           frame.height
         );
+      }
+    }
+    /**
+     * Zero-copy canvas presentation using WebAssembly persistent buffer
+     * Allocates buffer once, reuses for all frames of same size
+     */
+    frameImageDataZeroCopy(frameIndex, ctx2d) {
+      if (!this.isWasmReady() || !globalWasmDecoder) {
+        throw new Error("WebAssembly not available for zero-copy presentation");
+      }
+      const frame = this.frameInfo(frameIndex);
+      const w = frame.width;
+      const h = frame.height;
+      const bufferKey = `${w}x${h}`;
+      let buffer = this.zeroCopyBuffers.get(bufferKey);
+      if (!buffer) {
+        const outPtr = globalWasmDecoder.wasm_malloc(w * h * 4);
+        const rgbaU8 = new Uint8ClampedArray(globalWasmDecoder.memory.buffer, outPtr, w * h * 4);
+        const imageData = new ImageData(rgbaU8, w, h);
+        buffer = { wasmPtr: outPtr, rgbaU8, imageData };
+        this.zeroCopyBuffers.set(bufferKey, buffer);
+      }
+      globalWasmDecoder.decode_rgba(
+        this.buf.byteOffset || 0,
+        this.buf.length,
+        frameIndex,
+        buffer.wasmPtr,
+        w * h
+      );
+      ctx2d.putImageData(buffer.imageData, 0, 0);
+    }
+    /**
+     * GPU zero-copy with OffscreenCanvas and ImageBitmap transfer
+     */
+    async frameImageBitmapGPU(frameIndex) {
+      if (!this.gpuEnabled || !this.gpuRenderer) {
+        if (!await this.initGPU()) {
+          return null;
+        }
+      }
+      const frame = this.frameInfo(frameIndex);
+      const offscreen = new OffscreenCanvas(frame.width, frame.height);
+      const indexData = await this.decodeFrameIndices(frameIndex);
+      if (!indexData) return null;
+      const success = await this.gpuRenderer.renderToCanvas(
+        indexData,
+        frame.pal32rgba || new Uint32Array(256),
+        frame.width,
+        frame.height,
+        offscreen
+        // OffscreenCanvas compatible with HTMLCanvasElement interface
+      );
+      if (!success) return null;
+      return createImageBitmap(offscreen);
+    }
+    /**
+     * Worker-compatible GPU decode with transferToImageBitmap
+     * Use this pattern in a worker for maximum performance
+     */
+    async frameTransferBitmapGPU(frameIndex) {
+      if (!this.gpuEnabled || !this.gpuRenderer) {
+        if (!await this.initGPU()) {
+          return null;
+        }
+      }
+      const frame = this.frameInfo(frameIndex);
+      const offscreen = new OffscreenCanvas(frame.width, frame.height);
+      const indexData = await this.decodeFrameIndices(frameIndex);
+      if (!indexData) return null;
+      const success = await this.gpuRenderer.renderToCanvas(
+        indexData,
+        frame.pal32rgba || new Uint32Array(256),
+        frame.width,
+        frame.height,
+        offscreen
+      );
+      if (!success) return null;
+      return offscreen.transferToImageBitmap();
+    }
+    /**
+     * Cleanup zero-copy buffers when done
+     */
+    cleanupZeroCopyBuffers() {
+      if (globalWasmDecoder) {
+        for (const buffer of this.zeroCopyBuffers.values()) {
+          globalWasmDecoder.wasm_free(buffer.wasmPtr);
+        }
+      }
+      this.zeroCopyBuffers.clear();
+    }
+    /**
+     * Initialize threaded worker pool for parallel frame decode
+     * Alternative to WebAssembly threads when not available
+     */
+    async initWorkerPool(config) {
+      if (WASM_FEATURES.threads && globalWasmWorkerPool) {
+        console.log("WebAssembly threads available, skipping worker pool");
+        return false;
+      }
+      try {
+        const { getGlobalWorkerPool } = await Promise.resolve().then(() => __toESM(require_threaded_worker_pool()));
+        this.workerPool = await getGlobalWorkerPool({
+          workerCount: config?.workerCount || navigator.hardwareConcurrency || 4,
+          maxQueueSize: config?.maxQueueSize || 100,
+          workerScript: "./decoder-worker.js"
+        });
+        this.workerPoolEnabled = true;
+        console.log("Threaded worker pool initialized");
+        return true;
+      } catch (error) {
+        console.warn("Failed to initialize worker pool:", error);
+        this.workerPoolEnabled = false;
+        return false;
+      }
+    }
+    /**
+     * Parallel frame decode using threaded worker pool
+     * Each worker has its own Wasm instance and LZW tables
+     */
+    async framePixelsThreadedPool(frameIndices) {
+      if (!this.workerPoolEnabled || !this.workerPool) {
+        const initialized = await this.initWorkerPool();
+        if (!initialized) {
+          const results = [];
+          for (const frameIndex of frameIndices) {
+            const pixels = await this.framePixelsWasm(frameIndex);
+            const delay = this.frameInfo(frameIndex).delay || 100;
+            results.push({ pixels, delay });
+          }
+          return results;
+        }
+      }
+      try {
+        const decodeResults = await this.workerPool.decodeFrames(this.buf, frameIndices);
+        return decodeResults.map((result) => ({
+          pixels: result.pixels,
+          delay: result.delay
+        }));
+      } catch (error) {
+        console.warn("Worker pool decode failed, falling back to sequential:", error);
+        const results = [];
+        for (const frameIndex of frameIndices) {
+          const pixels = await this.framePixelsWasm(frameIndex);
+          const delay = this.frameInfo(frameIndex).delay || 100;
+          results.push({ pixels, delay });
+        }
+        return results;
+      }
+    }
+    /**
+     * Single frame decode using worker pool with load balancing
+     */
+    async framePixelsWorkerPool(frameIndex) {
+      if (!this.workerPoolEnabled || !this.workerPool) {
+        await this.initWorkerPool();
+      }
+      if (this.workerPoolEnabled && this.workerPool) {
+        try {
+          const result = await this.workerPool.decodeFrame(this.buf, frameIndex);
+          return result.pixels;
+        } catch (error) {
+          console.warn("Worker pool single frame decode failed:", error);
+        }
+      }
+      return this.framePixelsWasm(frameIndex);
+    }
+    /**
+     * Get worker pool statistics and performance metrics
+     */
+    getWorkerPoolStats() {
+      if (!this.workerPoolEnabled || !this.workerPool) {
+        return null;
+      }
+      return this.workerPool.getStats();
+    }
+    /**
+     * Check if worker pool is available and ready
+     */
+    isWorkerPoolReady() {
+      return this.workerPoolEnabled && this.workerPool !== null;
+    }
+    /**
+     * Cleanup worker pool resources
+     */
+    async cleanupWorkerPool() {
+      if (this.workerPool) {
+        await this.workerPool.terminate();
+        this.workerPool = null;
+        this.workerPoolEnabled = false;
       }
     }
     /**
