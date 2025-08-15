@@ -110,7 +110,6 @@ describe('GifWriter parity with omggif', () => {
       wtfReader.decodeAndBlitFrameRGBA(1, wtfPixels);
       expect(wtfPixels).toStrictEqual(omgPixels);
     });
-  });
 
   test('local palette support', () => {
     const width = 2;

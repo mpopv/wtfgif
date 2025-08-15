@@ -666,7 +666,7 @@ function GifWriterOutputLZWCodeStream_fast(
     } else {
       if (nextCode >= codeMask + 1 && codeSize < 12) {
         codeSize++;
-        codeMask = (codeMask << 1) | 1;
+        codeMask = (1 << codeSize) - 1;
       }
       tableSet(key, nextCode++);
     }
