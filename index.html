@@ -79,28 +79,49 @@
     }
 
     async function reconstructWithOmggif(data) {
+      const readStart = performance.now();
       const reader = new GifReader(data);
-      const writerBuf = new Uint8Array(data.length * 2);
-      const writer = new GifWriter(writerBuf, reader.width, reader.height, { loop: reader.loopCount() || 0 });
+      const frames = [];
       for (let i = 0; i < reader.numFrames(); i++) {
         const fi = reader.frameInfo(i);
         const numPixels = fi.width * fi.height;
         const indices = new Uint8Array(numPixels);
         GifReaderLZWOutputIndexStream(data, fi.data_offset, indices, numPixels);
         const palette = buildPalette(data, fi.palette_offset, fi.palette_size);
-        writer.addFrame(fi.x, fi.y, fi.width, fi.height, indices, {
-          palette,
-          delay: fi.delay,
-          disposal: fi.disposal,
-          transparent: fi.transparent_index === null ? undefined : fi.transparent_index
+        frames.push({ fi, indices, palette });
+      }
+      const readTime = performance.now() - readStart;
+
+      const writeStart = performance.now();
+      const writerBuf = new Uint8Array(data.length * 2);
+      const writer = new GifWriter(writerBuf, reader.width, reader.height, { loop: reader.loopCount() || 0 });
+      for (const f of frames) {
+        writer.addFrame(f.fi.x, f.fi.y, f.fi.width, f.fi.height, f.indices, {
+          palette: f.palette,
+          delay: f.fi.delay,
+          disposal: f.fi.disposal,
+          transparent: f.fi.transparent_index === null ? undefined : f.fi.transparent_index
         });
       }
       const len = writer.end();
-      return writerBuf.slice(0, len);
+      const writeTime = performance.now() - writeStart;
+      return { buf: writerBuf.slice(0, len), readTime, writeTime };
     }
 
     async function reconstructWithWtfgif(data) {
+      const readStart = performance.now();
       const reader = new wtfgif.GifReader(data);
+      const frames = [];
+      for (let i = 0; i < reader.numFrames(); i++) {
+        const fi = reader.frameInfo(i);
+        const indices = await reader.decodeFrameIndices(i);
+        if (!indices) continue;
+        const palette = buildPalette(reader.buf, fi.palette_offset, fi.palette_size);
+        frames.push({ fi, indices, palette });
+      }
+      const readTime = performance.now() - readStart;
+
+      const writeStart = performance.now();
       const writerBuf = new Uint8Array(data.length * 2);
       // width and height are exposed as properties on wtfgif's GifReader
       const writer = new wtfgif.GifWriter(
@@ -109,20 +130,17 @@
         reader.height,
         { loop: reader.loopCount() || 0 }
       );
-      for (let i = 0; i < reader.numFrames(); i++) {
-        const fi = reader.frameInfo(i);
-        const indices = await reader.decodeFrameIndices(i);
-        if (!indices) continue;
-        const palette = buildPalette(reader.buf, fi.palette_offset, fi.palette_size);
-        writer.addFrame(fi.x, fi.y, fi.width, fi.height, indices, {
-          palette,
-          delay: fi.delay,
-          disposal: fi.disposal,
-          transparent: fi.transparent_index === null ? undefined : fi.transparent_index
+      for (const f of frames) {
+        writer.addFrame(f.fi.x, f.fi.y, f.fi.width, f.fi.height, f.indices, {
+          palette: f.palette,
+          delay: f.fi.delay,
+          disposal: f.fi.disposal,
+          transparent: f.fi.transparent_index === null ? undefined : f.fi.transparent_index
         });
       }
       const len = writer.end();
-      return writerBuf.slice(0, len);
+      const writeTime = performance.now() - writeStart;
+      return { buf: writerBuf.slice(0, len), readTime, writeTime };
     }
 
     function createCol(label, data) {
@@ -137,7 +155,9 @@
       return col;
     }
 
-    function addResult(name, original, omg, wtf) {
+    function addResult(name, original, omgResult, wtfResult) {
+      const { buf: omgBuf, readTime: omgRead, writeTime: omgWrite } = omgResult;
+      const { buf: wtfBuf, readTime: wtfRead, writeTime: wtfWrite } = wtfResult;
       const row = document.createElement('div');
       row.className = 'gif-row';
       const title = document.createElement('h3');
@@ -145,10 +165,18 @@
       const imgs = document.createElement('div');
       imgs.className = 'gif-images';
       imgs.appendChild(createCol('Original', original));
-      imgs.appendChild(createCol('omggif', omg));
-      imgs.appendChild(createCol('wtfgif', wtf));
+      imgs.appendChild(createCol('omggif', omgBuf));
+      imgs.appendChild(createCol('wtfgif', wtfBuf));
       row.appendChild(title);
       row.appendChild(imgs);
+      const stats = document.createElement('div');
+      const readWinner = omgRead <= wtfRead ? 'omggif' : 'wtfgif';
+      const readPct = ((Math.max(omgRead, wtfRead) - Math.min(omgRead, wtfRead)) / Math.max(omgRead, wtfRead)) * 100;
+      const writeWinner = omgWrite <= wtfWrite ? 'omggif' : 'wtfgif';
+      const writePct = ((Math.max(omgWrite, wtfWrite) - Math.min(omgWrite, wtfWrite)) / Math.max(omgWrite, wtfWrite)) * 100;
+      stats.innerHTML = `Read: omggif ${omgRead.toFixed(2)}ms vs wtfgif ${wtfRead.toFixed(2)}ms — <strong>${readWinner}</strong> ${readPct.toFixed(1)}% faster.<br>` +
+        `Write: omggif ${omgWrite.toFixed(2)}ms vs wtfgif ${wtfWrite.toFixed(2)}ms — <strong>${writeWinner}</strong> ${writePct.toFixed(1)}% faster.`;
+      row.appendChild(stats);
       results.appendChild(row);
     }
 
