@@ -1,9 +1,8 @@
-
 ![wtfgif logo](https://github.com/mpopv/wtfgif/blob/main/src/gifs/wtf.gif?raw=true)
 
 # wtfgif
 
-![animated fire emoji](https://github.com/mpopv/wtfgif/blob/main/src/gifs/fire.gif?raw=true) A drop-in optimized replacement for [omggif](https://www.npmjs.com/package/omggif) for Node and the browser ![animated fire emoji](https://github.com/mpopv/wtfgif/blob/main/src/gifs/fire.gif?raw=true)
+A ![animated fire emoji](https://github.com/mpopv/wtfgif/blob/main/src/gifs/fire.gif?raw=true) fast ![animated fire emoji](https://github.com/mpopv/wtfgif/blob/main/src/gifs/fire.gif?raw=true) drop-in replacement for [omggif](https://www.npmjs.com/package/omggif) for Node and browser environments
 
 ## Installation
 
@@ -14,11 +13,11 @@ npm install wtfgif
 ## Usage
 
 ```ts
-import { GifReader, GifWriter } from 'wtfgif';
-import { readFileSync } from 'node:fs';
+import { GifReader, GifWriter } from "wtfgif";
+import { readFileSync } from "node:fs";
 
 // Decode a GIF
-const data = readFileSync('some.gif');
+const data = readFileSync("some.gif");
 const reader = new GifReader(data);
 console.log(reader.width, reader.height);
 
