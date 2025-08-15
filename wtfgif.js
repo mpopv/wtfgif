@@ -197,7 +197,8 @@ function buildPal32(buf, paletteOffset, paletteSize, order, transparentIndex = n
             const r = buf[paletteOffset + i * 3] | 0;
             const g = buf[paletteOffset + i * 3 + 1] | 0;
             const b = buf[paletteOffset + i * 3 + 2] | 0;
-            // Set alpha to 0 for transparent index to avoid unnecessary writes
+            // Pre-bake transparency into palette: 0-alpha for transparent index
+            // This eliminates branches in inner decode loops
             const alpha = (transparentIndex !== null && i === transparentIndex) ? 0 : 255;
             pal32[i] = (alpha << 24) | (b << 16) | (g << 8) | r;
         }
@@ -208,7 +209,8 @@ function buildPal32(buf, paletteOffset, paletteSize, order, transparentIndex = n
             const r = buf[paletteOffset + i * 3] | 0;
             const g = buf[paletteOffset + i * 3 + 1] | 0;
             const b = buf[paletteOffset + i * 3 + 2] | 0;
-            // Set alpha to 0 for transparent index to avoid unnecessary writes
+            // Pre-bake transparency into palette: 0-alpha for transparent index
+            // This eliminates branches in inner decode loops
             const alpha = (transparentIndex !== null && i === transparentIndex) ? 0 : 255;
             pal32[i] = (alpha << 24) | (r << 16) | (g << 8) | b;
         }
@@ -548,6 +550,8 @@ class GifReader {
         // Threaded worker pool support (when Wasm threads aren't available)
         this.workerPool = null; // WorkerPoolManager
         this.workerPoolEnabled = false;
+        // Memory hygiene: TypedArray pools to eliminate allocations in hot loops
+        this.memoryHygiene = null; // MemoryHygiene
         // Get or create pooled decoder tables
         this.gifHash = usePooling ? hashGifData(buf) : "";
         this.pooledTables = usePooling ? getPooledDecoderTables(this.gifHash) : createDecoderTables();
@@ -1513,11 +1517,10 @@ class GifReader {
                     let outFirst;
                     let cur = code;
                     if (cur < CLEAR) {
-                        // Single byte - check transparency
+                        // Single byte - transparency pre-baked in palette
                         outFirst = cur;
                         const b = outFirst & 0xff;
-                        if (b !== transparentIndex)
-                            out32[dst32] = pal32[b] >>> 0;
+                        out32[dst32] = pal32[b] >>> 0;
                         dst32++;
                         if (--xleft === 0) {
                             dst32 += rowStride32;
@@ -1544,20 +1547,18 @@ class GifReader {
                             stack[sp++] = entry & 0xff;
                             cur = entry >>> 8;
                         }
-                        // Write first base - check transparency
+                        // Write first base - transparency pre-baked in palette
                         const base = cur & 0xff;
-                        if (base !== transparentIndex)
-                            out32[dst32] = pal32[base] >>> 0;
+                        out32[dst32] = pal32[base] >>> 0;
                         dst32++;
                         if (--xleft === 0) {
                             dst32 += rowStride32;
                             xleft = fw;
                         }
-                        // Write stack backwards - check transparency
+                        // Write stack backwards - transparency pre-baked in palette
                         while (sp) {
                             const b = stack[--sp] & 0xff;
-                            if (b !== transparentIndex)
-                                out32[dst32] = pal32[b] >>> 0;
+                            out32[dst32] = pal32[b] >>> 0;
                             dst32++;
                             if (--xleft === 0) {
                                 dst32 += rowStride32;
@@ -1690,15 +1691,9 @@ class GifReader {
                     // Emit exactly fw pixels on this row
                     for (let x = 0; x < fw && pixelIndex < framePixels.length; x++) {
                         const b = framePixels[pixelIndex++] & 0xff;
-                        if (!hasTrans) {
-                            // Fast path: always write
-                            out32[dst32] = pal32[b] >>> 0;
-                        }
-                        else {
-                            // Check transparency - but palette already has alpha=0 for transparent index
-                            if (b !== transparentIndex)
-                                out32[dst32] = pal32[b] >>> 0;
-                        }
+                        // Always write: transparency is pre-baked into palette (0-alpha)
+                        // No branching needed - palette[transparentIndex] already has alpha=0
+                        out32[dst32] = pal32[b] >>> 0;
                         dst32++;
                     }
                 }

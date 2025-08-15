@@ -1112,6 +1112,9 @@ var wtfgif = (() => {
     workerPool = null;
     // WorkerPoolManager
     workerPoolEnabled = false;
+    // Memory hygiene: TypedArray pools to eliminate allocations in hot loops
+    memoryHygiene = null;
+    // MemoryHygiene
     /* Factory method for pooled GifReader instances */
     static createPooled(buf) {
       return new _GifReader(buf, true);
@@ -1860,7 +1863,7 @@ var wtfgif = (() => {
             if (cur < CLEAR) {
               outFirst = cur;
               const b = outFirst & 255;
-              if (b !== transparentIndex) out32[dst32] = pal32[b] >>> 0;
+              out32[dst32] = pal32[b] >>> 0;
               dst32++;
               if (--xleft === 0) {
                 dst32 += rowStride32;
@@ -1882,7 +1885,7 @@ var wtfgif = (() => {
                 cur = entry >>> 8;
               }
               const base = cur & 255;
-              if (base !== transparentIndex) out32[dst32] = pal32[base] >>> 0;
+              out32[dst32] = pal32[base] >>> 0;
               dst32++;
               if (--xleft === 0) {
                 dst32 += rowStride32;
@@ -1890,7 +1893,7 @@ var wtfgif = (() => {
               }
               while (sp) {
                 const b = stack[--sp] & 255;
-                if (b !== transparentIndex) out32[dst32] = pal32[b] >>> 0;
+                out32[dst32] = pal32[b] >>> 0;
                 dst32++;
                 if (--xleft === 0) {
                   dst32 += rowStride32;
@@ -1998,11 +2001,7 @@ var wtfgif = (() => {
             let dst32 = row * canvasWidth + fx >>> 0;
             for (let x = 0; x < fw && pixelIndex < framePixels.length; x++) {
               const b = framePixels[pixelIndex++] & 255;
-              if (!hasTrans) {
-                out32[dst32] = pal32[b] >>> 0;
-              } else {
-                if (b !== transparentIndex) out32[dst32] = pal32[b] >>> 0;
-              }
+              out32[dst32] = pal32[b] >>> 0;
               dst32++;
             }
           }
