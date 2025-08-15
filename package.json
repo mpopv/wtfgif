@@ -49,6 +49,7 @@
   "description": "A drop-in optimized replacement for omggif: - Fused LZW decode→blit - 32-bit palette, Uint32 stores - Interlace pass scheduling - Typed-array open-addressing hash for encoder",
   "devDependencies": {
     "@types/node": "^24.2.1",
+    "@vitest/coverage-v8": "^3.2.4",
     "tsup": "^8.5.0",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
