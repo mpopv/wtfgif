@@ -238,18 +238,20 @@ function hashGifData(data: Uint8Array): string {
 }
 
 /* ===== Helper / small utilities ===== */
-function assertPow2(n: number): boolean {
-  return n >= 2 && n <= 256 && (n & (n - 1)) === 0;
-}
 function log2Pow2(n: number): number {
   /* n is power-of-two (2..256) */ return 31 - Math.clz32(n);
 }
 
 function checkPalette(pal: PaletteRGB): number {
   const n = pal.length >>> 0;
-  if (!assertPow2(n))
-    throw new Error("Invalid palette size (must be power of 2, 2..256).");
-  return n;
+  if (n === 0 || n > 256)
+    throw new Error("Invalid palette size (must be 1..256).");
+  let pow2 = 1;
+  while (pow2 < n) pow2 <<= 1;
+  if (pow2 < 2) pow2 = 2;
+  if (pow2 > 256)
+    throw new Error("Invalid palette size (must be 1..256).");
+  return pow2;
 }
 
 function concatSubBlocks(buf: Uint8Array, offset: number): { bytes: Uint8Array, mcs: number } {
@@ -324,6 +326,7 @@ export class GifWriter {
   private loopCount: number | null;
   private globalPalette: PaletteRGB | null;
   private background = 0;
+  private globalColorCount = 0;
 
   constructor(
     private buf: Uint8Array,
@@ -354,6 +357,7 @@ export class GifWriter {
     let gpPow2Bits = 0; // packed-field size bits
     if (this.globalPalette !== null) {
       const n = checkPalette(this.globalPalette);
+      this.globalColorCount = n;
       const pow = log2Pow2(n); // 1..8
       gpPow2Bits = (pow - 1) & 7; // 0..7 per spec
 
@@ -379,8 +383,8 @@ export class GifWriter {
 
     // Global Color Table
     if (this.globalPalette !== null) {
-      for (let i = 0; i < this.globalPalette.length; i++) {
-        const rgb = this.globalPalette[i] >>> 0;
+      for (let i = 0; i < this.globalColorCount; i++) {
+        const rgb = (this.globalPalette[i] ?? 0) >>> 0;
         this.buf[this.p++] = (rgb >> 16) & 0xff;
         this.buf[this.p++] = (rgb >> 8) & 0xff;
         this.buf[this.p++] = rgb & 0xff;
@@ -498,8 +502,8 @@ export class GifWriter {
     this.buf[this.p++] = usingLocal ? 0x80 | lctSizeBits : 0x00;
 
     if (usingLocal) {
-      for (let i = 0; i < palette.length; i++) {
-        const rgb = palette[i] >>> 0;
+      for (let i = 0; i < numColors; i++) {
+        const rgb = (palette[i] ?? 0) >>> 0;
         this.buf[this.p++] = (rgb >> 16) & 0xff;
         this.buf[this.p++] = (rgb >> 8) & 0xff;
         this.buf[this.p++] = rgb & 0xff;
@@ -641,11 +645,12 @@ function GifWriterOutputLZWCodeStream_fast(
   emit(CLEAR);
 
   const n = (indexStream as any).length | 0;
-  const mask = (colorCount - 1) | 0; // (palette size is power-of-two)
-  let ib = (indexStream[0] as number) & mask;
+  let ib = (indexStream[0] as number) | 0;
+  if (ib >>> 0 >= colorCount) throw new Error("Pixel index out of range.");
 
   for (let i = 1; i < n; i++) {
-    const k = (indexStream[i] as number) & mask;
+    const k = (indexStream[i] as number) | 0;
+    if (k >>> 0 >= colorCount) throw new Error("Pixel index out of range.");
     const key = (ib << 8) | k;
     const found = tableGet(key);
     if (found >= 0 && found < nextCode) {

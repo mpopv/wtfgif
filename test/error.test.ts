@@ -1,6 +1,7 @@
 import { describe, test, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { GifWriter as OmgGifWriter } from 'omggif';
 import { GifReader, GifWriter } from '../src/index';
 
 const gifsDir = join(__dirname, 'gifs');
@@ -25,7 +26,9 @@ describe('GifReader error handling', () => {
 describe('GifWriter error handling', () => {
   test('invalid palette size', () => {
     const buf = new Uint8Array(10);
-    expect(() => new GifWriter(buf, 1, 1, { palette: [0, 1, 2] })).toThrow(/Invalid palette size/);
+    const bigPalette = new Array(300).fill(0);
+    expect(() => new GifWriter(buf, 1, 1, { palette: bigPalette as any })).toThrow(/Invalid palette size/);
+    expect(() => new GifWriter(buf, 1, 1, { palette: [] as any })).toThrow(/Invalid palette size/);
   });
 
   test('invalid dimensions', () => {
@@ -63,6 +66,17 @@ describe('GifWriter error handling', () => {
     expect(() => writer.addFrame(0, 0, 2, 2, new Uint8Array([0, 1, 2]))).toThrow(/Not enough pixels/);
     expect(() => writer.addFrame(0, 0, 2, 2, pixels, { disposal: 5 })).toThrow(/Disposal out of range/);
     expect(() => writer.addFrame(0, 0, 2, 2, pixels, { transparent: 5 })).toThrow(/Transparent color index out of range/);
+  });
+
+  test('out-of-range pixel indices', () => {
+    const palette = [0x000000, 0xffffff];
+    const frame = new Uint8Array([2]);
+    const bufWtf = new Uint8Array(10);
+    const wtfWriter = new GifWriter(bufWtf, 1, 1, { palette });
+    expect(() => wtfWriter.addFrame(0, 0, 1, 1, frame)).toThrow(/Pixel index out of range/);
+    const bufOmg = new Uint8Array(10);
+    const omgWriter = new OmgGifWriter(bufOmg, 1, 1, { palette });
+    expect(() => omgWriter.addFrame(0, 0, 1, 1, frame)).not.toThrow();
   });
 });
 
