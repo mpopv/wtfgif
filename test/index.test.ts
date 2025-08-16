@@ -240,6 +240,45 @@ describe('GifWriter parity with omggif', () => {
     expect(bufWtf.slice(0, wtfLen)).toStrictEqual(bufOmg.slice(0, omgLen));
   });
 
+  test('supports explicit background index 0', () => {
+    const width = 2;
+    const height = 2;
+    const palette = [0x000000, 0xffffff];
+    const frame = new Uint8Array([0, 1, 1, 0]);
+    const buf = new Uint8Array(100);
+    const writer = new WtfGifWriter(buf, width, height, { palette, background: 0 });
+    writer.addFrame(0, 0, width, height, frame);
+    const len = writer.end();
+    const gif = buf.slice(0, len);
+
+    // Ensure other libraries can read the output
+    const omgReader = new OmgGifReader(gif);
+    const wtfReader = new WtfGifReader(gif);
+    const outLen = width * height * 4;
+    const omgPixels = new Uint8Array(outLen);
+    const wtfPixels = new Uint8Array(outLen);
+    omgReader.decodeAndBlitFrameRGBA(0, omgPixels);
+    wtfReader.decodeAndBlitFrameRGBA(0, wtfPixels);
+    expect(wtfPixels).toStrictEqual(omgPixels);
+  });
+
+  test('supports non-zero background index', () => {
+    const width = 2;
+    const height = 2;
+    const palette = [0x000000, 0xffffff];
+    const frame = new Uint8Array([0, 1, 1, 0]);
+    const bufOmg = new Uint8Array(100);
+    const bufWtf = new Uint8Array(100);
+    const omgWriter = new OmgGifWriter(bufOmg, width, height, { palette, background: 1 });
+    omgWriter.addFrame(0, 0, width, height, frame);
+    const omgLen = omgWriter.end();
+    const wtfWriter = new WtfGifWriter(bufWtf, width, height, { palette, background: 1 });
+    wtfWriter.addFrame(0, 0, width, height, frame);
+    const wtfLen = wtfWriter.end();
+    expect(wtfLen).toBe(omgLen);
+    expect(bufWtf.slice(0, wtfLen)).toStrictEqual(bufOmg.slice(0, omgLen));
+  });
+
   test('multi-frame parity with transparency and looping', () => {
     const width = 2;
     const height = 2;

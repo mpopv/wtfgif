@@ -361,8 +361,6 @@ export class GifWriter {
         this.background = go.background | 0;
         if (this.background < 0 || this.background >= n)
           throw new Error("Background index out of range.");
-        if (this.background === 0)
-          throw new Error("Background index explicitly passed as 0.");
       }
     }
 
