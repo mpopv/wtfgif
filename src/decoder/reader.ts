@@ -2,6 +2,8 @@ import {
   FrameInfo,
   PooledDecoderTables,
   UnifiedGPUGifRenderer,
+  ColorMapWasm,
+  WasmWorkerPool,
 } from "../types";
 import { GIF } from "../constants/gif";
 import { buildPal32 } from "../utils/palette";
@@ -12,7 +14,11 @@ import {
   returnDecoderTablesToPool,
 } from "./pool";
 import { hashGifData } from "../utils/hash";
-import { loadGPUModule as loadGpuModule, createGpuRenderer } from "../gpu/renderer";
+import {
+  loadGPUModule as loadGpuModule,
+  createGpuRenderer,
+  GPUModule,
+} from "../gpu/renderer";
 import {
   initializeGlobalWasm,
   getWasmFeatures,
@@ -62,17 +68,15 @@ export class GifReader {
     }
   > = new Map();
 
-  private colorMapWasm: any = null; // ColorMapWasm type
+  private colorMapWasm: ColorMapWasm | null = null; // ColorMapWasm type
   private wasmEnabled = false;
   private rowIndicesBuffer: Uint8Array | null = null;
 
   private gpuRenderer: UnifiedGPUGifRenderer | null = null;
   private gpuEnabled = false;
 
-  private workerPool: any = null; // WorkerPoolManager
+  private workerPool: WasmWorkerPool | null = null; // WorkerPoolManager
   private workerPoolEnabled = false;
-
-  private memoryHygiene: any = null; // MemoryHygiene
 
   static createPooled(buf: Uint8Array): GifReader {
     return new GifReader(buf, true);
@@ -585,7 +589,7 @@ export class GifReader {
       frame.pal32rgba || new Uint32Array(256),
       frame.width,
       frame.height,
-      offscreen as any // OffscreenCanvas compatible with HTMLCanvasElement interface
+      offscreen as unknown as HTMLCanvasElement // OffscreenCanvas compatible with HTMLCanvasElement interface
     );
 
     if (!success) return null;
@@ -615,7 +619,7 @@ export class GifReader {
       frame.pal32rgba || new Uint32Array(256),
       frame.width,
       frame.height,
-      offscreen as any
+      offscreen as unknown as HTMLCanvasElement
     );
 
     if (!success) return null;
@@ -670,7 +674,7 @@ export class GifReader {
       );
 
       // Convert worker results to expected format with parity checks
-      return decodeResults.map((result: any) => {
+      return decodeResults.map((result: { pixels: Uint32Array; delay: number }) => {
         if (
           !result.pixels ||
           result.pixels.length !== this.width_ * this.height_
@@ -729,7 +733,7 @@ export class GifReader {
   /**
    * Get worker pool statistics and performance metrics
    */
-  getWorkerPoolStats(): any {
+  getWorkerPoolStats(): ReturnType<WasmWorkerPool["getStats"]> | null {
     if (!this.workerPoolEnabled || !this.workerPool) {
       return null;
     }
@@ -943,7 +947,7 @@ export class GifReader {
   /**
    * Benchmark GPU performance
    */
-  async benchmarkGPU(width = 512, height = 512): Promise<any> {
+  async benchmarkGPU(width = 512, height = 512): Promise<number | null> {
     if (!this.gpuEnabled || !this.gpuRenderer) {
       return null;
     }
@@ -965,10 +969,10 @@ export class GifReader {
   /**
    * Lazy-load GPU module to avoid startup cost
    */
-  private loadGPUModule(): any {
+  private loadGPUModule(): GPUModule | null {
     try {
       return loadGpuModule();
-    } catch (error) {
+    } catch {
       return null;
     }
   }
@@ -1056,12 +1060,15 @@ export class GifReader {
   }
 
   /* Enable Wasm color mapping for faster palette lookups (Tier 2 optimization) */
-  enableWasmColorMapping(colorMapWasm: any): void {
+  enableWasmColorMapping(colorMapWasm: ColorMapWasm): void {
     this.colorMapWasm = colorMapWasm;
     this.wasmEnabled = true;
 
     // Pre-allocate row buffer for indices (reused across frames)
-    const maxRowWidth = Math.min(this.width_, colorMapWasm.maxRowWidth || 4096);
+    const maxRowWidth = Math.min(
+      this.width_,
+      colorMapWasm.maxRowWidth ?? 4096
+    );
     this.rowIndicesBuffer = new Uint8Array(maxRowWidth);
   }
 
@@ -1649,7 +1656,7 @@ export class GifReader {
       prevCode = code;
     }
 
-    // Flush any remaining partial row
+    // Flush remaining partial row
     if (rowCount > 0) {
       this.flushRowToWasm(idxRow, rowCount, out32, dst32 - rowCount, rowCount);
     }

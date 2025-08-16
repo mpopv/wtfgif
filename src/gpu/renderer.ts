@@ -1,15 +1,19 @@
 import { UnifiedGPUGifRenderer } from "../types";
 
-export function loadGPUModule(): any {
+export interface GPUModule {
+  UnifiedGPUGifRenderer: new () => UnifiedGPUGifRenderer;
+}
+
+export function loadGPUModule(): GPUModule | null {
   try {
     return null;
-  } catch (e) {
+  } catch {
     return null;
   }
 }
 
 export function createGpuRenderer(
-  gpuModule: any
+  gpuModule: GPUModule | null
 ): UnifiedGPUGifRenderer | null {
   if (!gpuModule || !gpuModule.UnifiedGPUGifRenderer) return null;
   return new gpuModule.UnifiedGPUGifRenderer();

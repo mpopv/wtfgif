@@ -1,36 +1,50 @@
 import { WasmGifDecoder, WasmWorkerPool } from "../types";
 
-let createWasmGifDecoder: any;
-let createWasmWorkerPool: any;
-let isWasmSupported: any;
-let isWasmSIMDSupported: any;
-let isWasmThreadsSupported: any;
+interface WasmModule {
+  createWasmGifDecoder: (
+    wasmPath?: string
+  ) => Promise<WasmGifDecoder | null>;
+  createWasmWorkerPool: (
+    wasmPath?: string
+  ) => Promise<WasmWorkerPool | null>;
+  isWasmSupported: () => boolean;
+  isWasmSIMDSupported: () => boolean;
+  isWasmThreadsSupported: () => boolean;
+}
 
-const loadWasmModule = () => {
+const loadWasmModule = (): WasmModule | null => {
   try {
-    return require("../wasm-full/wasmDecoder");
-  } catch (error) {
+    return require("../wasm-full/wasmDecoder") as WasmModule;
+  } catch {
     return null;
   }
 };
 
-createWasmGifDecoder = async (...args: any[]) => {
+const createWasmGifDecoder = async (
+  wasmPath?: string
+): Promise<WasmGifDecoder | null> => {
   const wasmModule = loadWasmModule();
-  return wasmModule ? wasmModule.createWasmGifDecoder(...args) : null;
+  return wasmModule ? wasmModule.createWasmGifDecoder(wasmPath) : null;
 };
-createWasmWorkerPool = async (...args: any[]) => {
+
+const createWasmWorkerPool = async (
+  wasmPath?: string
+): Promise<WasmWorkerPool | null> => {
   const wasmModule = loadWasmModule();
-  return wasmModule ? wasmModule.createWasmWorkerPool(...args) : null;
+  return wasmModule ? wasmModule.createWasmWorkerPool(wasmPath) : null;
 };
-isWasmSupported = () => {
+
+const isWasmSupported = (): boolean => {
   const wasmModule = loadWasmModule();
   return wasmModule ? wasmModule.isWasmSupported() : false;
 };
-isWasmSIMDSupported = () => {
+
+const isWasmSIMDSupported = (): boolean => {
   const wasmModule = loadWasmModule();
   return wasmModule ? wasmModule.isWasmSIMDSupported() : false;
 };
-isWasmThreadsSupported = () => {
+
+const isWasmThreadsSupported = (): boolean => {
   const wasmModule = loadWasmModule();
   return wasmModule ? wasmModule.isWasmThreadsSupported() : false;
 };

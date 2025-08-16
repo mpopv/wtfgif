@@ -4,6 +4,21 @@ import { describe, expect, test } from "vitest";
 import { GifReader as OmgGifReader } from "omggif";
 import { GifReader as WtfGifReader } from "../src/index";
 
+interface OmgReaderInternal extends OmgGifReader {
+  globalColorTable: number[] | null;
+  bgColor: number;
+}
+
+interface WtfReaderInternal extends WtfGifReader {
+  hasGlobalPalette?: () => boolean;
+  backgroundIndex?: () => number | null;
+}
+
+interface OmgFrameInfoInternal
+  extends ReturnType<OmgGifReader["frameInfo"]> {
+  localColorTable: number[] | null;
+}
+
 const gifsDir = join(__dirname, "gifs");
 const testFiles = ["18d30677-d255-4cc9-9933-c8d35306c1d5.gif", "Clap-1x.gif"];
 
@@ -11,10 +26,10 @@ describe("Pixel Difference Investigation", () => {
   for (const file of testFiles) {
     test(`${file} - analyze pixel differences`, () => {
       const gif = readFileSync(join(gifsDir, file));
-      const omg = new OmgGifReader(gif);
-      const wtf = new WtfGifReader(gif);
-      const omgAny = omg as any;
-      const wtfAny = wtf as any;
+        const omg = new OmgGifReader(gif) as OmgReaderInternal;
+        const wtf = new WtfGifReader(gif) as WtfReaderInternal;
+        const omgAny = omg;
+        const wtfAny = wtf;
 
       console.log(`\n=== ${file} ===`);
       console.log(
@@ -36,8 +51,8 @@ describe("Pixel Difference Investigation", () => {
 
       // Test frame 0 only for detailed analysis
       const frameIdx = 0;
-      const omgFrame = omg.frameInfo(frameIdx);
-      const omgFrameAny = omgFrame as any;
+        const omgFrame = omg.frameInfo(frameIdx) as OmgFrameInfoInternal;
+        const omgFrameAny = omgFrame;
       const wtfFrame = wtf.frameInfo(frameIdx);
 
       console.log(`\nFrame ${frameIdx} info:`);
@@ -209,14 +224,14 @@ describe("Pixel Difference Investigation", () => {
   test("direct palette usage comparison", () => {
     const file = "Clap-1x.gif"; // This one has the biggest mismatch
     const gif = readFileSync(join(gifsDir, file));
-    const omg = new OmgGifReader(gif);
-    const wtf = new WtfGifReader(gif);
+    const omg = new OmgGifReader(gif) as OmgReaderInternal;
+    const wtf = new WtfGifReader(gif) as WtfReaderInternal;
 
     console.log(`\n=== Direct Palette Analysis for ${file} ===`);
 
     // For omggif: examine what it actually exposes
-    const omgAny = omg as any;
-    const wtfAny = wtf as any;
+    const omgAny = omg;
+    const wtfAny = wtf;
     console.log(
       `omggif globalColorTable type:`,
       typeof omgAny.globalColorTable
@@ -235,8 +250,8 @@ describe("Pixel Difference Investigation", () => {
     }
 
     // For frame 0 (the problematic one)
-    const omgFrame0 = omg.frameInfo(0);
-    const omgFrame0Any = omgFrame0 as any;
+    const omgFrame0 = omg.frameInfo(0) as OmgFrameInfoInternal;
+    const omgFrame0Any = omgFrame0;
     console.log(
       `omggif frame 0 localColorTable type:`,
       typeof omgFrame0Any.localColorTable

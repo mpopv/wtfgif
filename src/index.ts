@@ -26,9 +26,17 @@ export {
     cleanupWasm,
   };
 
-  if (typeof window !== "undefined") {
-    (window as any).wtfgif = browserExports;
-  } else if (typeof globalThis !== "undefined") {
-    (globalThis as any).wtfgif = browserExports;
+    if (typeof window !== "undefined") {
+      (window as Window & { wtfgif: typeof browserExports }).wtfgif = browserExports;
+    } else if (typeof globalThis !== "undefined") {
+      (globalThis as typeof globalThis & { wtfgif: typeof browserExports }).wtfgif =
+        browserExports;
+    }
+  })();
+
+declare global {
+  interface Window {
+    wtfgif: typeof browserExports;
   }
-})();
+  var wtfgif: typeof browserExports;
+}

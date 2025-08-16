@@ -16,8 +16,24 @@ export interface UnifiedGPUGifRenderer {
   updatePalette: (palette: Uint32Array) => void;
   getBackend: () => string;
   isGPUAccelerated: () => boolean;
-  benchmark: (width?: number, height?: number) => Promise<any>;
+  benchmark: (width?: number, height?: number) => Promise<number>;
   dispose: () => void;
+}
+
+export interface ColorMapWasm {
+  maxRowWidth?: number;
+  heapU8: Uint8Array;
+  heapU32: Uint32Array;
+  palPtr: number;
+  idxPtr: number;
+  outPtr: number;
+  map32: (
+    idxPtr: number,
+    outPtr: number,
+    palPtr: number,
+    width: number,
+    height: number
+  ) => void;
 }
 
 export interface WasmGifDecoder {
@@ -48,11 +64,11 @@ export interface WasmGifDecoder {
 }
 
 export interface WasmWorkerPool {
-  decode: (
+  decodeFrame: (
     gifData: Uint8Array,
     frameIndex: number
   ) => Promise<{ pixels: Uint32Array; delay: number }>;
-  decodeParallel: (
+  decodeFrames: (
     gifData: Uint8Array,
     frameIndices: number[]
   ) => Promise<{ pixels: Uint32Array; delay: number }[]>;

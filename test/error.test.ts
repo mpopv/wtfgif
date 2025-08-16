@@ -23,9 +23,13 @@ describe("GifReader error handling", () => {
     expect(() => reader.decodeFrameIntoBuffer(0, small)).toThrow(
       /Buffer too small/
     );
-    expect(() => reader.frameImageDataZeroCopy(0, undefined as any)).toThrow(
-      /WebAssembly not available/
-    );
+    expect(
+      () =>
+        reader.frameImageDataZeroCopy(
+          0,
+          undefined as unknown as CanvasRenderingContext2D
+        )
+    ).toThrow(/WebAssembly not available/);
   });
 });
 
@@ -34,9 +38,9 @@ describe("GifWriter error handling", () => {
     const buf = new Uint8Array(10);
     const bigPalette = new Array(300).fill(0);
     expect(
-      () => new GifWriter(buf, 1, 1, { palette: bigPalette as any })
+      () => new GifWriter(buf, 1, 1, { palette: bigPalette as number[] })
     ).toThrow(/Invalid palette size/);
-    expect(() => new GifWriter(buf, 1, 1, { palette: [] as any })).toThrow(
+    expect(() => new GifWriter(buf, 1, 1, { palette: [] as number[] })).toThrow(
       /Invalid palette size/
     );
   });
