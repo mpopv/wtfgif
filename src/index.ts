@@ -1429,8 +1429,34 @@ export class GifReader {
       const frameSize = frame.width * frame.height;
       const indexData = new Uint8Array(frameSize);
       
-      // Use simplified LZW decoder that outputs indices directly
-      this.lzwDecodeToIndices(frame, indexData);
+      if (frame.interlaced) {
+        // For interlaced frames, decode to temp buffer then deinterlace
+        const tempIndices = new Uint8Array(frameSize);
+        this.lzwDecodeToIndices(frame, tempIndices);
+        
+        // Deinterlace using same pass logic as RGBA decoder
+        // Pass 0: rows 0,8,16... Pass 1: rows 4,12,20... Pass 2: rows 2,6,10,14... Pass 3: rows 1,3,5,7,9...
+        let pixelIndex = 0;
+        for (let pass = 0; pass < 4; pass++) {
+          let yStart = 0, yStride = 8;
+          if (pass === 1) { yStart = 4; yStride = 8; }
+          else if (pass === 2) { yStart = 2; yStride = 4; }
+          else if (pass === 3) { yStart = 1; yStride = 2; }
+          
+          for (let yInPass = 0; ; yInPass++) {
+            const row = yStart + yInPass * yStride;
+            if (row >= frame.height) break;
+            
+            const dst = row * frame.width;
+            for (let x = 0; x < frame.width && pixelIndex < tempIndices.length; x++) {
+              indexData[dst + x] = tempIndices[pixelIndex++];
+            }
+          }
+        }
+      } else {
+        // Non-interlaced: decode directly
+        this.lzwDecodeToIndices(frame, indexData);
+      }
       
       return indexData;
       
@@ -1541,7 +1567,7 @@ export class GifReader {
         
         if (nextCode >= codeMask + 1 && codeSize < 12) {
           codeSize++;
-          codeMask = (codeMask << 1) | 1;
+          codeMask = (1 << codeSize) - 1;
         }
       }
       
