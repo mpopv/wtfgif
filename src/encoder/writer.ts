@@ -126,7 +126,7 @@ export class GifWriter {
       throw new Error("x/y invalid.");
     if (w <= 0 || h <= 0 || w > 65535 || h > 65535)
       throw new Error("Width/Height invalid.");
-    if ((indexedPixels as any).length < w * h)
+    if (indexedPixels.length < w * h)
       throw new Error("Not enough pixels for the frame size.");
 
     let usingLocal = true;
@@ -323,7 +323,7 @@ function GifWriterOutputLZWCodeStream_fast(
   // Emit initial clear
   emit(CLEAR);
 
-  const n = (indexStream as any).length | 0;
+  const n = indexStream.length | 0;
   let ib = (indexStream[0] as number) | 0;
   if (ib >>> 0 >= colorCount) throw new Error("Pixel index out of range.");
 

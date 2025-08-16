@@ -6,6 +6,7 @@ import {
   GifReader as WtfGifReader,
   GifWriter as WtfGifWriter,
 } from "../src/index";
+import type { FrameInfo } from "../src/types";
 
 const gifsDir = join(__dirname, "gifs");
 // Test ALL GIF files for comprehensive compatibility
@@ -88,7 +89,7 @@ describe("GifReader parity with omggif", () => {
         "interlaced",
         "delay",
         "disposal",
-      ] as const;
+      ] as (keyof FrameInfo)[];
       const numFrames = omg.numFrames();
       const frameLimit = Math.min(numFrames, 3);
       const len = wtf.width * wtf.height * 4;
@@ -96,7 +97,7 @@ describe("GifReader parity with omggif", () => {
         const omgInfo = omg.frameInfo(i);
         const wtfInfo = wtf.frameInfo(i);
         const filteredWtf = Object.fromEntries(
-          fields.map((f) => [f, (wtfInfo as any)[f]])
+          fields.map((f) => [f, wtfInfo[f]])
         );
         expect(filteredWtf).toStrictEqual(omgInfo);
 
