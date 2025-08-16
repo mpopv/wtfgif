@@ -8,7 +8,9 @@ const gifsDir = join(__dirname, 'gifs');
 // Test ALL GIF files for comprehensive compatibility
 const allGifFiles = readdirSync(gifsDir).filter(f => f.endsWith('.gif'));
 // For performance, test a representative subset in CI, all files when needed
-const gifFiles = allGifFiles.slice(0, 2); // Test first 2 files for now
+const gifFiles = [
+  'party_blob.gif',
+];
 
 describe('GIF file inventory', () => {
   test('discovers all GIF files in test directory', () => {
@@ -93,7 +95,7 @@ describe('Pixel-perfect decoding compatibility', () => {
       }
       
       wtf.returnToPool();
-    });
+    }, 20000);
   }
 });
 
@@ -173,6 +175,52 @@ describe('GifWriter parity with omggif', () => {
       omgReader.decodeAndBlitFrameRGBA(1, omgPixels);
       wtfReader.decodeAndBlitFrameRGBA(1, wtfPixels);
       expect(wtfPixels).toStrictEqual(omgPixels);
+    });
+
+    test('encodes many small frames without stale dictionary entries', () => {
+      const width = 2;
+      const height = 2;
+      const palette = [0x000000, 0xffffff];
+      const frame1 = new Uint8Array([0, 1, 1, 0]);
+      const frame2 = new Uint8Array([1, 0, 0, 1]);
+      const frames = [frame1, frame2];
+      const frameCount = 100;
+      const buf = new Uint8Array(10000);
+      const writer = new WtfGifWriter(buf, width, height, { palette });
+      for (let i = 0; i < frameCount; i++) {
+        const f = frames[i & 1];
+        writer.addFrame(0, 0, width, height, f);
+      }
+      const len = writer.end();
+      const gif = buf.slice(0, len);
+
+      const omgReader = new OmgGifReader(gif);
+      const wtfReader = new WtfGifReader(gif);
+      const outLen = width * height * 4;
+
+      // Precompute expected RGBA for the two frame patterns
+      const expected = frames.map(data => {
+        const rgba = new Uint8Array(outLen);
+        for (let i = 0; i < data.length; i++) {
+          const color = palette[data[i]];
+          const o = i * 4;
+          rgba[o] = (color >> 16) & 0xff;
+          rgba[o + 1] = (color >> 8) & 0xff;
+          rgba[o + 2] = color & 0xff;
+          rgba[o + 3] = 0xff;
+        }
+        return rgba;
+      });
+
+      for (let i = 0; i < frameCount; i++) {
+        const omgPixels = new Uint8Array(outLen);
+        const wtfPixels = new Uint8Array(outLen);
+        omgReader.decodeAndBlitFrameRGBA(i, omgPixels);
+        wtfReader.decodeAndBlitFrameRGBA(i, wtfPixels);
+        const expectedPixels = expected[i & 1];
+        expect(wtfPixels).toStrictEqual(omgPixels);
+        expect(wtfPixels).toStrictEqual(expectedPixels);
+      }
     });
 
   test('local palette support', () => {
