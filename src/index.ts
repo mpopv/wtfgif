@@ -1,83 +1,27 @@
-// (c) Matt Popovich, 2025.
-//
-// https://github.com/mpopv/wtfgif
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to
-// deal in the Software without restriction, including without limitation the
-// rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
-// sell copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-// FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
-// IN THE SOFTWARE.
-//
-// wtfgif is a TypeScript implementation of a GIF 89a encoder and decoder,
-// including animation and compression. It is a drop-in, optimized replacement
-// for omggif with fused decode→blit, 32-bit palettes, interlace pass scheduling,
-// and a typed-array hash encoder. It runs in browsers and Node.
-
 "use strict";
 
-/* ===== WebAssembly Integration ===== */
-// Import Wasm decoder types and factory functions
 let createWasmGifDecoder: any;
 let createWasmWorkerPool: any;
 let isWasmSupported: any;
 let isWasmSIMDSupported: any;
 let isWasmThreadsSupported: any;
-// TypeScript type definitions for WebAssembly integration
-interface UnifiedGPUGifRenderer {
-  initialize: (canvas?: HTMLCanvasElement) => Promise<boolean>;
-  renderFrame: (indexData: Uint8Array, palette: Uint32Array, width: number, height: number) => Promise<HTMLCanvasElement | null>;
-  renderToCanvas: (indexData: Uint8Array, palette: Uint32Array, width: number, height: number, targetCanvas: HTMLCanvasElement) => Promise<boolean>;
-  updatePalette: (palette: Uint32Array) => void;
-  getBackend: () => string;
-  isGPUAccelerated: () => boolean;
-  benchmark: (width?: number, height?: number) => Promise<any>;
-  dispose: () => void;
-}
+import {
+  UnifiedGPUGifRenderer,
+  WasmGifDecoder,
+  WasmWorkerPool,
+  PooledDecoderTables,
+  PaletteRGB,
+  FrameInfo,
+} from "./types";
 
-// TypeScript type definitions for WebAssembly integration
-interface WasmGifDecoder {
-  memory: WebAssembly.Memory;
-  decode_rgba: (gifPtr: number, gifLen: number, frameIndex: number, outPtr: number, outLen: number) => number;
-  decode_rgba_threaded: (gifPtr: number, gifLen: number, frameIndex: number, outPtr: number, outLen: number, numThreads: number) => number;
-  init_heap: () => void;
-  reset_heap: () => void;
-  get_heap_usage: () => number;
-  test_simd: () => number;
-  wasm_malloc: (size: number) => number;
-  wasm_free: (ptr: number) => void;
-  heapU8: Uint8Array;
-  heapU32: Uint32Array;
-}
-
-interface WasmWorkerPool {
-  decode: (gifData: Uint8Array, frameIndex: number) => Promise<{ pixels: Uint32Array; delay: number }>;
-  decodeParallel: (gifData: Uint8Array, frameIndices: number[]) => Promise<{ pixels: Uint32Array; delay: number }[]>;
-  terminate: () => void;
-  getStats: () => { activeWorkers: number; completedJobs: number; avgDecodeTime: number };
-}
-
-// Lazy-load WebAssembly module functions
 const loadWasmModule = () => {
   try {
-    return require('../wasm-full/wasmDecoder');
+    return require("../wasm-full/wasmDecoder");
   } catch (error) {
     return null;
   }
 };
 
-// Initialize WebAssembly functions with lazy loading
 createWasmGifDecoder = async (...args: any[]) => {
   const wasmModule = loadWasmModule();
   return wasmModule ? wasmModule.createWasmGifDecoder(...args) : null;
@@ -122,20 +66,19 @@ const initializeGlobalWasm = async (wasmPath?: string): Promise<void> => {
   try {
     // Initialize main decoder
     globalWasmDecoder = await createWasmGifDecoder(wasmPath);
-    
+
     // Initialize worker pool if threading is supported
     if (WASM_FEATURES.threads) {
       globalWasmWorkerPool = await createWasmWorkerPool(wasmPath);
     }
-    
-    console.log('WebAssembly GIF decoder initialized:', {
+
+    console.log("WebAssembly GIF decoder initialized:", {
       decoder: !!globalWasmDecoder,
       workerPool: !!globalWasmWorkerPool,
       features: WASM_FEATURES,
     });
-    
   } catch (error) {
-    console.warn('Failed to initialize WebAssembly decoder:', error);
+    console.warn("Failed to initialize WebAssembly decoder:", error);
     globalWasmDecoder = null;
     globalWasmWorkerPool = null;
   }
@@ -169,7 +112,7 @@ const enum GIF {
   MAX_CODE = 4096,
 }
 
-type PaletteRGB = number[]; // array of 24-bit 0xRRGGBB
+// moved to types.ts
 
 /* ===== Module-level reusable arrays ===== */
 // Reuse these across all instances to avoid allocations (since we never nest calls)
@@ -177,13 +120,7 @@ const moduleReusableFramePixels = new Uint8Array(2048 * 2048); // Reasonable max
 let moduleFramePixelsInUse = false;
 
 /* ===== GifReader Object Pooling ===== */
-interface PooledDecoderTables {
-  decTable: Int32Array;
-  stack: Uint8Array; 
-  firstByte: Int16Array;
-  out32Cache: WeakMap<Uint8Array, Uint32Array>;
-  hash: string; // Hash of GIF data for reuse validation
-}
+// moved to types.ts
 
 const decoderTablePool: PooledDecoderTables[] = [];
 const MAX_POOL_SIZE = 16; // Reasonable limit for memory usage
@@ -194,18 +131,18 @@ function createDecoderTables(): PooledDecoderTables {
     stack: new Uint8Array(GIF.MAX_CODE),
     firstByte: new Int16Array(GIF.MAX_CODE),
     out32Cache: new WeakMap<Uint8Array, Uint32Array>(),
-    hash: ""
+    hash: "",
   };
 }
 
 function getPooledDecoderTables(gifHash: string): PooledDecoderTables {
   // Try to find an existing pooled instance for this GIF
-  const pooledIndex = decoderTablePool.findIndex(p => p.hash === gifHash);
+  const pooledIndex = decoderTablePool.findIndex((p) => p.hash === gifHash);
   if (pooledIndex >= 0) {
     const pooled = decoderTablePool.splice(pooledIndex, 1)[0];
     return pooled;
   }
-  
+
   // Try to reuse any available pooled instance
   if (decoderTablePool.length > 0) {
     const pooled = decoderTablePool.pop()!;
@@ -217,7 +154,7 @@ function getPooledDecoderTables(gifHash: string): PooledDecoderTables {
     pooled.hash = gifHash;
     return pooled;
   }
-  
+
   // Create new instance
   const tables = createDecoderTables();
   tables.hash = gifHash;
@@ -253,14 +190,16 @@ function checkPalette(pal: PaletteRGB): number {
   let pow2 = 1;
   while (pow2 < n) pow2 <<= 1;
   if (pow2 < 2) pow2 = 2;
-  if (pow2 > 256)
-    throw new Error("Invalid palette size (must be 1..256).");
+  if (pow2 > 256) throw new Error("Invalid palette size (must be 1..256).");
   return pow2;
 }
 
-function concatSubBlocks(buf: Uint8Array, offset: number): { bytes: Uint8Array, mcs: number } {
-  const mcs = buf[offset] | 0;         // min code size
-  let q = (offset + 1) | 0;            // first sub-block size byte
+function concatSubBlocks(
+  buf: Uint8Array,
+  offset: number
+): { bytes: Uint8Array; mcs: number } {
+  const mcs = buf[offset] | 0; // min code size
+  let q = (offset + 1) | 0; // first sub-block size byte
   let total = 0;
   // first pass: measure
   while (true) {
@@ -303,7 +242,8 @@ function buildPal32(
       const b = buf[paletteOffset + i * 3 + 2] | 0;
       // Pre-bake transparency into palette: 0-alpha for transparent index
       // This eliminates branches in inner decode loops
-      const alpha = (transparentIndex !== null && i === transparentIndex) ? 0 : 255;
+      const alpha =
+        transparentIndex !== null && i === transparentIndex ? 0 : 255;
       pal32[i] = (alpha << 24) | (b << 16) | (g << 8) | r;
     }
   } else {
@@ -314,7 +254,8 @@ function buildPal32(
       const b = buf[paletteOffset + i * 3 + 2] | 0;
       // Pre-bake transparency into palette: 0-alpha for transparent index
       // This eliminates branches in inner decode loops
-      const alpha = (transparentIndex !== null && i === transparentIndex) ? 0 : 255;
+      const alpha =
+        transparentIndex !== null && i === transparentIndex ? 0 : 255;
       pal32[i] = (alpha << 24) | (r << 16) | (g << 8) | b;
     }
   }
@@ -727,25 +668,7 @@ namespace GifWriterOutputLZWCodeStream_fast {
 }
 
 /* ====== Reader (Decoder) ====== */
-type FrameInfo = {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  has_local_palette: boolean;
-  palette_offset: number;
-  palette_size: number;
-  data_offset: number;
-  data_length: number;
-  transparent_index: number | null;
-  interlaced: boolean;
-  delay: number;
-  disposal: number;
-  min_code_size: number;
-  codes: Uint8Array;
-  pal32rgba?: Uint32Array;
-  pal32bgra?: Uint32Array;
-};
+// moved to types.ts
 
 export class GifReader {
   private p = 0;
@@ -761,33 +684,36 @@ export class GifReader {
   // Pooled decoder tables for reuse across instances
   private pooledTables: PooledDecoderTables;
   private gifHash: string;
-  
+
   // Aliases for easier access
   private decTable: Int32Array;
   private stack: Uint8Array;
   private firstByte: Int16Array;
   private out32Cache: WeakMap<Uint8Array, Uint32Array>;
-  
+
   // Zero-copy canvas support
-  private zeroCopyBuffers: Map<string, {
-    wasmPtr: number;
-    rgbaU8: Uint8ClampedArray;
-    imageData: ImageData;
-  }> = new Map();
-  
+  private zeroCopyBuffers: Map<
+    string,
+    {
+      wasmPtr: number;
+      rgbaU8: Uint8ClampedArray;
+      imageData: ImageData;
+    }
+  > = new Map();
+
   // Optional Wasm color mapping helper (Tier 2 optimization)
   private colorMapWasm: any = null; // ColorMapWasm type
   private wasmEnabled = false;
   private rowIndicesBuffer: Uint8Array | null = null;
-  
+
   // GPU palette expansion (Tier 4 optimization)
   private gpuRenderer: UnifiedGPUGifRenderer | null = null;
   private gpuEnabled = false;
-  
+
   // Threaded worker pool support (when Wasm threads aren't available)
   private workerPool: any = null; // WorkerPoolManager
   private workerPoolEnabled = false;
-  
+
   // Memory hygiene: TypedArray pools to eliminate allocations in hot loops
   private memoryHygiene: any = null; // MemoryHygiene
 
@@ -804,8 +730,10 @@ export class GifReader {
   constructor(private buf: Uint8Array, usePooling: boolean = true) {
     // Get or create pooled decoder tables
     this.gifHash = usePooling ? hashGifData(buf) : "";
-    this.pooledTables = usePooling ? getPooledDecoderTables(this.gifHash) : createDecoderTables();
-    
+    this.pooledTables = usePooling
+      ? getPooledDecoderTables(this.gifHash)
+      : createDecoderTables();
+
     // Set up aliases for easier access
     this.decTable = this.pooledTables.decTable;
     this.stack = this.pooledTables.stack;
@@ -951,8 +879,20 @@ export class GifReader {
           const { bytes: codes, mcs } = concatSubBlocks(buf, data_offset);
 
           // NEW: prebuild pal32 variants once per frame with transparent index optimization
-          const pal32rgba = buildPal32(buf, (palette_offset ?? 0), (palette_size ?? 0), "rgba", transparent_index);
-          const pal32bgra = buildPal32(buf, (palette_offset ?? 0), (palette_size ?? 0), "bgra", transparent_index);
+          const pal32rgba = buildPal32(
+            buf,
+            palette_offset ?? 0,
+            palette_size ?? 0,
+            "rgba",
+            transparent_index
+          );
+          const pal32bgra = buildPal32(
+            buf,
+            palette_offset ?? 0,
+            palette_size ?? 0,
+            "bgra",
+            transparent_index
+          );
 
           this.frames.push({
             x,
@@ -962,7 +902,7 @@ export class GifReader {
             has_local_palette,
             palette_offset: palette_offset ?? 0,
             palette_size: palette_size ?? 0,
-            data_offset,                 // keep for compatibility
+            data_offset, // keep for compatibility
             data_length: p - data_offset,
             transparent_index,
             interlaced: interlace,
@@ -972,9 +912,9 @@ export class GifReader {
             min_code_size: mcs,
             codes,
             pal32rgba,
-            pal32bgra
+            pal32bgra,
           });
-          
+
           // Reset GCE state for next frame
           delay = 0;
           transparent_index = null;
@@ -1002,7 +942,7 @@ export class GifReader {
   }
 
   /* ===== WebAssembly Integration Methods ===== */
-  
+
   /**
    * Initialize WebAssembly decoder for this GifReader instance
    */
@@ -1010,29 +950,32 @@ export class GifReader {
     if (!WASM_FEATURES.supported) {
       return false;
     }
-    
+
     if (!globalWasmDecoder && !wasmInitPromise) {
       wasmInitPromise = initializeGlobalWasm(wasmPath);
     }
-    
+
     if (wasmInitPromise) {
       await wasmInitPromise;
     }
-    
+
     return globalWasmDecoder !== null;
   }
-  
+
   /**
    * Check if WebAssembly decoder is available and initialized
    */
   isWasmReady(): boolean {
     return globalWasmDecoder !== null;
   }
-  
+
   /**
    * Decode frame using WebAssembly (with fallback to JavaScript)
    */
-  async framePixelsWasm(frameIndex: number, pixels?: Uint32Array): Promise<Uint32Array> {
+  async framePixelsWasm(
+    frameIndex: number,
+    pixels?: Uint32Array
+  ): Promise<Uint32Array> {
     // Try Wasm first if available
     if (this.isWasmReady() && globalWasmDecoder) {
       try {
@@ -1041,59 +984,66 @@ export class GifReader {
           return result;
         }
       } catch (error) {
-        console.warn('Wasm decode failed, falling back to JavaScript:', error);
+        console.warn("Wasm decode failed, falling back to JavaScript:", error);
       }
     }
-    
+
     // Fallback to JavaScript decoder
     const outputSize = this.width_ * this.height_;
     if (!pixels || pixels.length < outputSize) {
       pixels = new Uint32Array(outputSize);
     }
-    
+
     // Use the existing JavaScript decoder
-    const uint8Buffer = new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.byteLength);
+    const uint8Buffer = new Uint8Array(
+      pixels.buffer,
+      pixels.byteOffset,
+      pixels.byteLength
+    );
     this.decodeAndBlitFrameRGBA(frameIndex, uint8Buffer);
-    
+
     return pixels;
   }
-  
+
   /**
    * Internal Wasm frame decoder
    */
-  private async decodeFrameWasm(frameIndex: number, pixels?: Uint32Array): Promise<Uint32Array | null> {
+  private async decodeFrameWasm(
+    frameIndex: number,
+    pixels?: Uint32Array
+  ): Promise<Uint32Array | null> {
     if (!globalWasmDecoder) {
       return null;
     }
-    
+
     if (frameIndex < 0 || frameIndex >= this.frames.length) {
       throw new Error("Frame index out of bounds");
     }
-    
+
     // Calculate required output size
     const outputSize = this.width_ * this.height_;
-    
+
     // Allocate or reuse output buffer
     if (!pixels || pixels.length < outputSize) {
       pixels = new Uint32Array(outputSize);
     }
-    
+
     // Allocate GIF data in Wasm heap
     const gifPtr = globalWasmDecoder.wasm_malloc(this.buf.length);
     if (gifPtr === 0) {
-      throw new Error('Failed to allocate Wasm memory for GIF data');
+      throw new Error("Failed to allocate Wasm memory for GIF data");
     }
-    
+
     const outPtr = globalWasmDecoder.wasm_malloc(outputSize * 4);
     if (outPtr === 0) {
       globalWasmDecoder.wasm_free(gifPtr);
-      throw new Error('Failed to allocate Wasm memory for output');
+      throw new Error("Failed to allocate Wasm memory for output");
     }
-    
+
     try {
       // Copy GIF data to Wasm heap
       globalWasmDecoder.heapU8.set(this.buf, gifPtr);
-      
+
       // Call Wasm decoder
       const result = globalWasmDecoder.decode_rgba(
         gifPtr,
@@ -1102,12 +1052,12 @@ export class GifReader {
         outPtr >>> 2, // Convert to u32 offset
         outputSize
       );
-      
+
       // Check for errors
       if (result > 1000) {
         throw new Error(`Wasm decode error: ${result}`);
       }
-      
+
       // Copy result back to JavaScript
       const wasmOutput = globalWasmDecoder.heapU32.subarray(
         outPtr >>> 2,
@@ -1115,22 +1065,25 @@ export class GifReader {
       );
       // Parity check: ensure decoder produced expected number of pixels
       if (wasmOutput.length !== outputSize) {
-        throw new Error(`Wasm output length ${wasmOutput.length} does not match expected ${outputSize}`);
+        throw new Error(
+          `Wasm output length ${wasmOutput.length} does not match expected ${outputSize}`
+        );
       }
       pixels.set(wasmOutput);
 
       return pixels;
-      
     } finally {
       globalWasmDecoder.wasm_free(gifPtr);
       globalWasmDecoder.wasm_free(outPtr);
     }
   }
-  
+
   /**
    * Decode multiple frames in parallel using Wasm worker pool
    */
-  async framePixelsParallel(frameIndices: number[]): Promise<{ pixels: Uint32Array; delay: number }[]> {
+  async framePixelsParallel(
+    frameIndices: number[]
+  ): Promise<{ pixels: Uint32Array; delay: number }[]> {
     if (!WASM_FEATURES.threads || !globalWasmWorkerPool) {
       // Fallback: decode sequentially using regular method
       const results = [];
@@ -1141,15 +1094,20 @@ export class GifReader {
       }
       return results;
     }
-    
+
     // Use worker pool for parallel decode
     return globalWasmWorkerPool.decodeParallel(this.buf, frameIndices);
   }
-  
+
   /**
    * Get WebAssembly performance statistics
    */
-  getWasmStats(): { supported: boolean; simd: boolean; threads: boolean; heapUsage?: number } {
+  getWasmStats(): {
+    supported: boolean;
+    simd: boolean;
+    threads: boolean;
+    heapUsage?: number;
+  } {
     return {
       ...WASM_FEATURES,
       heapUsage: globalWasmDecoder?.get_heap_usage(),
@@ -1157,7 +1115,7 @@ export class GifReader {
   }
 
   /* ===== GPU Palette Expansion Methods (Tier 4) ===== */
-  
+
   /**
    * Initialize GPU palette expansion for ultra-fast rendering
    */
@@ -1169,44 +1127,46 @@ export class GifReader {
         if (!gpuModule) {
           return false;
         }
-        
+
         this.gpuRenderer = new gpuModule.UnifiedGPUGifRenderer();
       }
-      
+
       const success = await this.gpuRenderer!.initialize(canvas);
       this.gpuEnabled = success;
       return success;
-      
     } catch (error) {
-      console.warn('GPU palette expansion failed to initialize:', error);
+      console.warn("GPU palette expansion failed to initialize:", error);
       this.gpuEnabled = false;
       return false;
     }
   }
-  
+
   /**
    * Decode frame using GPU acceleration (fastest possible path)
    */
-  async framePixelsGPU(frameIndex: number, targetCanvas?: HTMLCanvasElement): Promise<HTMLCanvasElement | null> {
+  async framePixelsGPU(
+    frameIndex: number,
+    targetCanvas?: HTMLCanvasElement
+  ): Promise<HTMLCanvasElement | null> {
     if (!this.gpuEnabled || !this.gpuRenderer) {
       // Auto-initialize GPU if not done yet
       if (!(await this.initGPU())) {
         return null; // GPU not available, use other methods
       }
     }
-    
+
     if (frameIndex < 0 || frameIndex >= this.frames.length) {
       throw new Error("Frame index out of bounds");
     }
-    
+
     // Get frame info and decode indices using JavaScript LZW decoder
     const frame = this.frameInfo(frameIndex);
     const indexData = await this.decodeFrameIndices(frameIndex);
-    
+
     if (!indexData) {
       return null;
     }
-    
+
     // Use GPU for palette expansion
     if (!this.gpuRenderer) return null;
 
@@ -1228,12 +1188,15 @@ export class GifReader {
       );
     }
   }
-  
+
   /**
    * Zero-copy canvas presentation using WebAssembly persistent buffer
    * Allocates buffer once, reuses for all frames of same size
    */
-  frameImageDataZeroCopy(frameIndex: number, ctx2d: CanvasRenderingContext2D): void {
+  frameImageDataZeroCopy(
+    frameIndex: number,
+    ctx2d: CanvasRenderingContext2D
+  ): void {
     if (!this.isWasmReady() || !globalWasmDecoder) {
       throw new Error("WebAssembly not available for zero-copy presentation");
     }
@@ -1242,28 +1205,32 @@ export class GifReader {
     const w = frame.width;
     const h = frame.height;
     const bufferKey = `${w}x${h}`;
-    
+
     let buffer = this.zeroCopyBuffers.get(bufferKey);
-    
+
     if (!buffer) {
       // Allocate persistent WebAssembly buffer
       const outPtr = globalWasmDecoder.wasm_malloc(w * h * 4);
-      const rgbaU8 = new Uint8ClampedArray(globalWasmDecoder.memory.buffer, outPtr, w * h * 4);
+      const rgbaU8 = new Uint8ClampedArray(
+        globalWasmDecoder.memory.buffer,
+        outPtr,
+        w * h * 4
+      );
       const imageData = new ImageData(rgbaU8, w, h); // shares the same buffer
-      
+
       buffer = { wasmPtr: outPtr, rgbaU8, imageData };
       this.zeroCopyBuffers.set(bufferKey, buffer);
     }
-    
+
     // Decode frame directly into persistent buffer
     globalWasmDecoder.decode_rgba(
-      this.buf.byteOffset || 0, 
-      this.buf.length, 
-      frameIndex, 
-      buffer.wasmPtr, 
+      this.buf.byteOffset || 0,
+      this.buf.length,
+      frameIndex,
+      buffer.wasmPtr,
       w * h
     );
-    
+
     // Zero-copy presentation - no .set(), no GC
     ctx2d.putImageData(buffer.imageData, 0, 0);
   }
@@ -1277,14 +1244,14 @@ export class GifReader {
         return null;
       }
     }
-    
+
     // Render to OffscreenCanvas
     const frame = this.frameInfo(frameIndex);
     const offscreen = new OffscreenCanvas(frame.width, frame.height);
     const indexData = await this.decodeFrameIndices(frameIndex);
-    
+
     if (!indexData) return null;
-    
+
     if (!this.gpuRenderer) return null;
     const success = await this.gpuRenderer.renderToCanvas(
       indexData,
@@ -1293,9 +1260,9 @@ export class GifReader {
       frame.height,
       offscreen as any // OffscreenCanvas compatible with HTMLCanvasElement interface
     );
-    
+
     if (!success) return null;
-    
+
     // Create ImageBitmap for efficient transfer and drawing
     return createImageBitmap(offscreen);
   }
@@ -1304,19 +1271,21 @@ export class GifReader {
    * Worker-compatible GPU decode with transferToImageBitmap
    * Use this pattern in a worker for maximum performance
    */
-  async frameTransferBitmapGPU(frameIndex: number): Promise<ImageBitmap | null> {
+  async frameTransferBitmapGPU(
+    frameIndex: number
+  ): Promise<ImageBitmap | null> {
     if (!this.gpuEnabled || !this.gpuRenderer) {
       if (!(await this.initGPU())) {
         return null;
       }
     }
-    
+
     const frame = this.frameInfo(frameIndex);
     const offscreen = new OffscreenCanvas(frame.width, frame.height);
     const indexData = await this.decodeFrameIndices(frameIndex);
-    
+
     if (!indexData) return null;
-    
+
     if (!this.gpuRenderer) return null;
     const success = await this.gpuRenderer.renderToCanvas(
       indexData,
@@ -1325,9 +1294,9 @@ export class GifReader {
       frame.height,
       offscreen as any
     );
-    
+
     if (!success) return null;
-    
+
     // Transfer ownership to ImageBitmap (can be posted to main thread)
     return offscreen.transferToImageBitmap();
   }
@@ -1347,7 +1316,7 @@ export class GifReader {
   /**
    * Initialize threaded worker pool for parallel frame decode
    * Alternative to WebAssembly threads when not available
-  */
+   */
   async initWorkerPool(): Promise<boolean> {
     // Threaded worker pool support removed in cleanup build
     this.workerPoolEnabled = false;
@@ -1358,7 +1327,9 @@ export class GifReader {
    * Parallel frame decode using threaded worker pool
    * Each worker has its own Wasm instance and LZW tables
    */
-  async framePixelsThreadedPool(frameIndices: number[]): Promise<{ pixels: Uint32Array; delay: number }[]> {
+  async framePixelsThreadedPool(
+    frameIndices: number[]
+  ): Promise<{ pixels: Uint32Array; delay: number }[]> {
     if (!this.workerPoolEnabled || !this.workerPool) {
       // Auto-initialize worker pool
       const initialized = await this.initWorkerPool();
@@ -1376,22 +1347,30 @@ export class GifReader {
 
     try {
       // Decode frames in parallel using worker pool
-      const decodeResults = await this.workerPool.decodeFrames(this.buf, frameIndices);
-      
+      const decodeResults = await this.workerPool.decodeFrames(
+        this.buf,
+        frameIndices
+      );
+
       // Convert worker results to expected format with parity checks
       return decodeResults.map((result: any) => {
-        if (!result.pixels || result.pixels.length !== this.width_ * this.height_) {
-          throw new Error('Worker pool returned invalid pixel data');
+        if (
+          !result.pixels ||
+          result.pixels.length !== this.width_ * this.height_
+        ) {
+          throw new Error("Worker pool returned invalid pixel data");
         }
         return {
           pixels: result.pixels,
-          delay: result.delay
+          delay: result.delay,
         };
       });
-      
     } catch (error) {
-      console.warn('Worker pool decode failed, falling back to sequential:', error);
-      
+      console.warn(
+        "Worker pool decode failed, falling back to sequential:",
+        error
+      );
+
       // Sequential fallback
       const results = [];
       for (const frameIndex of frameIndices) {
@@ -1414,12 +1393,15 @@ export class GifReader {
     if (this.workerPoolEnabled && this.workerPool) {
       try {
         const result = await this.workerPool.decodeFrame(this.buf, frameIndex);
-        if (!result.pixels || result.pixels.length !== this.width_ * this.height_) {
-          throw new Error('Worker pool returned invalid pixel data');
+        if (
+          !result.pixels ||
+          result.pixels.length !== this.width_ * this.height_
+        ) {
+          throw new Error("Worker pool returned invalid pixel data");
         }
         return result.pixels;
       } catch (error) {
-        console.warn('Worker pool single frame decode failed:', error);
+        console.warn("Worker pool single frame decode failed:", error);
       }
     }
 
@@ -1434,7 +1416,7 @@ export class GifReader {
     if (!this.workerPoolEnabled || !this.workerPool) {
       return null;
     }
-    
+
     return this.workerPool.getStats();
   }
 
@@ -1459,32 +1441,46 @@ export class GifReader {
   /**
    * Decode frame to index data only (for GPU palette expansion)
    */
-  private async decodeFrameIndices(frameIndex: number): Promise<Uint8Array | null> {
+  private async decodeFrameIndices(
+    frameIndex: number
+  ): Promise<Uint8Array | null> {
     try {
       const frame = this.frameInfo(frameIndex);
       const frameSize = frame.width * frame.height;
       const indexData = new Uint8Array(frameSize);
-      
+
       if (frame.interlaced) {
         // For interlaced frames, decode to temp buffer then deinterlace
         const tempIndices = new Uint8Array(frameSize);
         this.lzwDecodeToIndices(frame, tempIndices);
-        
+
         // Deinterlace using same pass logic as RGBA decoder
         // Pass 0: rows 0,8,16... Pass 1: rows 4,12,20... Pass 2: rows 2,6,10,14... Pass 3: rows 1,3,5,7,9...
         let pixelIndex = 0;
         for (let pass = 0; pass < 4; pass++) {
-          let yStart = 0, yStride = 8;
-          if (pass === 1) { yStart = 4; yStride = 8; }
-          else if (pass === 2) { yStart = 2; yStride = 4; }
-          else if (pass === 3) { yStart = 1; yStride = 2; }
-          
+          let yStart = 0,
+            yStride = 8;
+          if (pass === 1) {
+            yStart = 4;
+            yStride = 8;
+          } else if (pass === 2) {
+            yStart = 2;
+            yStride = 4;
+          } else if (pass === 3) {
+            yStart = 1;
+            yStride = 2;
+          }
+
           for (let yInPass = 0; ; yInPass++) {
             const row = yStart + yInPass * yStride;
             if (row >= frame.height) break;
-            
+
             const dst = row * frame.width;
-            for (let x = 0; x < frame.width && pixelIndex < tempIndices.length; x++) {
+            for (
+              let x = 0;
+              x < frame.width && pixelIndex < tempIndices.length;
+              x++
+            ) {
               indexData[dst + x] = tempIndices[pixelIndex++];
             }
           }
@@ -1493,56 +1489,58 @@ export class GifReader {
         // Non-interlaced: decode directly
         this.lzwDecodeToIndices(frame, indexData);
       }
-      
+
       return indexData;
-      
     } catch (error) {
-      console.error('Failed to decode frame indices:', error);
+      console.error("Failed to decode frame indices:", error);
       return null;
     }
   }
-  
+
   /**
    * Simplified LZW decoder that outputs palette indices instead of RGBA
    */
-  private lzwDecodeToIndices(frame: FrameInfo, outputIndices: Uint8Array): void {
+  private lzwDecodeToIndices(
+    frame: FrameInfo,
+    outputIndices: Uint8Array
+  ): void {
     const bytes = frame.codes;
     const minCodeSize = frame.min_code_size | 0;
     let q = 0;
-    
+
     const CLEAR = 1 << minCodeSize;
     const EOI = CLEAR + 1;
     let nextCode = EOI + 1;
     let codeSize = (minCodeSize + 1) | 0;
     let codeMask = (1 << codeSize) - 1;
-    
+
     // Initialize firstByte table for base codes
     for (let i = 0; i < CLEAR; i++) {
       this.firstByte[i] = i;
     }
-    
+
     let bits = 0;
     let bitCount = 0;
     let pixelIndex = 0;
-    
+
     const table = this.decTable;
     const stack = this.stack;
     let sp = 0;
     let prevCode: number | null = null;
-    
+
     while (true) {
       // Fill bit buffer
       while (bitCount < codeSize && q < bytes.length) {
         bits |= (bytes[q++] | 0) << bitCount;
         bitCount += 8;
       }
-      
+
       if (bitCount < codeSize) break;
-      
+
       let code = bits & codeMask;
       bits >>>= codeSize;
       bitCount -= codeSize;
-      
+
       if (code === CLEAR) {
         nextCode = EOI + 1;
         codeSize = (minCodeSize + 1) | 0;
@@ -1555,15 +1553,15 @@ export class GifReader {
       } else if (code === EOI) {
         break;
       }
-      
+
       let outFirst: number;
       let cur = code;
-      
+
       if (cur < CLEAR) {
         // Single byte
         outFirst = cur;
         if (pixelIndex < outputIndices.length) {
-          outputIndices[pixelIndex++] = outFirst & 0xFF;
+          outputIndices[pixelIndex++] = outFirst & 0xff;
         }
       } else {
         // Multi-byte sequence
@@ -1576,55 +1574,55 @@ export class GifReader {
         } else {
           outFirst = this.firstByte[cur] | 0;
         }
-        
+
         while (cur >= CLEAR) {
           const entry = table[cur] | 0;
-          stack[sp++] = entry & 0xFF;
+          stack[sp++] = entry & 0xff;
           cur = entry >>> 8;
         }
-        
+
         // Output base symbol
-        const base = cur & 0xFF;
+        const base = cur & 0xff;
         if (pixelIndex < outputIndices.length) {
           outputIndices[pixelIndex++] = base;
         }
-        
+
         // Output stack in reverse
         while (sp && pixelIndex < outputIndices.length) {
-          outputIndices[pixelIndex++] = stack[--sp] & 0xFF;
+          outputIndices[pixelIndex++] = stack[--sp] & 0xff;
         }
       }
-      
+
       // Add new table entry
       if (prevCode !== null && nextCode < GIF.MAX_CODE) {
-        table[nextCode] = ((prevCode & 0xFFF) << 8) | (outFirst & 0xFF);
+        table[nextCode] = ((prevCode & 0xfff) << 8) | (outFirst & 0xff);
         this.firstByte[nextCode] = this.firstByte[prevCode];
         nextCode++;
-        
+
         if (nextCode >= codeMask + 1 && codeSize < 12) {
           codeSize++;
           codeMask = (1 << codeSize) - 1;
         }
       }
-      
+
       prevCode = code;
     }
   }
-  
+
   /**
    * Check if GPU acceleration is available and enabled
    */
   isGPUEnabled(): boolean {
     return this.gpuEnabled && this.gpuRenderer !== null;
   }
-  
+
   /**
    * Get GPU backend information
    */
   getGPUBackend(): string {
-    return this.gpuRenderer?.getBackend() || 'none';
+    return this.gpuRenderer?.getBackend() || "none";
   }
-  
+
   /**
    * Benchmark GPU performance
    */
@@ -1632,10 +1630,10 @@ export class GifReader {
     if (!this.gpuEnabled || !this.gpuRenderer) {
       return null;
     }
-    
+
     return await this.gpuRenderer.benchmark(width, height);
   }
-  
+
   /**
    * Disable GPU acceleration
    */
@@ -1646,7 +1644,7 @@ export class GifReader {
     }
     this.gpuEnabled = false;
   }
-  
+
   /**
    * Lazy-load GPU module to avoid startup cost
    */
@@ -1699,10 +1697,16 @@ export class GifReader {
   }
 
   /* Decode into a pre-allocated transferable buffer (for worker scenarios) */
-  decodeFrameIntoBuffer(frameNum: number, buffer: ArrayBuffer, format: "rgba" | "bgra" = "rgba"): void {
+  decodeFrameIntoBuffer(
+    frameNum: number,
+    buffer: ArrayBuffer,
+    format: "rgba" | "bgra" = "rgba"
+  ): void {
     const expectedSize = this.width_ * this.height_ * 4;
     if (buffer.byteLength < expectedSize) {
-      throw new Error(`Buffer too small: need ${expectedSize} bytes, got ${buffer.byteLength}`);
+      throw new Error(
+        `Buffer too small: need ${expectedSize} bytes, got ${buffer.byteLength}`
+      );
     }
     const pixels = new Uint8Array(buffer, 0, expectedSize);
     this.decodeAndBlitFrame32(frameNum, pixels, format);
@@ -1721,13 +1725,18 @@ export class GifReader {
   }
 
   /* Get statistics about decoder table pool usage */
-  static getPoolStats(): { available: number; totalCreated: number; hits: number; misses: number } {
+  static getPoolStats(): {
+    available: number;
+    totalCreated: number;
+    hits: number;
+    misses: number;
+  } {
     // Simple stats tracking - in real implementation you'd track hits/misses
     return {
       available: decoderTablePool.length,
       totalCreated: decoderTablePool.length + 1, // Approximate
       hits: 0, // Would need to track in getPooledDecoderTables
-      misses: 0 // Would need to track in getPooledDecoderTables
+      misses: 0, // Would need to track in getPooledDecoderTables
     };
   }
 
@@ -1735,7 +1744,7 @@ export class GifReader {
   enableWasmColorMapping(colorMapWasm: any): void {
     this.colorMapWasm = colorMapWasm;
     this.wasmEnabled = true;
-    
+
     // Pre-allocate row buffer for indices (reused across frames)
     const maxRowWidth = Math.min(this.width_, colorMapWasm.maxRowWidth || 4096);
     this.rowIndicesBuffer = new Uint8Array(maxRowWidth);
@@ -1753,7 +1762,6 @@ export class GifReader {
     return this.wasmEnabled && this.colorMapWasm !== null;
   }
 
-
   /* Fused LZW decode → Uint32 blit with precomputed pal32, transparency, interlace. */
   private decodeAndBlitFrame32(
     frameNum: number,
@@ -1764,15 +1772,19 @@ export class GifReader {
     const numPixels = frame.width * frame.height;
 
     // NEW: use prebuilt palettes directly - zero lookup, zero reallocation
-    const pal32 = (order === "rgba" ? frame.pal32rgba! : frame.pal32bgra!);
-    
+    const pal32 = order === "rgba" ? frame.pal32rgba! : frame.pal32bgra!;
+
     let trans = frame.transparent_index;
     if (trans === null) trans = 256; // sentinel; indexes are 0..255
 
     // Reuse a cached Uint32 view for this pixels buffer
     let out32 = this.out32Cache.get(pixels);
     if (!out32) {
-      out32 = new Uint32Array(pixels.buffer, pixels.byteOffset, pixels.byteLength >>> 2);
+      out32 = new Uint32Array(
+        pixels.buffer,
+        pixels.byteOffset,
+        pixels.byteLength >>> 2
+      );
       this.out32Cache.set(pixels, out32);
     }
 
@@ -1801,7 +1813,7 @@ export class GifReader {
     // NEW: use flattened bytes
     const bytes = frame.codes;
     const minCodeSize = frame.min_code_size | 0;
-    let q = 0;                 // cursor into contiguous bytes
+    let q = 0; // cursor into contiguous bytes
 
     const CLEAR = 1 << minCodeSize;
     const EOI = CLEAR + 1;
@@ -1825,7 +1837,7 @@ export class GifReader {
 
     // Decoder tables
     const table = this.decTable;
-    
+
     // Stack for sequence unwind (single-pass)
     const stack = this.stack;
     let sp = 0;
@@ -1833,99 +1845,122 @@ export class GifReader {
     let prevCode: number | null = null;
 
     // NEW: Split "no transparency" vs "has transparency" decode loops
-    const hasTrans = (transparentIndex !== 256); // 256 is sentinel
+    const hasTrans = transparentIndex !== 256; // 256 is sentinel
 
     if (!frame.interlaced) {
       // Fast path for non-interlaced frames
       let xleft = fw;
       const rowStride32 = (canvasWidth - fw) >>> 0;
-      let dst32 = ((fy * canvasWidth) + fx) >>> 0;
+      let dst32 = (fy * canvasWidth + fx) >>> 0;
 
       if (!hasTrans) {
         // FAST PATH: No transparency - use Wasm if available and suitable
-        if (this.wasmEnabled && this.colorMapWasm && fw <= (this.colorMapWasm.maxRowWidth || 4096)) {
-          this.lzwDecodeToPixelsWasm(bytes, minCodeSize, out32, canvasWidth, fw, fh, fx, fy, pal32);
+        if (
+          this.wasmEnabled &&
+          this.colorMapWasm &&
+          fw <= (this.colorMapWasm.maxRowWidth || 4096)
+        ) {
+          this.lzwDecodeToPixelsWasm(
+            bytes,
+            minCodeSize,
+            out32,
+            canvasWidth,
+            fw,
+            fh,
+            fx,
+            fy,
+            pal32
+          );
         } else {
           // Fallback to JS implementation
           while (true) {
-          // Fill bit buffer to have at least codeSize bits
-          while (bitCount < codeSize && q < bytes.length) {
-            bits |= (bytes[q++] | 0) << bitCount;
-            bitCount += 8;
-          }
-          if (bitCount < codeSize) break;
-
-          let code = bits & codeMask;
-          bits >>>= codeSize;
-          bitCount -= codeSize;
-
-          if (code === CLEAR) {
-            nextCode = EOI + 1;
-            codeSize = (minCodeSize + 1) | 0;
-            codeMask = (1 << codeSize) - 1;
-            prevCode = null;
-            // Initialize firstByte table for base codes
-            for (let i = 0; i < CLEAR; i++) this.firstByte[i] = i;
-            continue;
-          } else if (code === EOI) {
-            break;
-          }
-
-          // Decode sequence for 'code'
-          let outFirst: number;
-          let cur = code;
-
-          if (cur < CLEAR) {
-            // Single byte - always write (no transparency check)
-            outFirst = cur;
-            const b = outFirst & 0xff;
-            out32[dst32] = pal32[b] >>> 0;
-            dst32++;
-            if (--xleft === 0) { dst32 += rowStride32; xleft = fw; }
-          } else {
-            // Chase with stack
-            sp = 0;
-            if (cur >= nextCode) {
-              // KwKwK case
-              if (prevCode === null) break;
-              outFirst = this.firstByte[prevCode] | 0;  // O(1) instead of chasing
-              stack[sp++] = outFirst;
-              cur = prevCode;
-            } else {
-              outFirst = this.firstByte[cur] | 0;  // O(1) instead of chasing
+            // Fill bit buffer to have at least codeSize bits
+            while (bitCount < codeSize && q < bytes.length) {
+              bits |= (bytes[q++] | 0) << bitCount;
+              bitCount += 8;
             }
-            // unwind sequence
-            while (cur >= CLEAR) {
-              const entry = table[cur] | 0;
-              stack[sp++] = entry & 0xff;
-              cur = entry >>> 8;
+            if (bitCount < codeSize) break;
+
+            let code = bits & codeMask;
+            bits >>>= codeSize;
+            bitCount -= codeSize;
+
+            if (code === CLEAR) {
+              nextCode = EOI + 1;
+              codeSize = (minCodeSize + 1) | 0;
+              codeMask = (1 << codeSize) - 1;
+              prevCode = null;
+              // Initialize firstByte table for base codes
+              for (let i = 0; i < CLEAR; i++) this.firstByte[i] = i;
+              continue;
+            } else if (code === EOI) {
+              break;
             }
-            // Write first base - always write (no transparency check)
-            const base = cur & 0xff;
-            out32[dst32] = pal32[base] >>> 0;
-            dst32++;
-            if (--xleft === 0) { dst32 += rowStride32; xleft = fw; }
-            // Write stack backwards - always write (no transparency check)
-            while (sp) {
-              const b = stack[--sp] & 0xff;
+
+            // Decode sequence for 'code'
+            let outFirst: number;
+            let cur = code;
+
+            if (cur < CLEAR) {
+              // Single byte - always write (no transparency check)
+              outFirst = cur;
+              const b = outFirst & 0xff;
               out32[dst32] = pal32[b] >>> 0;
               dst32++;
-              if (--xleft === 0) { dst32 += rowStride32; xleft = fw; }
+              if (--xleft === 0) {
+                dst32 += rowStride32;
+                xleft = fw;
+              }
+            } else {
+              // Chase with stack
+              sp = 0;
+              if (cur >= nextCode) {
+                // KwKwK case
+                if (prevCode === null) break;
+                outFirst = this.firstByte[prevCode] | 0; // O(1) instead of chasing
+                stack[sp++] = outFirst;
+                cur = prevCode;
+              } else {
+                outFirst = this.firstByte[cur] | 0; // O(1) instead of chasing
+              }
+              // unwind sequence
+              while (cur >= CLEAR) {
+                const entry = table[cur] | 0;
+                stack[sp++] = entry & 0xff;
+                cur = entry >>> 8;
+              }
+              // Write first base - always write (no transparency check)
+              const base = cur & 0xff;
+              out32[dst32] = pal32[base] >>> 0;
+              dst32++;
+              if (--xleft === 0) {
+                dst32 += rowStride32;
+                xleft = fw;
+              }
+              // Write stack backwards - always write (no transparency check)
+              while (sp) {
+                const b = stack[--sp] & 0xff;
+                out32[dst32] = pal32[b] >>> 0;
+                dst32++;
+                if (--xleft === 0) {
+                  dst32 += rowStride32;
+                  xleft = fw;
+                }
+              }
             }
-          }
 
-          // Add new table entry
-          if (prevCode !== null && nextCode < GIF.MAX_CODE) {
-            table[nextCode] = ((prevCode & 0xfff) << 8) | (outFirst & 0xff);
-            this.firstByte[nextCode] = this.firstByte[prevCode];  // O(1) instead of chasing
-            nextCode++;
-            if (nextCode >= codeMask + 1 && codeSize < 12) {
-              codeSize++;
-              codeMask = (codeMask << 1) | 1;
+            // Add new table entry
+            if (prevCode !== null && nextCode < GIF.MAX_CODE) {
+              table[nextCode] = ((prevCode & 0xfff) << 8) | (outFirst & 0xff);
+              this.firstByte[nextCode] = this.firstByte[prevCode]; // O(1) instead of chasing
+              nextCode++;
+              if (nextCode >= codeMask + 1 && codeSize < 12) {
+                codeSize++;
+                codeMask = (codeMask << 1) | 1;
+              }
             }
-          }
 
-          prevCode = code;
+            prevCode = code;
           }
         }
       } else {
@@ -1964,18 +1999,21 @@ export class GifReader {
             const b = outFirst & 0xff;
             out32[dst32] = pal32[b] >>> 0;
             dst32++;
-            if (--xleft === 0) { dst32 += rowStride32; xleft = fw; }
+            if (--xleft === 0) {
+              dst32 += rowStride32;
+              xleft = fw;
+            }
           } else {
             // Chase with stack
             sp = 0;
             if (cur >= nextCode) {
               // KwKwK case
               if (prevCode === null) break;
-              outFirst = this.firstByte[prevCode] | 0;  // O(1) instead of chasing
+              outFirst = this.firstByte[prevCode] | 0; // O(1) instead of chasing
               stack[sp++] = outFirst;
               cur = prevCode;
             } else {
-              outFirst = this.firstByte[cur] | 0;  // O(1) instead of chasing
+              outFirst = this.firstByte[cur] | 0; // O(1) instead of chasing
             }
             // unwind sequence
             while (cur >= CLEAR) {
@@ -1987,20 +2025,26 @@ export class GifReader {
             const base = cur & 0xff;
             out32[dst32] = pal32[base] >>> 0;
             dst32++;
-            if (--xleft === 0) { dst32 += rowStride32; xleft = fw; }
+            if (--xleft === 0) {
+              dst32 += rowStride32;
+              xleft = fw;
+            }
             // Write stack backwards - transparency pre-baked in palette
             while (sp) {
               const b = stack[--sp] & 0xff;
               out32[dst32] = pal32[b] >>> 0;
               dst32++;
-              if (--xleft === 0) { dst32 += rowStride32; xleft = fw; }
+              if (--xleft === 0) {
+                dst32 += rowStride32;
+                xleft = fw;
+              }
             }
           }
 
           // Add new table entry
           if (prevCode !== null && nextCode < GIF.MAX_CODE) {
             table[nextCode] = ((prevCode & 0xfff) << 8) | (outFirst & 0xff);
-            this.firstByte[nextCode] = this.firstByte[prevCode];  // O(1) instead of chasing
+            this.firstByte[nextCode] = this.firstByte[prevCode]; // O(1) instead of chasing
             nextCode++;
             if (nextCode >= codeMask + 1 && codeSize < 12) {
               codeSize++;
@@ -2016,15 +2060,18 @@ export class GifReader {
       // First decode all pixels into a temporary buffer (reuse module-level array)
       const frameSize = fw * fh;
       let framePixels: Uint8Array;
-      
-      if (!moduleFramePixelsInUse && frameSize <= moduleReusableFramePixels.length) {
+
+      if (
+        !moduleFramePixelsInUse &&
+        frameSize <= moduleReusableFramePixels.length
+      ) {
         moduleFramePixelsInUse = true;
         framePixels = moduleReusableFramePixels.subarray(0, frameSize);
       } else {
         // Fallback to allocation if reusable array is in use or too small
         framePixels = new Uint8Array(frameSize);
       }
-      
+
       let pixelIndex = 0;
 
       // Decode all LZW symbols into linear pixel array
@@ -2066,11 +2113,11 @@ export class GifReader {
           sp = 0;
           if (cur >= nextCode) {
             if (prevCode === null) break;
-            outFirst = this.firstByte[prevCode] | 0;  // O(1) instead of chasing
+            outFirst = this.firstByte[prevCode] | 0; // O(1) instead of chasing
             stack[sp++] = outFirst;
             cur = prevCode;
           } else {
-            outFirst = this.firstByte[cur] | 0;  // O(1) instead of chasing
+            outFirst = this.firstByte[cur] | 0; // O(1) instead of chasing
           }
           while (cur >= CLEAR) {
             const entry = table[cur] | 0;
@@ -2090,7 +2137,7 @@ export class GifReader {
 
         if (prevCode !== null && nextCode < GIF.MAX_CODE) {
           table[nextCode] = ((prevCode & 0xfff) << 8) | (outFirst & 0xff);
-          this.firstByte[nextCode] = this.firstByte[prevCode];  // O(1) instead of chasing
+          this.firstByte[nextCode] = this.firstByte[prevCode]; // O(1) instead of chasing
           nextCode++;
           if (nextCode >= codeMask + 1 && codeSize < 12) {
             codeSize++;
@@ -2105,16 +2152,23 @@ export class GifReader {
       pixelIndex = 0;
       for (let pass = 0, yStart = 0, yStride = 8; pass < 4; pass++) {
         // Set pass parameters: pass 0: start=0, stride=8; pass 1: start=4, stride=8; pass 2: start=2, stride=4; pass 3: start=1, stride=2
-        if (pass === 1) { yStart = 4; yStride = 8; }
-        else if (pass === 2) { yStart = 2; yStride = 4; }
-        else if (pass === 3) { yStart = 1; yStride = 2; }
+        if (pass === 1) {
+          yStart = 4;
+          yStride = 8;
+        } else if (pass === 2) {
+          yStart = 2;
+          yStride = 4;
+        } else if (pass === 3) {
+          yStart = 1;
+          yStride = 2;
+        }
 
         for (let yInPass = 0; ; yInPass++) {
           const row = fy + yStart + yInPass * yStride;
           if (row >= fy + fh) break;
 
           let dst32 = (row * canvasWidth + fx) >>> 0;
-          
+
           // Emit exactly fw pixels on this row
           for (let x = 0; x < fw && pixelIndex < framePixels.length; x++) {
             const b = framePixels[pixelIndex++] & 0xff;
@@ -2125,7 +2179,7 @@ export class GifReader {
           }
         }
       }
-      
+
       // Release module-level array if we were using it
       if (framePixels === moduleReusableFramePixels.subarray(0, frameSize)) {
         moduleFramePixelsInUse = false;
@@ -2148,34 +2202,37 @@ export class GifReader {
     pal32: Uint32Array
   ) {
     if (!this.colorMapWasm || !this.rowIndicesBuffer) return;
-    
+
     // Copy palette to Wasm memory once per frame
-    this.colorMapWasm.heapU32.set(pal32.subarray(0, 256), this.colorMapWasm.palPtr >>> 2);
-    
+    this.colorMapWasm.heapU32.set(
+      pal32.subarray(0, 256),
+      this.colorMapWasm.palPtr >>> 2
+    );
+
     let q = 0;
     const CLEAR = 1 << minCodeSize;
     const EOI = CLEAR + 1;
     let nextCode = EOI + 1;
     let codeSize = (minCodeSize + 1) | 0;
     let codeMask = (1 << codeSize) - 1;
-    
+
     // Initialize firstByte table for base codes
     for (let i = 0; i < CLEAR; i++) this.firstByte[i] = i;
-    
+
     let bits = 0;
     let bitCount = 0;
     const table = this.decTable;
     const stack = this.stack;
     let sp = 0;
     let prevCode: number | null = null;
-    
+
     // Row processing state
     let xleft = fw;
     const rowStride32 = (canvasWidth - fw) >>> 0;
-    let dst32 = ((fy * canvasWidth) + fx) >>> 0;
+    let dst32 = (fy * canvasWidth + fx) >>> 0;
     let rowCount = 0;
     const idxRow = this.rowIndicesBuffer.subarray(0, fw);
-    
+
     while (true) {
       // Fill bit buffer
       while (bitCount < codeSize && q < bytes.length) {
@@ -2207,11 +2264,11 @@ export class GifReader {
         // Single byte
         outFirst = cur;
         const b = outFirst & 0xff;
-        
+
         // Stage into row buffer instead of direct write
         idxRow[rowCount++] = b;
         dst32++; // Still advance logical cursor
-        
+
         if (--xleft === 0) {
           // End of row - flush to Wasm and copy result
           this.flushRowToWasm(idxRow, rowCount, out32, dst32 - fw, fw);
@@ -2230,14 +2287,14 @@ export class GifReader {
         } else {
           outFirst = this.firstByte[cur] | 0;
         }
-        
+
         // Unwind sequence
         while (cur >= CLEAR) {
           const entry = table[cur] | 0;
           stack[sp++] = entry & 0xff;
           cur = entry >>> 8;
         }
-        
+
         // Write first base
         const base = cur & 0xff;
         idxRow[rowCount++] = base;
@@ -2248,7 +2305,7 @@ export class GifReader {
           xleft = fw;
           rowCount = 0;
         }
-        
+
         // Write stack backwards
         while (sp) {
           const b = stack[--sp] & 0xff;
@@ -2276,26 +2333,29 @@ export class GifReader {
 
       prevCode = code;
     }
-    
+
     // Flush any remaining partial row
     if (rowCount > 0) {
       this.flushRowToWasm(idxRow, rowCount, out32, dst32 - rowCount, rowCount);
     }
   }
-  
+
   /* Helper to flush a row of indices through Wasm color mapping */
   private flushRowToWasm(
-    idxRow: Uint8Array, 
-    count: number, 
-    out32: Uint32Array, 
-    startDst32: number, 
+    idxRow: Uint8Array,
+    count: number,
+    out32: Uint32Array,
+    startDst32: number,
     maxCount: number
   ) {
     if (!this.colorMapWasm) return;
-    
+
     // Copy indices to Wasm memory
-    this.colorMapWasm.heapU8.set(idxRow.subarray(0, count), this.colorMapWasm.idxPtr);
-    
+    this.colorMapWasm.heapU8.set(
+      idxRow.subarray(0, count),
+      this.colorMapWasm.idxPtr
+    );
+
     // Call Wasm to map indices to colors
     this.colorMapWasm.map32(
       this.colorMapWasm.idxPtr,
@@ -2303,16 +2363,15 @@ export class GifReader {
       this.colorMapWasm.palPtr,
       count
     );
-    
+
     // Copy result back to output buffer
     const wasmOut32 = this.colorMapWasm.heapU32.subarray(
       this.colorMapWasm.outPtr >>> 2,
       (this.colorMapWasm.outPtr >>> 2) + count
     );
-    
+
     out32.set(wasmOut32, startDst32);
   }
-
 }
 
 /* ===== Module-level WebAssembly Exports ===== */
@@ -2345,24 +2404,24 @@ export const cleanupWasm = (): void => {
     globalWasmWorkerPool.terminate();
     globalWasmWorkerPool = null;
   }
-  
+
   globalWasmDecoder = null;
   wasmInitPromise = null;
 };
 
 // Browser global export under wtfgif namespace
-(function() {
-  const browserExports = { 
-    GifWriter, 
-    GifReader, 
-    initializeWasmGlobally, 
-    getWasmStatus, 
-    cleanupWasm 
+(function () {
+  const browserExports = {
+    GifWriter,
+    GifReader,
+    initializeWasmGlobally,
+    getWasmStatus,
+    cleanupWasm,
   };
-  
-  if (typeof window !== 'undefined') {
+
+  if (typeof window !== "undefined") {
     (window as any).wtfgif = browserExports;
-  } else if (typeof globalThis !== 'undefined') {
+  } else if (typeof globalThis !== "undefined") {
     (globalThis as any).wtfgif = browserExports;
   }
 })();
