@@ -698,7 +698,12 @@ function GifWriterOutputLZWCodeStream_fast(
 
   // finalize sub-blocks
   buf[subLenPos] = subLen & 0xff;
-  buf[p++] = 0; // terminator
+  // Only write a terminating zero-length block if the last sub-block
+  // actually contained data. Otherwise the zero-length at subLenPos is
+  // itself the terminator (avoids emitting an extra empty block).
+  if (subLen > 0) {
+    buf[p++] = 0; // terminator
+  }
 
   return p;
 }
