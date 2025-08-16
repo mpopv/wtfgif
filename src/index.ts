@@ -13,6 +13,19 @@ import {
   PaletteRGB,
   FrameInfo,
 } from "./types";
+import { GIF } from "./constants/gif";
+import { log2Pow2, checkPalette, buildPal32 } from "./utils/palette";
+import { concatSubBlocks } from "./utils/subblocks";
+import {
+  createDecoderTables,
+  getPooledDecoderTables,
+  returnDecoderTablesToPool,
+} from "./decoder/pool";
+import { hashGifData } from "./utils/hash";
+import {
+  loadGPUModule as loadGpuModule,
+  createGpuRenderer,
+} from "./gpu/renderer";
 
 const loadWasmModule = () => {
   try {
@@ -84,186 +97,9 @@ const initializeGlobalWasm = async (wasmPath?: string): Promise<void> => {
   }
 };
 
-/* ===== GIF constants ===== */
-const enum GIF {
-  // Header
-  G = 0x47,
-  I = 0x49,
-  F = 0x46,
-  _8 = 0x38,
-  _9 = 0x39,
-  A = 0x61,
-
-  // Blocks
-  EXT = 0x21,
-  IMG = 0x2c,
-  TRAILER = 0x3b,
-
-  // Extension labels
-  GCE = 0xf9,
-  APPLICATION = 0xff,
-  PLAINTEXT = 0x01,
-  COMMENT = 0xfe,
-
-  // NETSCAPE2.0
-  NETSCAPE_LEN = 0x0b,
-
-  // Limits
-  MAX_CODE = 4096,
-}
-
-// moved to types.ts
-
-/* ===== Module-level reusable arrays ===== */
-// Reuse these across all instances to avoid allocations (since we never nest calls)
-const moduleReusableFramePixels = new Uint8Array(2048 * 2048); // Reasonable max for most GIFs
+const moduleReusableFramePixels = new Uint8Array(2048 * 2048);
 let moduleFramePixelsInUse = false;
 
-/* ===== GifReader Object Pooling ===== */
-// moved to types.ts
-
-const decoderTablePool: PooledDecoderTables[] = [];
-const MAX_POOL_SIZE = 16; // Reasonable limit for memory usage
-
-function createDecoderTables(): PooledDecoderTables {
-  return {
-    decTable: new Int32Array(GIF.MAX_CODE),
-    stack: new Uint8Array(GIF.MAX_CODE),
-    firstByte: new Int16Array(GIF.MAX_CODE),
-    out32Cache: new WeakMap<Uint8Array, Uint32Array>(),
-    hash: "",
-  };
-}
-
-function getPooledDecoderTables(gifHash: string): PooledDecoderTables {
-  // Try to find an existing pooled instance for this GIF
-  const pooledIndex = decoderTablePool.findIndex((p) => p.hash === gifHash);
-  if (pooledIndex >= 0) {
-    const pooled = decoderTablePool.splice(pooledIndex, 1)[0];
-    return pooled;
-  }
-
-  // Try to reuse any available pooled instance
-  if (decoderTablePool.length > 0) {
-    const pooled = decoderTablePool.pop()!;
-    // Sanitize tables before reuse to avoid leaking previous state
-    pooled.decTable.fill(0);
-    pooled.stack.fill(0);
-    pooled.firstByte.fill(0);
-    pooled.out32Cache = new WeakMap();
-    pooled.hash = gifHash;
-    return pooled;
-  }
-
-  // Create new instance
-  const tables = createDecoderTables();
-  tables.hash = gifHash;
-  return tables;
-}
-
-function returnDecoderTablesToPool(tables: PooledDecoderTables): void {
-  if (decoderTablePool.length < MAX_POOL_SIZE) {
-    decoderTablePool.push(tables);
-  }
-  // If pool is full, let it get GC'd
-}
-
-// Simple hash function for GIF data
-function hashGifData(data: Uint8Array): string {
-  let hash = 0;
-  const step = Math.max(1, Math.floor(data.length / 1024)); // Sample every ~1KB
-  for (let i = 0; i < data.length; i += step) {
-    hash = ((hash << 5) - hash + data[i]) | 0;
-  }
-  return hash.toString(36);
-}
-
-/* ===== Helper / small utilities ===== */
-function log2Pow2(n: number): number {
-  /* n is power-of-two (2..256) */ return 31 - Math.clz32(n);
-}
-
-function checkPalette(pal: PaletteRGB): number {
-  const n = pal.length >>> 0;
-  if (n === 0 || n > 256)
-    throw new Error("Invalid palette size (must be 1..256).");
-  let pow2 = 1;
-  while (pow2 < n) pow2 <<= 1;
-  if (pow2 < 2) pow2 = 2;
-  if (pow2 > 256) throw new Error("Invalid palette size (must be 1..256).");
-  return pow2;
-}
-
-function concatSubBlocks(
-  buf: Uint8Array,
-  offset: number
-): { bytes: Uint8Array; mcs: number } {
-  const mcs = buf[offset] | 0; // min code size
-  let q = (offset + 1) | 0; // first sub-block size byte
-  let total = 0;
-  // first pass: measure
-  while (true) {
-    const len = buf[q++] | 0;
-    if (len === 0) break;
-    total += len;
-    q += len;
-  }
-  // second pass: copy
-  const out = new Uint8Array(total);
-  q = (offset + 1) | 0;
-  let w = 0;
-  while (true) {
-    const len = buf[q++] | 0;
-    if (len === 0) break;
-    out.set(buf.subarray(q, q + len), w);
-    w += len;
-    q += len;
-  }
-  return { bytes: out, mcs };
-}
-
-/* Precompute 32-bit palette values for fast Uint32 writes.
-   For RGBA bytes in memory under little-endian, the Uint32 value must be (A<<24)|(B<<16)|(G<<8)|R.
-   For BGRA bytes in memory, it's (A<<24)|(R<<16)|(G<<8)|B.
-*/
-function buildPal32(
-  buf: Uint8Array,
-  paletteOffset: number,
-  paletteSize: number,
-  order: "rgba" | "bgra",
-  transparentIndex: number | null = null
-): Uint32Array {
-  const pal32 = new Uint32Array(256); // up to 256 entries
-  const limit = Math.min(paletteSize, 256);
-  if (order === "rgba") {
-    for (let i = 0; i < limit; i++) {
-      const r = buf[paletteOffset + i * 3] | 0;
-      const g = buf[paletteOffset + i * 3 + 1] | 0;
-      const b = buf[paletteOffset + i * 3 + 2] | 0;
-      // Pre-bake transparency into palette: 0-alpha for transparent index
-      // This eliminates branches in inner decode loops
-      const alpha =
-        transparentIndex !== null && i === transparentIndex ? 0 : 255;
-      pal32[i] = (alpha << 24) | (b << 16) | (g << 8) | r;
-    }
-  } else {
-    // bgra
-    for (let i = 0; i < limit; i++) {
-      const r = buf[paletteOffset + i * 3] | 0;
-      const g = buf[paletteOffset + i * 3 + 1] | 0;
-      const b = buf[paletteOffset + i * 3 + 2] | 0;
-      // Pre-bake transparency into palette: 0-alpha for transparent index
-      // This eliminates branches in inner decode loops
-      const alpha =
-        transparentIndex !== null && i === transparentIndex ? 0 : 255;
-      pal32[i] = (alpha << 24) | (r << 16) | (g << 8) | b;
-    }
-  }
-  // Others remain 0; caller should ensure indices are valid.
-  return pal32;
-}
-
-/* ====== Writer (Encoder) ====== */
 export class GifWriter {
   private p = 0;
   private ended = false;
@@ -290,7 +126,6 @@ export class GifWriter {
     if (width <= 0 || height <= 0 || width > 65535 || height > 65535)
       throw new Error("Width/Height invalid.");
 
-    /* Header: GIF89a */
     this.buf[this.p++] = GIF.G;
     this.buf[this.p++] = GIF.I;
     this.buf[this.p++] = GIF.F;
@@ -298,8 +133,7 @@ export class GifWriter {
     this.buf[this.p++] = GIF._9;
     this.buf[this.p++] = GIF.A;
 
-    // Global Color Table handling
-    let gpPow2Bits = 0; // packed-field size bits
+    let gpPow2Bits = 0;
     if (this.globalPalette !== null) {
       const n = checkPalette(this.globalPalette);
       this.globalColorCount = n;
@@ -701,28 +535,22 @@ export class GifReader {
     }
   > = new Map();
 
-  // Optional Wasm color mapping helper (Tier 2 optimization)
   private colorMapWasm: any = null; // ColorMapWasm type
   private wasmEnabled = false;
   private rowIndicesBuffer: Uint8Array | null = null;
 
-  // GPU palette expansion (Tier 4 optimization)
   private gpuRenderer: UnifiedGPUGifRenderer | null = null;
   private gpuEnabled = false;
 
-  // Threaded worker pool support (when Wasm threads aren't available)
   private workerPool: any = null; // WorkerPoolManager
   private workerPoolEnabled = false;
 
-  // Memory hygiene: TypedArray pools to eliminate allocations in hot loops
   private memoryHygiene: any = null; // MemoryHygiene
 
-  /* Factory method for pooled GifReader instances */
   static createPooled(buf: Uint8Array): GifReader {
     return new GifReader(buf, true);
   }
 
-  /* Factory method for non-pooled GifReader instances */
   static createUnpooled(buf: Uint8Array): GifReader {
     return new GifReader(buf, false);
   }
@@ -941,11 +769,6 @@ export class GifReader {
     return this.height_;
   }
 
-  /* ===== WebAssembly Integration Methods ===== */
-
-  /**
-   * Initialize WebAssembly decoder for this GifReader instance
-   */
   async initWasm(wasmPath?: string): Promise<boolean> {
     if (!WASM_FEATURES.supported) {
       return false;
@@ -962,16 +785,10 @@ export class GifReader {
     return globalWasmDecoder !== null;
   }
 
-  /**
-   * Check if WebAssembly decoder is available and initialized
-   */
   isWasmReady(): boolean {
     return globalWasmDecoder !== null;
   }
 
-  /**
-   * Decode frame using WebAssembly (with fallback to JavaScript)
-   */
   async framePixelsWasm(
     frameIndex: number,
     pixels?: Uint32Array
@@ -1005,9 +822,6 @@ export class GifReader {
     return pixels;
   }
 
-  /**
-   * Internal Wasm frame decoder
-   */
   private async decodeFrameWasm(
     frameIndex: number,
     pixels?: Uint32Array
@@ -1078,9 +892,6 @@ export class GifReader {
     }
   }
 
-  /**
-   * Decode multiple frames in parallel using Wasm worker pool
-   */
   async framePixelsParallel(
     frameIndices: number[]
   ): Promise<{ pixels: Uint32Array; delay: number }[]> {
@@ -1099,9 +910,6 @@ export class GifReader {
     return globalWasmWorkerPool.decodeParallel(this.buf, frameIndices);
   }
 
-  /**
-   * Get WebAssembly performance statistics
-   */
   getWasmStats(): {
     supported: boolean;
     simd: boolean;
@@ -1114,11 +922,6 @@ export class GifReader {
     };
   }
 
-  /* ===== GPU Palette Expansion Methods (Tier 4) ===== */
-
-  /**
-   * Initialize GPU palette expansion for ultra-fast rendering
-   */
   async initGPU(canvas?: HTMLCanvasElement): Promise<boolean> {
     try {
       // Lazy-load GPU renderer
@@ -1128,7 +931,8 @@ export class GifReader {
           return false;
         }
 
-        this.gpuRenderer = new gpuModule.UnifiedGPUGifRenderer();
+        this.gpuRenderer = createGpuRenderer(gpuModule);
+        if (!this.gpuRenderer) return false;
       }
 
       const success = await this.gpuRenderer!.initialize(canvas);
@@ -1141,9 +945,6 @@ export class GifReader {
     }
   }
 
-  /**
-   * Decode frame using GPU acceleration (fastest possible path)
-   */
   async framePixelsGPU(
     frameIndex: number,
     targetCanvas?: HTMLCanvasElement
@@ -1189,10 +990,6 @@ export class GifReader {
     }
   }
 
-  /**
-   * Zero-copy canvas presentation using WebAssembly persistent buffer
-   * Allocates buffer once, reuses for all frames of same size
-   */
   frameImageDataZeroCopy(
     frameIndex: number,
     ctx2d: CanvasRenderingContext2D
@@ -1235,9 +1032,6 @@ export class GifReader {
     ctx2d.putImageData(buffer.imageData, 0, 0);
   }
 
-  /**
-   * GPU zero-copy with OffscreenCanvas and ImageBitmap transfer
-   */
   async frameImageBitmapGPU(frameIndex: number): Promise<ImageBitmap | null> {
     if (!this.gpuEnabled || !this.gpuRenderer) {
       if (!(await this.initGPU())) {
@@ -1267,10 +1061,6 @@ export class GifReader {
     return createImageBitmap(offscreen);
   }
 
-  /**
-   * Worker-compatible GPU decode with transferToImageBitmap
-   * Use this pattern in a worker for maximum performance
-   */
   async frameTransferBitmapGPU(
     frameIndex: number
   ): Promise<ImageBitmap | null> {
@@ -1301,9 +1091,6 @@ export class GifReader {
     return offscreen.transferToImageBitmap();
   }
 
-  /**
-   * Cleanup zero-copy buffers when done
-   */
   cleanupZeroCopyBuffers(): void {
     if (globalWasmDecoder) {
       for (const buffer of this.zeroCopyBuffers.values()) {
@@ -1313,10 +1100,6 @@ export class GifReader {
     this.zeroCopyBuffers.clear();
   }
 
-  /**
-   * Initialize threaded worker pool for parallel frame decode
-   * Alternative to WebAssembly threads when not available
-   */
   async initWorkerPool(): Promise<boolean> {
     // Threaded worker pool support removed in cleanup build
     this.workerPoolEnabled = false;
@@ -1650,9 +1433,7 @@ export class GifReader {
    */
   private loadGPUModule(): any {
     try {
-      // In a real implementation, this would be a dynamic import
-      // For now, return null to indicate GPU module not available
-      return null;
+      return loadGpuModule();
     } catch (error) {
       return null;
     }
@@ -1733,8 +1514,8 @@ export class GifReader {
   } {
     // Simple stats tracking - in real implementation you'd track hits/misses
     return {
-      available: decoderTablePool.length,
-      totalCreated: decoderTablePool.length + 1, // Approximate
+      available: 0,
+      totalCreated: 0,
       hits: 0, // Would need to track in getPooledDecoderTables
       misses: 0, // Would need to track in getPooledDecoderTables
     };
