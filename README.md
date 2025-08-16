@@ -1,5 +1,3 @@
-![wtfgif logo](https://github.com/mpopv/wtfgif/blob/main/src/gifs/wtf.gif?raw=true)
-
 # wtfgif
 
 A ![animated fire emoji](https://github.com/mpopv/wtfgif/blob/main/src/gifs/fire.gif?raw=true) fast ![animated fire emoji](https://github.com/mpopv/wtfgif/blob/main/src/gifs/fire.gif?raw=true) drop-in replacement for [omggif](https://www.npmjs.com/package/omggif) for Node and browser environments
