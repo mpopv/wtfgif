@@ -6,20 +6,40 @@
   <style>
     body {
       font-family: system-ui, sans-serif;
-      background: #fafafa;
+      background: #f4f4f4;
       color: #222;
       margin: 0;
-      padding: 2rem;
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
     }
     h1 {
       text-align: center;
-      margin-top: 0;
+      margin: 0 0 1rem;
     }
     #upload {
       margin: 1rem 0;
     }
+    #summary {
+      margin-bottom: 1rem;
+      padding: 1rem 1.5rem;
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      text-align: center;
+      font-size: 0.95rem;
+      max-width: 800px;
+      width: 100%;
+    }
     .gif-row {
-      margin-bottom: 2rem;
+      margin-bottom: 1.5rem;
+      background: #fff;
+      padding: 1rem;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      width: 100%;
+      max-width: 800px;
     }
     .gif-row h3 {
       margin: 0 0 0.5rem 0;
@@ -27,16 +47,28 @@
     }
     .gif-images {
       display: flex;
-      gap: 1.5rem;
+      gap: 1rem;
+      justify-content: center;
     }
     .gif-col {
       text-align: center;
       flex: 1;
     }
     .gif-col img {
-      max-width: 200px;
+      max-width: 100%;
       border: 1px solid #ccc;
       background: #fff;
+    }
+    .stats {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 0.5rem;
+      font-size: 0.85rem;
+    }
+    .stats th, .stats td {
+      border: 1px solid #ddd;
+      padding: 0.25rem 0.5rem;
+      text-align: center;
     }
   </style>
   <script src="node_modules/omggif/omggif.js"></script>
@@ -44,6 +76,7 @@
 </head>
 <body>
   <h1>wtfgif vs omggif</h1>
+  <div id="summary">No data yet.</div>
   <input id="upload" type="file" accept="image/gif" multiple />
   <div id="results"></div>
   <script type="module">
@@ -63,6 +96,22 @@
     ];
 
     const results = document.getElementById('results');
+    const summary = document.getElementById('summary');
+    const totals = { omgRead: 0, wtfRead: 0, omgWrite: 0, wtfWrite: 0, count: 0 };
+
+    function updateSummary() {
+      if (!totals.count) return;
+      const avgOmgRead = totals.omgRead / totals.count;
+      const avgWtfRead = totals.wtfRead / totals.count;
+      const readWinner = avgOmgRead <= avgWtfRead ? 'omggif' : 'wtfgif';
+      const readPct = ((Math.max(avgOmgRead, avgWtfRead) - Math.min(avgOmgRead, avgWtfRead)) / Math.max(avgOmgRead, avgWtfRead)) * 100;
+      const avgOmgWrite = totals.omgWrite / totals.count;
+      const avgWtfWrite = totals.wtfWrite / totals.count;
+      const writeWinner = avgOmgWrite <= avgWtfWrite ? 'omggif' : 'wtfgif';
+      const writePct = ((Math.max(avgOmgWrite, avgWtfWrite) - Math.min(avgOmgWrite, avgWtfWrite)) / Math.max(avgOmgWrite, avgWtfWrite)) * 100;
+      summary.innerHTML = `<strong>Average read:</strong> omggif ${avgOmgRead.toFixed(2)}ms vs wtfgif ${avgWtfRead.toFixed(2)}ms — <strong>${readWinner}</strong> ${readPct.toFixed(1)}% faster.<br>` +
+        `<strong>Average write:</strong> omggif ${avgOmgWrite.toFixed(2)}ms vs wtfgif ${avgWtfWrite.toFixed(2)}ms — <strong>${writeWinner}</strong> ${writePct.toFixed(1)}% faster.`;
+    }
 
     async function fetchArrayBuffer(path) {
       const res = await fetch(path);
@@ -143,6 +192,19 @@
       return { buf: writerBuf.slice(0, len), readTime, writeTime };
     }
 
+    async function runAverage(fn, iterations, data) {
+      let totalRead = 0;
+      let totalWrite = 0;
+      let buf;
+      for (let i = 0; i < iterations; i++) {
+        const res = await fn(data);
+        totalRead += res.readTime;
+        totalWrite += res.writeTime;
+        buf = res.buf;
+      }
+      return { buf, readTime: totalRead / iterations, writeTime: totalWrite / iterations };
+    }
+
     function createCol(label, data) {
       const col = document.createElement('div');
       col.className = 'gif-col';
@@ -169,24 +231,33 @@
       imgs.appendChild(createCol('wtfgif', wtfBuf));
       row.appendChild(title);
       row.appendChild(imgs);
-      const stats = document.createElement('div');
+      const table = document.createElement('table');
+      table.className = 'stats';
       const readWinner = omgRead <= wtfRead ? 'omggif' : 'wtfgif';
       const readPct = ((Math.max(omgRead, wtfRead) - Math.min(omgRead, wtfRead)) / Math.max(omgRead, wtfRead)) * 100;
       const writeWinner = omgWrite <= wtfWrite ? 'omggif' : 'wtfgif';
       const writePct = ((Math.max(omgWrite, wtfWrite) - Math.min(omgWrite, wtfWrite)) / Math.max(omgWrite, wtfWrite)) * 100;
-      stats.innerHTML = `Read: omggif ${omgRead.toFixed(2)}ms vs wtfgif ${wtfRead.toFixed(2)}ms — <strong>${readWinner}</strong> ${readPct.toFixed(1)}% faster.<br>` +
-        `Write: omggif ${omgWrite.toFixed(2)}ms vs wtfgif ${wtfWrite.toFixed(2)}ms — <strong>${writeWinner}</strong> ${writePct.toFixed(1)}% faster.`;
-      row.appendChild(stats);
+      table.innerHTML = `<tr><th></th><th>omggif</th><th>wtfgif</th><th>Winner</th><th>% Faster</th></tr>` +
+        `<tr><td>Read (ms)</td><td>${omgRead.toFixed(2)}</td><td>${wtfRead.toFixed(2)}</td><td>${readWinner}</td><td>${readPct.toFixed(1)}</td></tr>` +
+        `<tr><td>Write (ms)</td><td>${omgWrite.toFixed(2)}</td><td>${wtfWrite.toFixed(2)}</td><td>${writeWinner}</td><td>${writePct.toFixed(1)}</td></tr>`;
+      row.appendChild(table);
       results.appendChild(row);
     }
 
     async function process(name, arrayBuffer) {
       const data = new Uint8Array(arrayBuffer);
+      const iterations = 10;
       const [omg, wtf] = await Promise.all([
-        reconstructWithOmggif(data),
-        reconstructWithWtfgif(data)
+        runAverage(reconstructWithOmggif, iterations, data),
+        runAverage(reconstructWithWtfgif, iterations, data)
       ]);
       addResult(name, data, omg, wtf);
+      totals.omgRead += omg.readTime;
+      totals.wtfRead += wtf.readTime;
+      totals.omgWrite += omg.writeTime;
+      totals.wtfWrite += wtf.writeTime;
+      totals.count++;
+      updateSummary();
     }
 
     async function loadTestGifs() {
