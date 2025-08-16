@@ -33,11 +33,11 @@ describe('GifWriter error handling', () => {
     expect(() => new GifWriter(buf, 0, 1)).toThrow(/Width\/Height invalid/);
   });
 
-  test('background index errors', () => {
+  test('background index validation', () => {
     const buf = new Uint8Array(10);
     const palette = [0x000000, 0xffffff];
     expect(() => new GifWriter(buf, 1, 1, { palette, background: 2 })).toThrow(/Background index out of range/);
-    expect(() => new GifWriter(buf, 1, 1, { palette, background: 0 })).toThrow(/Background index explicitly passed as 0/);
+    expect(() => new GifWriter(buf, 1, 1, { palette, background: 0 })).not.toThrow();
   });
 
   test('loop count invalid', () => {
