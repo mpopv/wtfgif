@@ -39,6 +39,24 @@ describe('Palette edge cases', () => {
     expect(wtfLen).toBe(omgLen);
     expect(bufWtf.slice(0, wtfLen)).toStrictEqual(bufOmg.slice(0, omgLen));
   });
+
+  test('two-color palette uses 1-bit LZW and decodes correctly', () => {
+    const width = 2;
+    const height = 2;
+    const palette = [0x000000, 0xffffff];
+    const pixels = new Uint8Array([0, 1, 0, 1]);
+    const buf = new Uint8Array(100);
+    const writer = new WtfGifWriter(buf, width, height, { palette });
+    writer.addFrame(0, 0, width, height, pixels);
+    const len = writer.end();
+    const gif = buf.slice(0, len);
+    const reader = new WtfGifReader(gif);
+    const wtfPixels = new Uint8Array(width * height * 4);
+    const omgPixels = new Uint8Array(width * height * 4);
+    reader.decodeAndBlitFrameRGBA(0, wtfPixels);
+    new OmgGifReader(gif).decodeAndBlitFrameRGBA(0, omgPixels);
+    expect(wtfPixels).toStrictEqual(omgPixels);
+  });
 });
 
 describe('GifReader parity with omggif', () => {
@@ -166,7 +184,7 @@ describe('GifWriter parity with omggif', () => {
   test('encodes identical bytes', () => {
     const width = 2;
     const height = 2;
-    const palette = [0x000000, 0xffffff];
+    const palette = [0x000000, 0xffffff, 0xff0000, 0x00ff00];
     const frame = new Uint8Array([0, 1, 1, 0]);
     const bufOmg = new Uint8Array(1000);
     const bufWtf = new Uint8Array(1000);
@@ -194,7 +212,7 @@ describe('GifWriter parity with omggif', () => {
     test('clears dictionary between frames', () => {
       const width = 2;
       const height = 2;
-      const palette = [0x000000, 0xffffff];
+      const palette = [0x000000, 0xffffff, 0xff0000, 0x00ff00];
       const frame1 = new Uint8Array([0, 1, 1, 0]);
       const frame2 = new Uint8Array([1, 0, 0, 1]);
       const buf = new Uint8Array(1000);
@@ -216,7 +234,7 @@ describe('GifWriter parity with omggif', () => {
     test('encodes many small frames without stale dictionary entries', () => {
       const width = 2;
       const height = 2;
-      const palette = [0x000000, 0xffffff];
+      const palette = [0x000000, 0xffffff, 0xff0000, 0x00ff00];
       const frame1 = new Uint8Array([0, 1, 1, 0]);
       const frame2 = new Uint8Array([1, 0, 0, 1]);
       const frames = [frame1, frame2];
@@ -262,7 +280,7 @@ describe('GifWriter parity with omggif', () => {
   test('local palette support', () => {
     const width = 2;
     const height = 2;
-    const palette = [0x000000, 0xffffff];
+    const palette = [0x000000, 0xffffff, 0xff0000, 0x00ff00];
     const frame = new Uint8Array([0, 1, 1, 0]);
     const bufOmg = new Uint8Array(1000);
     const bufWtf = new Uint8Array(1000);
@@ -301,7 +319,7 @@ describe('GifWriter parity with omggif', () => {
   test('supports non-zero background index', () => {
     const width = 2;
     const height = 2;
-    const palette = [0x000000, 0xffffff];
+    const palette = [0x000000, 0xffffff, 0xff0000, 0x00ff00];
     const frame = new Uint8Array([0, 1, 1, 0]);
     const bufOmg = new Uint8Array(100);
     const bufWtf = new Uint8Array(100);

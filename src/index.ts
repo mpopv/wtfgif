@@ -515,7 +515,7 @@ export class GifWriter {
     this.p = GifWriterOutputLZWCodeStream_fast(
       this.buf,
       this.p,
-      minCodeSize < 2 ? 2 : minCodeSize,
+      minCodeSize,
       indexedPixels as Uint8Array | number[],
       numColors
     );
@@ -671,11 +671,23 @@ function GifWriterOutputLZWCodeStream_fast(
       codeMask = (1 << codeSize) - 1;
       tableReset();
     } else {
-      if (nextCode >= codeMask + 1 && codeSize < 12) {
-        codeSize++;
-        codeMask = (1 << codeSize) - 1;
+      if (minCodeSize === 1) {
+        // For 1-bit palettes, codes 0 and 1 use 2-bit code size. We should
+        // only increase code size after adding a new dictionary entry.
+        tableSet(key, nextCode++);
+        if (nextCode > codeMask && codeSize < 12) {
+          codeSize++;
+          codeMask = (1 << codeSize) - 1;
+        }
+      } else {
+        // For larger palettes, match omggif's timing by growing the code size
+        // before inserting the entry that would overflow the current mask.
+        if (nextCode >= codeMask + 1 && codeSize < 12) {
+          codeSize++;
+          codeMask = (1 << codeSize) - 1;
+        }
+        tableSet(key, nextCode++);
       }
-      tableSet(key, nextCode++);
     }
 
     ib = k;
