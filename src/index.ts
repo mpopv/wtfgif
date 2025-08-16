@@ -209,8 +209,12 @@ function getPooledDecoderTables(gifHash: string): PooledDecoderTables {
   // Try to reuse any available pooled instance
   if (decoderTablePool.length > 0) {
     const pooled = decoderTablePool.pop()!;
+    // Sanitize tables before reuse to avoid leaking previous state
+    pooled.decTable.fill(0);
+    pooled.stack.fill(0);
+    pooled.firstByte.fill(0);
+    pooled.out32Cache = new WeakMap();
     pooled.hash = gifHash;
-    pooled.out32Cache = new WeakMap(); // Fresh cache for new GIF
     return pooled;
   }
   
@@ -1092,8 +1096,12 @@ export class GifReader {
         outPtr >>> 2,
         (outPtr >>> 2) + outputSize
       );
+      // Parity check: ensure decoder produced expected number of pixels
+      if (wasmOutput.length !== outputSize) {
+        throw new Error(`Wasm output length ${wasmOutput.length} does not match expected ${outputSize}`);
+      }
       pixels.set(wasmOutput);
-      
+
       return pixels;
       
     } finally {
@@ -1353,11 +1361,16 @@ export class GifReader {
       // Decode frames in parallel using worker pool
       const decodeResults = await this.workerPool.decodeFrames(this.buf, frameIndices);
       
-      // Convert worker results to expected format
-      return decodeResults.map((result: any) => ({
-        pixels: result.pixels,
-        delay: result.delay
-      }));
+      // Convert worker results to expected format with parity checks
+      return decodeResults.map((result: any) => {
+        if (!result.pixels || result.pixels.length !== this.width_ * this.height_) {
+          throw new Error('Worker pool returned invalid pixel data');
+        }
+        return {
+          pixels: result.pixels,
+          delay: result.delay
+        };
+      });
       
     } catch (error) {
       console.warn('Worker pool decode failed, falling back to sequential:', error);
@@ -1384,6 +1397,9 @@ export class GifReader {
     if (this.workerPoolEnabled && this.workerPool) {
       try {
         const result = await this.workerPool.decodeFrame(this.buf, frameIndex);
+        if (!result.pixels || result.pixels.length !== this.width_ * this.height_) {
+          throw new Error('Worker pool returned invalid pixel data');
+        }
         return result.pixels;
       } catch (error) {
         console.warn('Worker pool single frame decode failed:', error);
