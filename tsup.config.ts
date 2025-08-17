@@ -5,6 +5,8 @@ export default defineConfig({
   format: ['esm', 'cjs'],
   dts: true,
   sourcemap: true,
+  minify: true,
+  treeshake: true,
   clean: true,
   outDir: 'dist',
   outExtension({ format }) {

@@ -13,8 +13,8 @@ export class GifWriter {
 
   constructor(
     private buf: Uint8Array,
-    private width: number,
-    private height: number,
+    width: number,
+    height: number,
     gopts?: {
       loop?: number | null;
       palette?: PaletteRGB | null;
@@ -252,13 +252,15 @@ function GifWriterOutputLZWCodeStream_fast(
   // Key space is 20 bits: (prefix<<8)|k, values up to 12 bits.
   // Capacity: power-of-two >= 8192 for low probe counts, modest memory.
   const CAP = 8192;
-  const keys = (GifWriterOutputLZWCodeStream_fast._keys ??= new Int32Array(
-    CAP
-  ));
-  const vals = (GifWriterOutputLZWCodeStream_fast._vals ??= new Int16Array(
-    CAP
-  ));
-  const gen = (GifWriterOutputLZWCodeStream_fast._gen ??= new Int32Array(CAP));
+    const keys = (
+      (GifWriterOutputLZWCodeStream_fast._keys ??= new Int32Array(CAP)) as Int32Array
+    );
+    const vals = (
+      (GifWriterOutputLZWCodeStream_fast._vals ??= new Int16Array(CAP)) as Int16Array
+    );
+    const gen = (
+      (GifWriterOutputLZWCodeStream_fast._gen ??= new Int32Array(CAP)) as Int32Array
+    );
   let epoch = ((GifWriterOutputLZWCodeStream_fast._epoch ?? 0) + 1) | 0;
   GifWriterOutputLZWCodeStream_fast._epoch = epoch;
   if (epoch <= 0) {
