@@ -25,6 +25,31 @@ const writer = new GifWriter(buf, 2, 2, { palette: [0x000000, 0xffffff] });
 writer.finish();
 ```
 
+### React
+
+Here's a small component that fetches a GIF and shows its dimensions:
+
+```tsx
+import { useEffect, useState } from "react";
+import { GifReader } from "wtfgif";
+
+function GifInfo({ url }: { url: string }) {
+  const [size, setSize] = useState<{ width: number; height: number }>();
+
+  useEffect(() => {
+    async function load() {
+      const res = await fetch(url);
+      const buf = new Uint8Array(await res.arrayBuffer());
+      const reader = new GifReader(buf);
+      setSize({ width: reader.width, height: reader.height });
+    }
+    load();
+  }, [url]);
+
+  return size ? <p>{size.width}×{size.height}</p> : <p>Loading…</p>;
+}
+```
+
 ## Development
 
 - `npm run build` – bundle the library with type definitions.
