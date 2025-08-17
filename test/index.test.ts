@@ -507,3 +507,60 @@ describe("Cross-library write/read compatibility", () => {
     wtfReader.returnToPool();
   });
 });
+
+describe("Disposal method decoding", () => {
+  test("supports restore to background (disposal=2)", () => {
+    const width = 2;
+    const height = 2;
+    const palette = [0x000000, 0xff0000, 0x0000ff];
+    const buf = new Uint8Array(1000);
+    const writer = new WtfGifWriter(buf, width, height, { palette, background: 0 });
+    const frame1 = new Uint8Array([1, 1, 1, 1]);
+    writer.addFrame(0, 0, width, height, frame1, { disposal: 2 });
+    const frame2 = new Uint8Array([2, 2]);
+    writer.addFrame(1, 0, 1, 2, frame2);
+    const len = writer.end();
+    const gif = buf.slice(0, len);
+    const wtfReader = new WtfGifReader(gif);
+    const outLen = width * height * 4;
+    const wtfPixels = new Uint8Array(outLen);
+    wtfReader.decodeAndBlitFrameRGBA(0, wtfPixels);
+    wtfReader.decodeAndBlitFrameRGBA(1, wtfPixels);
+    const expected = [
+      0, 0, 0, 255,
+      0, 0, 255, 255,
+      0, 0, 0, 255,
+      0, 0, 255, 255,
+    ];
+    expect(Array.from(wtfPixels)).toStrictEqual(expected);
+  });
+
+  test("supports restore to previous (disposal=3)", () => {
+    const width = 2;
+    const height = 2;
+    const palette = [0x000000, 0xff0000, 0x00ff00, 0x0000ff];
+    const buf = new Uint8Array(1000);
+    const writer = new WtfGifWriter(buf, width, height, { palette, background: 0 });
+    const frame0 = new Uint8Array([1, 1, 1, 1]);
+    writer.addFrame(0, 0, width, height, frame0, { disposal: 1 });
+    const frame1 = new Uint8Array([2, 2]);
+    writer.addFrame(0, 0, 1, 2, frame1, { disposal: 3 });
+    const frame2 = new Uint8Array([3, 3]);
+    writer.addFrame(1, 0, 1, 2, frame2);
+    const len = writer.end();
+    const gif = buf.slice(0, len);
+    const wtfReader = new WtfGifReader(gif);
+    const outLen = width * height * 4;
+    const wtfPixels = new Uint8Array(outLen);
+    wtfReader.decodeAndBlitFrameRGBA(0, wtfPixels);
+    wtfReader.decodeAndBlitFrameRGBA(1, wtfPixels);
+    wtfReader.decodeAndBlitFrameRGBA(2, wtfPixels);
+    const expected = [
+      255, 0, 0, 255,
+      0, 0, 255, 255,
+      255, 0, 0, 255,
+      0, 0, 255, 255,
+    ];
+    expect(Array.from(wtfPixels)).toStrictEqual(expected);
+  });
+});

@@ -44,7 +44,7 @@ describe("Pixel Difference Investigation", () => {
         }, wtf=${wtfAny.hasGlobalPalette?.()}`
       );
       console.log(
-        `Background: omg=${omgAny.bgColor}, wtf=${wtfAny.backgroundIndex?.()}`
+        `Background: omg=${omgAny.bgColor}, wtf=${wtfAny.backgroundIndex}`
       );
 
       const pixelCount = omg.width * omg.height * 4;

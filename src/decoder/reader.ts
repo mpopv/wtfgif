@@ -48,6 +48,12 @@ export class GifReader {
   private frames: FrameInfo[] = [];
   private loop_count: number | null = null;
 
+  private backgroundIndex = 0;
+  private bgColor32rgba = 0;
+  private bgColor32bgra = 0;
+
+  private restoreBuffer32: Uint32Array | null = null;
+
   // Pooled decoder tables for reuse across instances
   private pooledTables: PooledDecoderTables;
   private gifHash: string;
@@ -120,13 +126,33 @@ export class GifReader {
     const gctFlag = (pf0 >>> 7) & 1;
     const gctSizeBits = pf0 & 0x7;
     const gctColors = 1 << (gctSizeBits + 1);
-    const background = buf[p++]; // unused here
+    const background = buf[p++];
+    this.backgroundIndex = background;
     p++; // pixel aspect ratio
 
     if (gctFlag) {
       this.globalPaletteOffset = p;
       this.globalPaletteSize = gctColors;
       p += gctColors * 3;
+      const pal32rgba = buildPal32(
+        buf,
+        this.globalPaletteOffset,
+        this.globalPaletteSize,
+        "rgba",
+        null
+      );
+      const pal32bgra = buildPal32(
+        buf,
+        this.globalPaletteOffset,
+        this.globalPaletteSize,
+        "bgra",
+        null
+      );
+      this.bgColor32rgba = pal32rgba[background] || 0;
+      this.bgColor32bgra = pal32bgra[background] || 0;
+    } else {
+      this.bgColor32rgba = 0;
+      this.bgColor32bgra = 0;
     }
 
     let delay = 0;
@@ -1090,14 +1116,10 @@ export class GifReader {
     pixels: Uint8Array,
     order: "rgba" | "bgra"
   ) {
-    const frame = this.frameInfo(frameNum);
-    const numPixels = frame.width * frame.height;
+    if (frameNum < 0 || frameNum >= this.frames.length)
+      throw new Error("Frame index out of range.");
 
-    // NEW: use prebuilt palettes directly - zero lookup, zero reallocation
-    const pal32 = order === "rgba" ? frame.pal32rgba! : frame.pal32bgra!;
-
-    let trans = frame.transparent_index;
-    if (trans === null) trans = 256; // sentinel; indexes are 0..255
+    const bgColor = order === "rgba" ? this.bgColor32rgba : this.bgColor32bgra;
 
     // Reuse a cached Uint32 view for this pixels buffer
     let out32 = this.out32Cache.get(pixels);
@@ -1110,16 +1132,45 @@ export class GifReader {
       this.out32Cache.set(pixels, out32);
     }
 
-    // Streaming decode directly to out32
-    this.lzwDecodeToPixels(
-      this.buf,
-      frame.data_offset,
-      out32,
-      this.width_,
-      frame,
-      pal32,
-      trans
-    );
+    out32.fill(bgColor);
+
+    if (!this.restoreBuffer32 || this.restoreBuffer32.length !== out32.length)
+      this.restoreBuffer32 = new Uint32Array(out32.length);
+    const restore = this.restoreBuffer32;
+
+    for (let i = 0; i <= frameNum; i++) {
+      const frame = this.frames[i];
+      const pal32 = order === "rgba" ? frame.pal32rgba! : frame.pal32bgra!;
+      let trans = frame.transparent_index;
+      if (trans === null) trans = 256;
+
+      let needsRestore = frame.disposal === 3;
+      if (needsRestore) restore.set(out32);
+
+      this.lzwDecodeToPixels(
+        this.buf,
+        frame.data_offset,
+        out32,
+        this.width_,
+        frame,
+        pal32,
+        trans
+      );
+
+      if (i < frameNum) {
+        if (frame.disposal === 2) {
+          const w = frame.width | 0;
+          const h = frame.height | 0;
+          let dst = (frame.y * this.width_ + frame.x) >>> 0;
+          for (let y = 0; y < h; y++) {
+            out32.fill(bgColor, dst, dst + w);
+            dst += this.width_;
+          }
+        } else if (frame.disposal === 3) {
+          out32.set(restore);
+        }
+      }
+    }
   }
 
   /* Optimized LZW decoder that streams symbols directly to destination pixels. */
