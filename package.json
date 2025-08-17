@@ -16,6 +16,7 @@
   "scripts": {
     "build": "tsup",
     "test": "vitest run --coverage",
+    "lint": "biome lint .",
     "prepare": "npm run build"
   },
   "repository": {
@@ -48,6 +49,7 @@
   "homepage": "https://github.com/mpopv/wtfgif#readme",
   "description": "A drop-in optimized replacement for omggif: - Fused LZW decode→blit - 32-bit palette, Uint32 stores - Interlace pass scheduling - Typed-array open-addressing hash for encoder",
   "devDependencies": {
+    "@biomejs/biome": "^2.2.0",
     "@types/node": "^24.2.1",
     "@types/omggif": "^1.0.5",
     "@vitest/coverage-v8": "^3.2.4",

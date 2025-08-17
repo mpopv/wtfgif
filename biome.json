@@ -1,0 +1,9 @@
+{
+  "$schema": "https://raw.githubusercontent.com/biomejs/biome/main/schema.json",
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": false
+    }
+  }
+}
