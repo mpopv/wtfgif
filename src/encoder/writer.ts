@@ -1,6 +1,7 @@
 import { PaletteRGB } from "../types";
 import { GIF } from "../constants/gif";
 import { log2Pow2, checkPalette } from "../utils/palette";
+import { writeNetscapeLoopCount } from "../utils/netscape";
 
 export class GifWriter {
   private p = 0;
@@ -74,27 +75,7 @@ export class GifWriter {
     if (this.loopCount !== null) {
       const lc = this.loopCount | 0;
       if (lc < 0 || lc > 65535) throw new Error("Loop count invalid.");
-      this.buf[this.p++] = GIF.EXT;
-      this.buf[this.p++] = GIF.APPLICATION;
-      this.buf[this.p++] = GIF.NETSCAPE_LEN;
-      // "NETSCAPE2.0"
-      this.buf[this.p++] = 0x4e;
-      this.buf[this.p++] = 0x45;
-      this.buf[this.p++] = 0x54;
-      this.buf[this.p++] = 0x53;
-      this.buf[this.p++] = 0x43;
-      this.buf[this.p++] = 0x41;
-      this.buf[this.p++] = 0x50;
-      this.buf[this.p++] = 0x45;
-      this.buf[this.p++] = 0x32;
-      this.buf[this.p++] = 0x2e;
-      this.buf[this.p++] = 0x30;
-      // Sub-block: 3 bytes
-      this.buf[this.p++] = 0x03;
-      this.buf[this.p++] = 0x01;
-      this.buf[this.p++] = lc & 0xff;
-      this.buf[this.p++] = (lc >> 8) & 0xff;
-      this.buf[this.p++] = 0x00;
+      this.p = writeNetscapeLoopCount(this.buf, this.p, lc);
     }
   }
 
