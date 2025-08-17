@@ -32,8 +32,6 @@ import {
 const moduleReusableFramePixels = new Uint8Array(2048 * 2048);
 let moduleFramePixelsInUse = false;
 
-const WASM_FEATURES = getWasmFeatures();
-
 /* ====== Reader (Decoder) ====== */
 // moved to types.ts
 
@@ -300,27 +298,28 @@ export class GifReader {
     return this.height_;
   }
 
-    async initWasm(wasmPath?: string): Promise<boolean> {
-      if (!WASM_FEATURES.supported) {
-        return false;
-      }
-
-      let initPromise = getWasmInitPromise();
-      if (!getWasmDecoder() && !initPromise) {
-        initPromise = initializeGlobalWasm(wasmPath);
-        setWasmInitPromise(initPromise);
-      }
-
-      if (initPromise) {
-        await initPromise;
-      }
-
-      return getWasmDecoder() !== null;
+  async initWasm(wasmPath?: string): Promise<boolean> {
+    const features = getWasmFeatures();
+    if (!features.supported) {
+      return false;
     }
 
-    isWasmReady(): boolean {
-      return isGlobalWasmReady();
+    let initPromise = getWasmInitPromise();
+    if (!getWasmDecoder() && !initPromise) {
+      initPromise = initializeGlobalWasm(wasmPath);
+      setWasmInitPromise(initPromise);
     }
+
+    if (initPromise) {
+      await initPromise;
+    }
+
+    return getWasmDecoder() !== null;
+  }
+
+  isWasmReady(): boolean {
+    return isGlobalWasmReady();
+  }
 
   async framePixelsWasm(
     frameIndex: number,
@@ -427,11 +426,12 @@ export class GifReader {
     }
   }
 
-    async framePixelsParallel(
-      frameIndices: number[]
-    ): Promise<{ pixels: Uint32Array; delay: number }[]> {
-      const workerPool = getWasmWorkerPool();
-      if (!WASM_FEATURES.threads || !workerPool) {
+  async framePixelsParallel(
+    frameIndices: number[]
+  ): Promise<{ pixels: Uint32Array; delay: number }[]> {
+    const workerPool = getWasmWorkerPool();
+    const features = getWasmFeatures();
+    if (!features.threads || !workerPool) {
       // Fallback: decode sequentially using regular method
       const results = [];
       for (const frameIndex of frameIndices) {
@@ -442,8 +442,8 @@ export class GifReader {
       return results;
     }
 
-      // Use worker pool for parallel decode
-      return workerPool.decodeParallel(this.buf, frameIndices);
+    // Use worker pool for parallel decode
+    return workerPool.decodeParallel(this.buf, frameIndices);
   }
 
   getWasmStats(): {
@@ -452,11 +452,12 @@ export class GifReader {
     threads: boolean;
     heapUsage?: number;
   } {
+    const features = getWasmFeatures();
     return {
-      ...WASM_FEATURES,
-        heapUsage: getWasmDecoder()?.get_heap_usage(),
-      };
-    }
+      ...features,
+      heapUsage: getWasmDecoder()?.get_heap_usage(),
+    };
+  }
 
   async initGPU(canvas?: HTMLCanvasElement): Promise<boolean> {
     try {

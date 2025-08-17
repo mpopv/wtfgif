@@ -12,12 +12,17 @@ interface WasmModule {
   isWasmThreadsSupported: () => boolean;
 }
 
+let cachedWasmModule: WasmModule | null | undefined;
+
 const loadWasmModule = (): WasmModule | null => {
-  try {
-    return require("../wasm-full/wasmDecoder") as WasmModule;
-  } catch {
-    return null;
+  if (cachedWasmModule === undefined) {
+    try {
+      cachedWasmModule = require("../wasm-full/wasmDecoder") as WasmModule;
+    } catch {
+      cachedWasmModule = null;
+    }
   }
+  return cachedWasmModule;
 };
 
 const createWasmGifDecoder = async (
@@ -53,24 +58,38 @@ let globalWasmDecoder: WasmGifDecoder | null = null;
 let globalWasmWorkerPool: WasmWorkerPool | null = null;
 let wasmInitPromise: Promise<void> | null = null;
 
-const WASM_FEATURES = {
-  supported: isWasmSupported(),
-  simd: isWasmSIMDSupported(),
-  threads: isWasmThreadsSupported(),
-};
+let wasmFeatures:
+  | { supported: boolean; simd: boolean; threads: boolean }
+  | null = null;
+
+export function getWasmFeatures() {
+  if (!wasmFeatures) {
+    wasmFeatures = {
+      supported: isWasmSupported(),
+      simd: isWasmSIMDSupported(),
+      threads: isWasmThreadsSupported(),
+    };
+  }
+  return wasmFeatures;
+}
 
 export const initializeGlobalWasm = async (
   wasmPath?: string
 ): Promise<void> => {
   try {
+    const features = getWasmFeatures();
+    if (!features.supported) {
+      return;
+    }
+
     globalWasmDecoder = await createWasmGifDecoder(wasmPath);
-    if (WASM_FEATURES.threads) {
+    if (features.threads) {
       globalWasmWorkerPool = await createWasmWorkerPool(wasmPath);
     }
     console.log("WebAssembly GIF decoder initialized:", {
       decoder: !!globalWasmDecoder,
       workerPool: !!globalWasmWorkerPool,
-      features: WASM_FEATURES,
+      features,
     });
   } catch (error) {
     console.warn("Failed to initialize WebAssembly decoder:", error);
@@ -78,10 +97,6 @@ export const initializeGlobalWasm = async (
     globalWasmWorkerPool = null;
   }
 };
-
-export function getWasmFeatures() {
-  return WASM_FEATURES;
-}
 export function getWasmDecoder() {
   return globalWasmDecoder;
 }
@@ -98,8 +113,9 @@ export function isWasmReady() {
   return globalWasmDecoder !== null;
 }
 export function getWasmStatus() {
+  const features = getWasmFeatures();
   return {
-    ...WASM_FEATURES,
+    ...features,
     initialized: globalWasmDecoder !== null,
     workerPoolAvailable: globalWasmWorkerPool !== null,
   };
