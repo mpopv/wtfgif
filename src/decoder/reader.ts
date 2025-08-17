@@ -5,6 +5,7 @@ import {
   ColorMapWasm,
   WasmWorkerPool,
 } from "../types";
+import { DecodeError, RuntimeError } from "../errors";
 import { GIF } from "../constants/gif";
 import { buildPal32 } from "../utils/palette";
 import { concatSubBlocks } from "../utils/subblocks";
@@ -108,7 +109,7 @@ export class GifReader {
       ((buf[p++] + 1) & 0xfd) !== GIF._8 ||
       buf[p++] !== GIF.A
     ) {
-      throw new Error("Invalid GIF 87a/89a header.");
+      throw new DecodeError("INVALID_HEADER", "Invalid GIF 87a/89a header.");
     }
 
     const width = (buf[p++] | (buf[p++] << 8)) >>> 0;
@@ -168,7 +169,8 @@ export class GifReader {
                 p += 12;
                 while (true) {
                   const size = buf[p++];
-                  if (!(size >= 0)) throw new Error("Invalid block size");
+                  if (!(size >= 0))
+                    throw new DecodeError("INVALID_BLOCK_SIZE", "Invalid block size");
                   if (size === 0) break;
                   p += size;
                 }
@@ -177,7 +179,10 @@ export class GifReader {
             }
             case GIF.GCE: {
               if (buf[p++] !== 0x4 || buf[p + 4] !== 0)
-                throw new Error("Invalid graphics extension block.");
+                throw new DecodeError(
+                  "INVALID_GRAPHICS_EXTENSION",
+                  "Invalid graphics extension block."
+                );
               const pf1 = buf[p++];
               delay = (buf[p++] | (buf[p++] << 8)) >>> 0;
               const t = buf[p++];
@@ -190,14 +195,16 @@ export class GifReader {
             case GIF.COMMENT: {
               while (true) {
                 const size = buf[p++];
-                if (!(size >= 0)) throw new Error("Invalid block size");
+                if (!(size >= 0))
+                  throw new DecodeError("INVALID_BLOCK_SIZE", "Invalid block size");
                 if (size === 0) break;
                 p += size;
               }
               break;
             }
             default:
-              throw new Error(
+              throw new DecodeError(
+                "UNKNOWN_GRAPHIC_CONTROL_LABEL",
                 "Unknown graphic control label: 0x" +
                   (label as number).toString(16)
               );
@@ -229,7 +236,8 @@ export class GifReader {
           p++; // codesize
           while (true) {
             const size = buf[p++];
-            if (!(size >= 0)) throw new Error("Invalid block size");
+            if (!(size >= 0))
+              throw new DecodeError("INVALID_BLOCK_SIZE", "Invalid block size");
             if (size === 0) break;
             p += size;
           }
@@ -286,7 +294,8 @@ export class GifReader {
           break;
 
         default:
-          throw new Error(
+          throw new DecodeError(
+            "UNKNOWN_BLOCK",
             "Unknown gif block: 0x" + (block as number).toString(16)
           );
       }
@@ -366,7 +375,10 @@ export class GifReader {
       }
 
     if (frameIndex < 0 || frameIndex >= this.frames.length) {
-      throw new Error("Frame index out of bounds");
+      throw new DecodeError(
+        "FRAME_INDEX_OUT_OF_BOUNDS",
+        "Frame index out of bounds"
+      );
     }
 
     // Calculate required output size
@@ -380,13 +392,19 @@ export class GifReader {
     // Allocate GIF data in Wasm heap
       const gifPtr = decoder.wasm_malloc(this.buf.length);
     if (gifPtr === 0) {
-      throw new Error("Failed to allocate Wasm memory for GIF data");
+      throw new RuntimeError(
+        "WASM_GIF_DATA_ALLOC",
+        "Failed to allocate Wasm memory for GIF data"
+      );
     }
 
       const outPtr = decoder.wasm_malloc(outputSize * 4);
     if (outPtr === 0) {
         decoder.wasm_free(gifPtr);
-      throw new Error("Failed to allocate Wasm memory for output");
+      throw new RuntimeError(
+        "WASM_OUTPUT_ALLOC",
+        "Failed to allocate Wasm memory for output"
+      );
     }
 
     try {
@@ -404,7 +422,10 @@ export class GifReader {
 
       // Check for errors
       if (result > 1000) {
-        throw new Error(`Wasm decode error: ${result}`);
+        throw new RuntimeError(
+          "WASM_DECODE_ERROR",
+          `Wasm decode error: ${result}`
+        );
       }
 
       // Copy result back to JavaScript
@@ -414,7 +435,8 @@ export class GifReader {
       );
       // Parity check: ensure decoder produced expected number of pixels
       if (wasmOutput.length !== outputSize) {
-        throw new Error(
+        throw new RuntimeError(
+          "WASM_DECODE_RESULT_INVALID",
           `Wasm output length ${wasmOutput.length} does not match expected ${outputSize}`
         );
       }
@@ -493,7 +515,10 @@ export class GifReader {
     }
 
     if (frameIndex < 0 || frameIndex >= this.frames.length) {
-      throw new Error("Frame index out of bounds");
+      throw new DecodeError(
+        "FRAME_INDEX_OUT_OF_BOUNDS",
+        "Frame index out of bounds"
+      );
     }
 
     // Get frame info and decode indices using JavaScript LZW decoder
@@ -532,7 +557,10 @@ export class GifReader {
     ): void {
       const decoder = getWasmDecoder();
       if (!this.isWasmReady() || !decoder) {
-        throw new Error("WebAssembly not available for zero-copy presentation");
+        throw new RuntimeError(
+          "ZERO_COPY_NOT_AVAILABLE",
+          "WebAssembly not available for zero-copy presentation"
+        );
       }
 
     const frame = this.frameInfo(frameIndex);
@@ -679,7 +707,10 @@ export class GifReader {
           !result.pixels ||
           result.pixels.length !== this.width_ * this.height_
         ) {
-          throw new Error("Worker pool returned invalid pixel data");
+          throw new RuntimeError(
+            "INVALID_WORKER_PIXEL_DATA",
+            "Worker pool returned invalid pixel data"
+          );
         }
         return {
           pixels: result.pixels,
@@ -718,7 +749,10 @@ export class GifReader {
           !result.pixels ||
           result.pixels.length !== this.width_ * this.height_
         ) {
-          throw new Error("Worker pool returned invalid pixel data");
+          throw new RuntimeError(
+            "INVALID_WORKER_PIXEL_DATA",
+            "Worker pool returned invalid pixel data"
+          );
         }
         return result.pixels;
       } catch (error) {
@@ -986,7 +1020,10 @@ export class GifReader {
 
   frameInfo(i: number): FrameInfo {
     if (i < 0 || i >= this.frames.length)
-      throw new Error("Frame index out of range.");
+      throw new DecodeError(
+        "FRAME_INDEX_OUT_OF_RANGE",
+        "Frame index out of range."
+      );
     return this.frames[i];
   }
 
@@ -1023,7 +1060,8 @@ export class GifReader {
   ): void {
     const expectedSize = this.width_ * this.height_ * 4;
     if (buffer.byteLength < expectedSize) {
-      throw new Error(
+      throw new RuntimeError(
+        "BUFFER_TOO_SMALL",
         `Buffer too small: need ${expectedSize} bytes, got ${buffer.byteLength}`
       );
     }

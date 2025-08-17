@@ -2,7 +2,12 @@ import { describe, test, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { GifWriter as OmgGifWriter } from "omggif";
-import { GifReader, GifWriter } from "../src/index";
+import {
+  GifReader,
+  GifWriter,
+  DecodeError,
+  RuntimeError,
+} from "../src/index";
 
 const gifsDir = join(__dirname, "gifs");
 const sampleGif = readFileSync(join(gifsDir, "partyparrot.gif"));
@@ -10,18 +15,19 @@ const sampleGif = readFileSync(join(gifsDir, "partyparrot.gif"));
 describe("GifReader error handling", () => {
   test("invalid header", () => {
     const bad = new Uint8Array([0, 1, 2, 3]);
+    expect(() => new GifReader(bad)).toThrowError(DecodeError);
     expect(() => new GifReader(bad)).toThrow(/Invalid GIF/);
   });
 
   test("out of bounds frame index", () => {
     const reader = new GifReader(sampleGif);
     const small = new ArrayBuffer(1);
-    expect(() => reader.frameInfo(999)).toThrow(/Frame index out of range/);
-    expect(() => reader.decodeFrameToTransferableRGBA(999)).toThrow(
-      /Frame index out of range/
+    expect(() => reader.frameInfo(999)).toThrowError(DecodeError);
+    expect(() => reader.decodeFrameToTransferableRGBA(999)).toThrowError(
+      DecodeError
     );
-    expect(() => reader.decodeFrameIntoBuffer(0, small)).toThrow(
-      /Buffer too small/
+    expect(() => reader.decodeFrameIntoBuffer(0, small)).toThrowError(
+      RuntimeError
     );
     expect(
       () =>
@@ -29,7 +35,7 @@ describe("GifReader error handling", () => {
           0,
           undefined as unknown as CanvasRenderingContext2D
         )
-    ).toThrow(/WebAssembly not available/);
+    ).toThrowError(RuntimeError);
   });
 });
 

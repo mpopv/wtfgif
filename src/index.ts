@@ -1,5 +1,6 @@
 import { GifWriter } from "./encoder/writer";
 import { GifReader } from "./decoder/reader";
+import { DecodeError, RuntimeError } from "./errors";
 import {
   initializeGlobalWasm,
   getWasmStatus,
@@ -14,6 +15,8 @@ export {
   initializeWasmGlobally,
   getWasmStatus,
   cleanupWasm,
+  DecodeError,
+  RuntimeError,
 };
 
 // Browser global export under wtfgif namespace
@@ -24,6 +27,8 @@ export {
     initializeWasmGlobally,
     getWasmStatus,
     cleanupWasm,
+    DecodeError,
+    RuntimeError,
   };
 
     if (typeof window !== "undefined") {
