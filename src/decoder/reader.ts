@@ -8,6 +8,7 @@ import {
 import { GIF } from "../constants/gif";
 import { buildPal32 } from "../utils/palette";
 import { concatSubBlocks } from "../utils/subblocks";
+import { readNetscapeLoopCount } from "../utils/netscape";
 import {
   createDecoderTables,
   getPooledDecoderTables,
@@ -142,27 +143,10 @@ export class GifReader {
           const label = buf[p++];
           switch (label) {
             case GIF.APPLICATION: {
-              // Possibly NETSCAPE2.0
-              if (
-                buf[p] === GIF.NETSCAPE_LEN &&
-                buf[p + 1] === 0x4e &&
-                buf[p + 2] === 0x45 &&
-                buf[p + 3] === 0x54 &&
-                buf[p + 4] === 0x53 &&
-                buf[p + 5] === 0x43 &&
-                buf[p + 6] === 0x41 &&
-                buf[p + 7] === 0x50 &&
-                buf[p + 8] === 0x45 &&
-                buf[p + 9] === 0x32 &&
-                buf[p + 10] === 0x2e &&
-                buf[p + 11] === 0x30 &&
-                buf[p + 12] === 0x03 &&
-                buf[p + 13] === 0x01 &&
-                buf[p + 16] === 0x00
-              ) {
-                p += 14;
-                this.loop_count = (buf[p++] | (buf[p++] << 8)) >>> 0;
-                p++; // terminator
+              const netscape = readNetscapeLoopCount(buf, p);
+              if (netscape) {
+                this.loop_count = netscape.loopCount;
+                p = netscape.nextPos;
               } else {
                 // skip unknown app extension
                 p += 12;
