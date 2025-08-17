@@ -1,5 +1,18 @@
 import { PaletteRGB } from "../types";
 
+// Precompute Uint32 representations for channel shifts to avoid per-entry math
+const SHIFT_0 = new Uint32Array(256);
+const SHIFT_8 = new Uint32Array(256);
+const SHIFT_16 = new Uint32Array(256);
+const SHIFT_24 = new Uint32Array(256);
+
+for (let i = 0; i < 256; i++) {
+  SHIFT_0[i] = i;
+  SHIFT_8[i] = i << 8;
+  SHIFT_16[i] = i << 16;
+  SHIFT_24[i] = i << 24;
+}
+
 export function log2Pow2(n: number): number {
   return 31 - Math.clz32(n);
 }
@@ -31,7 +44,8 @@ export function buildPal32(
       const b = buf[paletteOffset + i * 3 + 2] | 0;
       const alpha =
         transparentIndex !== null && i === transparentIndex ? 0 : 255;
-      pal32[i] = (alpha << 24) | (b << 16) | (g << 8) | r;
+      pal32[i] =
+        SHIFT_24[alpha] | SHIFT_16[b] | SHIFT_8[g] | SHIFT_0[r];
     }
   } else {
     for (let i = 0; i < limit; i++) {
@@ -40,7 +54,8 @@ export function buildPal32(
       const b = buf[paletteOffset + i * 3 + 2] | 0;
       const alpha =
         transparentIndex !== null && i === transparentIndex ? 0 : 255;
-      pal32[i] = (alpha << 24) | (r << 16) | (g << 8) | b;
+      pal32[i] =
+        SHIFT_24[alpha] | SHIFT_16[r] | SHIFT_8[g] | SHIFT_0[b];
     }
   }
   return pal32;
