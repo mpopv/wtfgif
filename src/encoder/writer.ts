@@ -13,8 +13,8 @@ export class GifWriter {
 
   constructor(
     private buf: Uint8Array,
-    private width: number,
-    private height: number,
+    width: number,
+    height: number,
     gopts?: {
       loop?: number | null;
       palette?: PaletteRGB | null;
@@ -281,24 +281,24 @@ function GifWriterOutputLZWCodeStream_fast(
     // returns -1 if miss
     let i = key & (CAP - 1);
     // linear probing
-    while (gen[i] === EPOCH) {
-      if (keys[i] === key) return vals[i] | 0;
+    while (gen[i]! === EPOCH) {
+      if (keys[i]! === key) return vals[i]! | 0;
       i = (i + 1) & (CAP - 1);
     }
     return -1;
   }
   function tableSet(key: number, value: number) {
     let i = key & (CAP - 1);
-    while (gen[i] === EPOCH) {
-      if (keys[i] === key) {
-        vals[i] = value;
+    while (gen[i]! === EPOCH) {
+      if (keys[i]! === key) {
+        vals[i]! = value;
         return;
       }
       i = (i + 1) & (CAP - 1);
     }
-    gen[i] = EPOCH;
-    keys[i] = key | 0;
-    vals[i] = value | 0;
+    gen[i]! = EPOCH;
+    keys[i]! = key | 0;
+    vals[i]! = value | 0;
   }
 
   function emit(code: number) {

@@ -1,5 +1,7 @@
 import { GifWriter } from "./encoder/writer";
 import { GifReader } from "./decoder/reader";
+import { GifEncoderStream } from "./stream/encoder";
+import { GifDecoderStream } from "./stream/decoder";
 import {
   initializeGlobalWasm,
   getWasmStatus,
@@ -11,6 +13,8 @@ const initializeWasmGlobally = initializeGlobalWasm;
 export {
   GifWriter,
   GifReader,
+  GifEncoderStream,
+  GifDecoderStream,
   initializeWasmGlobally,
   getWasmStatus,
   cleanupWasm,
@@ -21,22 +25,16 @@ export {
   const browserExports = {
     GifWriter,
     GifReader,
+    GifEncoderStream,
+    GifDecoderStream,
     initializeWasmGlobally,
     getWasmStatus,
     cleanupWasm,
   };
 
     if (typeof window !== "undefined") {
-      (window as Window & { wtfgif: typeof browserExports }).wtfgif = browserExports;
+      (window as any).wtfgif = browserExports;
     } else if (typeof globalThis !== "undefined") {
-      (globalThis as typeof globalThis & { wtfgif: typeof browserExports }).wtfgif =
-        browserExports;
+      (globalThis as any).wtfgif = browserExports;
     }
-  })();
-
-declare global {
-  interface Window {
-    wtfgif: typeof browserExports;
-  }
-  var wtfgif: typeof browserExports;
-}
+})();
