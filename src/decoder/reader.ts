@@ -29,7 +29,9 @@ import {
   isWasmReady as isGlobalWasmReady,
 } from "../wasm/runtime";
 
-const moduleReusableFramePixels = new Uint8Array(2048 * 2048);
+// Reusable buffer for interlaced frame pixels. Size grows dynamically based on
+// requested frame dimensions to avoid allocating a large fixed array upfront.
+let moduleReusableFramePixels = new Uint8Array(0);
 let moduleFramePixelsInUse = false;
 
 const WASM_FEATURES = getWasmFeatures();
@@ -1383,14 +1385,15 @@ export class GifReader {
       const frameSize = fw * fh;
       let framePixels: Uint8Array;
 
-      if (
-        !moduleFramePixelsInUse &&
-        frameSize <= moduleReusableFramePixels.length
-      ) {
+      if (!moduleFramePixelsInUse) {
+        // Grow reusable buffer if needed
+        if (frameSize > moduleReusableFramePixels.length) {
+          moduleReusableFramePixels = new Uint8Array(frameSize);
+        }
         moduleFramePixelsInUse = true;
         framePixels = moduleReusableFramePixels.subarray(0, frameSize);
       } else {
-        // Fallback to allocation if reusable array is in use or too small
+        // Fallback to allocation if reusable array is currently in use
         framePixels = new Uint8Array(frameSize);
       }
 
@@ -1503,7 +1506,7 @@ export class GifReader {
       }
 
       // Release module-level array if we were using it
-      if (framePixels === moduleReusableFramePixels.subarray(0, frameSize)) {
+      if (framePixels.buffer === moduleReusableFramePixels.buffer) {
         moduleFramePixelsInUse = false;
       }
     }
