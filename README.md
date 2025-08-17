@@ -25,6 +25,18 @@ const writer = new GifWriter(buf, 2, 2, { palette: [0x000000, 0xffffff] });
 writer.finish();
 ```
 
+## Performance
+
+wtfgif harnesses WebAssembly to maximize throughput. When the host
+environment supports it, the library automatically enables advanced
+features:
+
+- **SIMD** – vectorizes hot pixel operations for faster encode and decode.
+- **Threads** – decodes frames in parallel across multiple workers.
+
+These capabilities deliver substantial speedups over pure JavaScript
+implementations while gracefully falling back when unsupported.
+
 ## Development
 
 - `npm run build` – bundle the library with type definitions.
