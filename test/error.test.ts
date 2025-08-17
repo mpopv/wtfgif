@@ -23,6 +23,9 @@ describe("GifReader error handling", () => {
     expect(() => reader.decodeFrameIntoBuffer(0, small)).toThrow(
       /Buffer too small/
     );
+    expect(() => reader.decodeFrameRGBA(0, new Uint8Array(1))).toThrow(
+      /Buffer too small/
+    );
     expect(
       () =>
         reader.frameImageDataZeroCopy(

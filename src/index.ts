@@ -17,22 +17,22 @@ export {
 };
 
 // Browser global export under wtfgif namespace
-(function () {
-  const browserExports = {
-    GifWriter,
-    GifReader,
-    initializeWasmGlobally,
-    getWasmStatus,
-    cleanupWasm,
-  };
+const browserExports = {
+  GifWriter,
+  GifReader,
+  initializeWasmGlobally,
+  getWasmStatus,
+  cleanupWasm,
+};
 
-    if (typeof window !== "undefined") {
-      (window as Window & { wtfgif: typeof browserExports }).wtfgif = browserExports;
-    } else if (typeof globalThis !== "undefined") {
-      (globalThis as typeof globalThis & { wtfgif: typeof browserExports }).wtfgif =
-        browserExports;
-    }
-  })();
+(function () {
+  if (typeof window !== "undefined") {
+    (window as Window & { wtfgif: typeof browserExports }).wtfgif = browserExports;
+  } else if (typeof globalThis !== "undefined") {
+    (globalThis as typeof globalThis & { wtfgif: typeof browserExports }).wtfgif =
+      browserExports;
+  }
+})();
 
 declare global {
   interface Window {

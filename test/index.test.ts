@@ -112,6 +112,8 @@ describe("GifReader parity with omggif", () => {
         wtf.decodeFrameIntoBuffer(i, abB, "bgra");
         wtf.decodeAndBlitFrameRGBA(i, new Uint8Array(len));
         wtf.decodeAndBlitFrameBGRA(i, new Uint8Array(len));
+        wtf.decodeFrameRGBA(i, new Uint8Array(len));
+        wtf.decodeFrameBGRA(i, new Uint8Array(len));
       }
 
       expect(wtf.loopCount()).toBe(omg.loopCount());

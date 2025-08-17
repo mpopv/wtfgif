@@ -1031,6 +1031,31 @@ export class GifReader {
     this.decodeAndBlitFrame32(frameNum, pixels, format);
   }
 
+  /**
+   * Zero-copy decode into a caller-provided Uint8Array.
+   * The provided buffer must be at least `width * height * 4` bytes.
+   */
+  decodeFrameRGBA(frameNum: number, pixels: Uint8Array): void {
+    const expectedSize = this.width_ * this.height_ * 4;
+    if (pixels.length < expectedSize) {
+      throw new Error(
+        `Buffer too small: need ${expectedSize} bytes, got ${pixels.length}`
+      );
+    }
+    this.decodeAndBlitFrame32(frameNum, pixels, "rgba");
+  }
+
+  /** Same as decodeFrameRGBA but writes pixels in BGRA order. */
+  decodeFrameBGRA(frameNum: number, pixels: Uint8Array): void {
+    const expectedSize = this.width_ * this.height_ * 4;
+    if (pixels.length < expectedSize) {
+      throw new Error(
+        `Buffer too small: need ${expectedSize} bytes, got ${pixels.length}`
+      );
+    }
+    this.decodeAndBlitFrame32(frameNum, pixels, "bgra");
+  }
+
   /* Return decoder tables to pool for reuse (call when done with this GifReader) */
   dispose(): void {
     if (this.pooledTables && this.gifHash) {
