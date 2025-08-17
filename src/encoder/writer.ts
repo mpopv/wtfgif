@@ -265,7 +265,7 @@ function GifWriterOutputLZWCodeStream_fast(
     let i = key & (CAP - 1);
     // linear probing
     while (gen[i] === EPOCH) {
-      if (keys[i] === key) return vals[i] | 0;
+      if (keys[i] === key) return vals[i]! | 0;
       i = (i + 1) & (CAP - 1);
     }
     return -1;

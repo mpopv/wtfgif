@@ -112,22 +112,22 @@ export class GifReader {
       buf[p++] !== GIF.I ||
       buf[p++] !== GIF.F ||
       buf[p++] !== GIF._8 ||
-      ((buf[p++] + 1) & 0xfd) !== GIF._8 ||
+      ((buf[p++]! + 1) & 0xfd) !== GIF._8 ||
       buf[p++] !== GIF.A
     ) {
       throw new Error("Invalid GIF 87a/89a header.");
     }
 
-    const width = (buf[p++] | (buf[p++] << 8)) >>> 0;
-    const height = (buf[p++] | (buf[p++] << 8)) >>> 0;
+    const width = (buf[p++]! | (buf[p++]! << 8)) >>> 0;
+    const height = (buf[p++]! | (buf[p++]! << 8)) >>> 0;
     this.width_ = width;
     this.height_ = height;
 
-    const pf0 = buf[p++]; // packed fields
+    const pf0 = buf[p++]!; // packed fields
     const gctFlag = (pf0 >>> 7) & 1;
     const gctSizeBits = pf0 & 0x7;
     const gctColors = 1 << (gctSizeBits + 1);
-    const background = buf[p++];
+    const background = buf[p++]!;
     this.backgroundIndex = background;
     p++; // pixel aspect ratio
 

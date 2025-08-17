@@ -42,20 +42,24 @@ export function buildPal32(
       const r = buf[paletteOffset + i * 3] | 0;
       const g = buf[paletteOffset + i * 3 + 1] | 0;
       const b = buf[paletteOffset + i * 3 + 2] | 0;
-      const alpha =
-        transparentIndex !== null && i === transparentIndex ? 0 : 255;
-      pal32[i] =
-        SHIFT_24[alpha] | SHIFT_16[b] | SHIFT_8[g] | SHIFT_0[r];
+      // For exact omggif compatibility: transparent pixels render as RGB(0,0,0)
+      if (transparentIndex !== null && i === transparentIndex) {
+        pal32[i] = 0; // alpha=0, r=0, g=0, b=0
+      } else {
+        pal32[i] = SHIFT_24[255] | SHIFT_16[b] | SHIFT_8[g] | SHIFT_0[r];
+      }
     }
   } else {
     for (let i = 0; i < limit; i++) {
       const r = buf[paletteOffset + i * 3] | 0;
       const g = buf[paletteOffset + i * 3 + 1] | 0;
       const b = buf[paletteOffset + i * 3 + 2] | 0;
-      const alpha =
-        transparentIndex !== null && i === transparentIndex ? 0 : 255;
-      pal32[i] =
-        SHIFT_24[alpha] | SHIFT_16[r] | SHIFT_8[g] | SHIFT_0[b];
+      // For exact omggif compatibility: transparent pixels render as RGB(0,0,0)
+      if (transparentIndex !== null && i === transparentIndex) {
+        pal32[i] = 0; // alpha=0, r=0, g=0, b=0
+      } else {
+        pal32[i] = SHIFT_24[255] | SHIFT_16[r] | SHIFT_8[g] | SHIFT_0[b];
+      }
     }
   }
   return pal32;
