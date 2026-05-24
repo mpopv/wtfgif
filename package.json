@@ -16,9 +16,12 @@
   },
   "scripts": {
     "build": "tsup && tsc -p tsconfig.build.json --emitDeclarationOnly",
+    "build:wasm": "wasm-pack build crates/wtfgif-core --target nodejs --out-dir pkg --release",
     "typecheck": "tsc -p tsconfig.build.json --noEmit",
     "test": "vitest run --coverage",
+    "test:wasm-core": "cargo test --manifest-path crates/wtfgif-core/Cargo.toml && npm run validate:wasm-core && vitest run test/wasm-core-backend.test.ts",
     "lint": "biome lint .",
+    "validate:wasm-core": "npm run build:wasm && node scripts/validate-wasm-core.mjs",
     "bench": "npm run build && node scripts/bench.mjs",
     "check": "npm run lint && npm run typecheck && npm test && npm run build && npm pack --dry-run",
     "prepare": "npm run build"

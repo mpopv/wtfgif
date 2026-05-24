@@ -1,6 +1,16 @@
 import {
   FrameInfo,
+  GifDecodeBackend,
+  GifDecodeBackendStatus,
   PooledDecoderTables,
+  PreparedFrameBackendPreference,
+  PreparedFrameCacheMode,
+  PreparedFrameDedupeMode,
+  PreparedFrameFormat,
+  PreparedGifFrame,
+  PreparedGifFrames,
+  PreparedGifPlayer,
+  PrepareFramesOptions,
   UnifiedGPUGifRenderer,
   ColorMapWasm,
   WasmWorkerPool,
@@ -14,7 +24,6 @@ import {
   getPooledDecoderTables,
   returnDecoderTablesToPool,
 } from "./pool";
-import { hashGifData } from "../utils/hash";
 import {
   loadGPUModule as loadGpuModule,
   createGpuRenderer,
@@ -35,6 +44,22 @@ import {
 let moduleReusableFramePixels = new Uint8Array(0);
 let moduleFramePixelsInUse = false;
 
+type NormalizedPrepareFramesOptions = PrepareFramesOptions & {
+  format: PreparedFrameFormat;
+  composited: boolean;
+  cache: PreparedFrameCacheMode;
+  backend: PreparedFrameBackendPreference;
+  deltas: boolean;
+  dedupe: PreparedFrameDedupeMode;
+};
+
+type ChangedRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
 /* ====== Reader (Decoder) ====== */
 // moved to types.ts
 
@@ -52,14 +77,15 @@ export class GifReader {
   private backgroundIndex = 0;
 
   // Pooled decoder tables for reuse across instances
-  private pooledTables: PooledDecoderTables;
+  private pooledTables: PooledDecoderTables | null = null;
   private gifHash: string;
+  private usePooling: boolean;
 
   // Aliases for easier access
-  private decTable: Int32Array;
-  private stack: Uint8Array;
-  private firstByte: Int16Array;
-  private out32Cache: WeakMap<Uint8Array, Uint32Array>;
+  private decTable: Int32Array = new Int32Array(0);
+  private stack: Uint8Array = new Uint8Array(0);
+  private firstByte: Int16Array = new Int16Array(0);
+  private out32Cache: WeakMap<Uint8Array, Uint32Array> | null = null;
 
   // Zero-copy canvas support
   private zeroCopyBuffers: Map<
@@ -69,7 +95,7 @@ export class GifReader {
       rgbaU8: Uint8ClampedArray;
       imageData: ImageData;
     }
-  > = new Map();
+  > | null = null;
 
   private colorMapWasm: ColorMapWasm | null = null; // ColorMapWasm type
   private wasmEnabled = false;
@@ -81,6 +107,11 @@ export class GifReader {
   private workerPool: WasmWorkerPool | null = null; // WorkerPoolManager
   private workerPoolEnabled = false;
 
+  private preparedFramesCache = new Map<string, PreparedGifFrames>();
+  private preparedOut32Cache = new WeakMap<Uint8Array, Uint32Array>();
+
+  private static decodeBackend: GifDecodeBackend | null = null;
+
   static createPooled(buf: Uint8Array): GifReader {
     return new GifReader(buf, true);
   }
@@ -89,18 +120,26 @@ export class GifReader {
     return new GifReader(buf, false);
   }
 
-  constructor(private buf: Uint8Array, usePooling: boolean = true) {
-    // Get or create pooled decoder tables
-    this.gifHash = usePooling ? hashGifData(buf) : "";
-    this.pooledTables = usePooling
-      ? getPooledDecoderTables(this.gifHash)
-      : createDecoderTables();
+  static setDecodeBackend(backend: GifDecodeBackend | null): void {
+    GifReader.decodeBackend = backend;
+  }
 
-    // Set up aliases for easier access
-    this.decTable = this.pooledTables.decTable;
-    this.stack = this.pooledTables.stack;
-    this.firstByte = this.pooledTables.firstByte;
-    this.out32Cache = this.pooledTables.out32Cache;
+  static getDecodeBackendStatus(): GifDecodeBackendStatus {
+    const backend = GifReader.decodeBackend;
+    if (!backend) {
+      return { name: "javascript", available: false };
+    }
+
+    try {
+      return { name: backend.name, available: backend.isAvailable() };
+    } catch {
+      return { name: backend.name, available: false };
+    }
+  }
+
+  constructor(private buf: Uint8Array, usePooling: boolean = true) {
+    this.usePooling = usePooling;
+    this.gifHash = usePooling ? "pooled" : "";
     let p = 0;
     // Header: GIF87a / GIF89a
     if (
@@ -507,7 +546,8 @@ export class GifReader {
     const h = frame.height;
     const bufferKey = `${w}x${h}`;
 
-    let buffer = this.zeroCopyBuffers.get(bufferKey);
+    const zeroCopyBuffers = (this.zeroCopyBuffers ??= new Map());
+    let buffer = zeroCopyBuffers.get(bufferKey);
 
       if (!buffer) {
         // Allocate persistent WebAssembly buffer
@@ -520,7 +560,7 @@ export class GifReader {
       const imageData = new ImageData(rgbaU8, w, h); // shares the same buffer
 
       buffer = { wasmPtr: outPtr, rgbaU8, imageData };
-      this.zeroCopyBuffers.set(bufferKey, buffer);
+      zeroCopyBuffers.set(bufferKey, buffer);
     }
 
       // Decode frame directly into persistent buffer
@@ -597,12 +637,13 @@ export class GifReader {
 
     cleanupZeroCopyBuffers(): void {
       const decoder = getWasmDecoder();
-      if (decoder) {
+      if (decoder && this.zeroCopyBuffers) {
         for (const buffer of this.zeroCopyBuffers.values()) {
           decoder.wasm_free(buffer.wasmPtr);
         }
       }
-      this.zeroCopyBuffers.clear();
+      this.zeroCopyBuffers?.clear();
+      this.zeroCopyBuffers = null;
     }
 
   async initWorkerPool(): Promise<boolean> {
@@ -733,52 +774,7 @@ export class GifReader {
     frameIndex: number
   ): Promise<Uint8Array | null> {
     try {
-      const frame = this.frameInfo(frameIndex);
-      const frameSize = frame.width * frame.height;
-      const indexData = new Uint8Array(frameSize);
-
-      if (frame.interlaced) {
-        // For interlaced frames, decode to temp buffer then deinterlace
-        const tempIndices = new Uint8Array(frameSize);
-        this.lzwDecodeToIndices(frame, tempIndices);
-
-        // Deinterlace using same pass logic as RGBA decoder
-        // Pass 0: rows 0,8,16... Pass 1: rows 4,12,20... Pass 2: rows 2,6,10,14... Pass 3: rows 1,3,5,7,9...
-        let pixelIndex = 0;
-        for (let pass = 0; pass < 4; pass++) {
-          let yStart = 0,
-            yStride = 8;
-          if (pass === 1) {
-            yStart = 4;
-            yStride = 8;
-          } else if (pass === 2) {
-            yStart = 2;
-            yStride = 4;
-          } else if (pass === 3) {
-            yStart = 1;
-            yStride = 2;
-          }
-
-          for (let yInPass = 0; ; yInPass++) {
-            const row = yStart + yInPass * yStride;
-            if (row >= frame.height) break;
-
-            const dst = row * frame.width;
-            for (
-              let x = 0;
-              x < frame.width && pixelIndex < tempIndices.length;
-              x++
-            ) {
-              indexData[dst + x] = tempIndices[pixelIndex++];
-            }
-          }
-        }
-      } else {
-        // Non-interlaced: decode directly
-        this.lzwDecodeToIndices(frame, indexData);
-      }
-
-      return indexData;
+      return this.getFrameIndices(this.frameInfo(frameIndex));
     } catch (error) {
       console.error("Failed to decode frame indices:", error);
       return null;
@@ -792,6 +788,7 @@ export class GifReader {
     frame: FrameInfo,
     outputIndices: Uint8Array
   ): void {
+    this.ensureDecoderTables();
     const bytes = this.getFrameCodes(frame);
     const minCodeSize = frame.min_code_size | 0;
     let q = 0;
@@ -957,6 +954,18 @@ export class GifReader {
     return this.frames[i];
   }
 
+  private ensureDecoderTables(): void {
+    if (this.pooledTables) return;
+
+    this.pooledTables = this.usePooling
+      ? getPooledDecoderTables(this.gifHash)
+      : createDecoderTables();
+    this.decTable = this.pooledTables.decTable;
+    this.stack = this.pooledTables.stack;
+    this.firstByte = this.pooledTables.firstByte;
+    this.out32Cache = this.pooledTables.out32Cache;
+  }
+
   private getFrameCodes(frame: FrameInfo): Uint8Array {
     if (!frame.codes) {
       const { bytes, mcs } = concatSubBlocks(this.buf, frame.data_offset);
@@ -989,6 +998,52 @@ export class GifReader {
       frame.transparent_index
     );
     return frame.pal32bgra;
+  }
+
+  private getFrameIndices(frame: FrameInfo): Uint8Array {
+    if (frame.indices) {
+      return frame.indices;
+    }
+
+    const frameSize = frame.width * frame.height;
+    const indexData = new Uint8Array(frameSize);
+
+    if (!frame.interlaced) {
+      this.lzwDecodeToIndices(frame, indexData);
+      frame.indices = indexData;
+      return indexData;
+    }
+
+    const tempIndices = new Uint8Array(frameSize);
+    this.lzwDecodeToIndices(frame, tempIndices);
+
+    let pixelIndex = 0;
+    for (let pass = 0; pass < 4; pass++) {
+      let yStart = 0;
+      let yStride = 8;
+      if (pass === 1) {
+        yStart = 4;
+      } else if (pass === 2) {
+        yStart = 2;
+        yStride = 4;
+      } else if (pass === 3) {
+        yStart = 1;
+        yStride = 2;
+      }
+
+      for (let yInPass = 0; ; yInPass++) {
+        const row = yStart + yInPass * yStride;
+        if (row >= frame.height) break;
+
+        let dst = row * frame.width;
+        for (let x = 0; x < frame.width && pixelIndex < frameSize; x++) {
+          indexData[dst++] = tempIndices[pixelIndex++];
+        }
+      }
+    }
+
+    frame.indices = indexData;
+    return indexData;
   }
 
   /* Public API mirrors omggif: BGRA and RGBA outputs (Uint8Array). */
@@ -1032,10 +1087,739 @@ export class GifReader {
     this.decodeAndBlitFrame32(frameNum, pixels, format);
   }
 
+  preparePlayback(
+    options: Omit<PrepareFramesOptions, "composited"> = {}
+  ): PreparedGifFrames {
+    return this.prepareFrames({
+      ...options,
+      composited: true,
+      cache: "composited",
+    });
+  }
+
+  prepareFrames(options: PrepareFramesOptions = {}): PreparedGifFrames {
+    const normalized = this.normalizePrepareFramesOptions(options);
+    const frameIndices = this.normalizeFrameIndices(normalized.frameIndices);
+    const cacheKey = this.getPreparedFramesCacheKey(normalized, frameIndices);
+    const cached = this.preparedFramesCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    if (normalized.backend !== "javascript") {
+      const backendResult = this.prepareFramesWithBackend(normalized);
+      if (backendResult) {
+        this.preparedFramesCache.set(cacheKey, backendResult);
+        return backendResult;
+      }
+
+      if (normalized.backend === "native") {
+        throw new Error("Native GIF decode backend is not available.");
+      }
+    }
+
+    const prepared = normalized.composited
+      ? this.prepareCompositedFrames(normalized, frameIndices, cacheKey)
+      : this.prepareUncompositedFrames(normalized, frameIndices, cacheKey);
+    this.preparedFramesCache.set(cacheKey, prepared);
+    return prepared;
+  }
+
+  async prepareFramesAsync(
+    options: PrepareFramesOptions = {}
+  ): Promise<PreparedGifFrames> {
+    return this.prepareFrames(options);
+  }
+
+  decodeAndBlitCompositedFrameRGBA(frameNum: number, pixels: Uint8Array): void {
+    this.preparePlayback({ format: "rgba" }).copyFrame(frameNum, pixels);
+  }
+
+  decodeAndBlitCompositedFrameBGRA(frameNum: number, pixels: Uint8Array): void {
+    this.preparePlayback({ format: "bgra" }).copyFrame(frameNum, pixels);
+  }
+
+  private normalizePrepareFramesOptions(
+    options: PrepareFramesOptions
+  ): NormalizedPrepareFramesOptions {
+    return {
+      ...options,
+      format: options.format ?? "rgba",
+      composited: options.composited ?? false,
+      cache: options.cache ?? (options.composited ? "composited" : "auto"),
+      backend: options.backend ?? "auto",
+      deltas: options.deltas ?? false,
+      dedupe: options.dedupe ?? "adjacent",
+    };
+  }
+
+  private normalizeFrameIndices(frameIndices?: readonly number[]): number[] {
+    if (!frameIndices) {
+      const all = new Array<number>(this.frames.length);
+      for (let i = 0; i < this.frames.length; i++) {
+        all[i] = i;
+      }
+      return all;
+    }
+
+    const seen = new Set<number>();
+    const normalized: number[] = [];
+    for (const frameIndex of frameIndices) {
+      if (!Number.isInteger(frameIndex)) {
+        throw new Error("Frame index out of range.");
+      }
+      const index = frameIndex | 0;
+      if (index < 0 || index >= this.frames.length) {
+        throw new Error("Frame index out of range.");
+      }
+      if (!seen.has(index)) {
+        seen.add(index);
+        normalized.push(index);
+      }
+    }
+    return normalized;
+  }
+
+  private getPreparedFramesCacheKey(
+    options: NormalizedPrepareFramesOptions,
+    frameIndices: readonly number[]
+  ): string {
+    return [
+      options.format,
+      options.composited ? "1" : "0",
+      options.cache,
+      options.backend === "javascript"
+        ? "javascript"
+        : (GifReader.decodeBackend?.name ?? "javascript"),
+      options.deltas ? "d1" : "d0",
+      options.dedupe,
+      options.maxBytes ?? -1,
+      frameIndices.join(","),
+    ].join("|");
+  }
+
+  private prepareFramesWithBackend(
+    options: NormalizedPrepareFramesOptions
+  ): PreparedGifFrames | null {
+    const backend = GifReader.decodeBackend;
+    if (!backend || !backend.prepareFrames) {
+      return null;
+    }
+
+    let available = false;
+    try {
+      available = backend.isAvailable();
+    } catch {
+      available = false;
+    }
+
+    if (!available) {
+      return null;
+    }
+
+    return backend.prepareFrames(this.buf, options) ?? null;
+  }
+
+  private prepareCompositedFrames(
+    options: NormalizedPrepareFramesOptions,
+    frameIndices: readonly number[],
+    cacheKey: string
+  ): PreparedGifFrames {
+    const requested = new Set(frameIndices);
+    const maxFrame = frameIndices.length > 0 ? Math.max(...frameIndices) : -1;
+    const canvas = new Uint32Array(this.width_ * this.height_);
+    const frames: PreparedGifFrame[] = [];
+    const dedupe =
+      options.dedupe === "all" ? new Map<number, Uint32Array[]>() : null;
+    let byteLength = 0;
+    let previousPixels: Uint32Array | null = null;
+    let previousPreparedPixels: Uint32Array | null = null;
+
+    for (let frameIndex = 0; frameIndex <= maxFrame; frameIndex++) {
+      const frame = this.frames[frameIndex]!;
+      const restore =
+        frame.disposal === 3 ? new Uint32Array(canvas) : null;
+
+      this.blitFrameIndicesToCanvas(frame, canvas, this.width_, options.format);
+
+      if (requested.has(frameIndex)) {
+        let pixels: Uint32Array | null = null;
+        let bucket: Uint32Array[] | undefined;
+        let hash = 0;
+        if (dedupe) {
+          hash = GifReader.hashPixels(canvas);
+          bucket = dedupe.get(hash);
+          pixels = GifReader.findMatchingPixels(canvas, bucket);
+        } else if (
+          options.dedupe === "adjacent" &&
+          previousPreparedPixels &&
+          GifReader.pixelsEqual(previousPreparedPixels, canvas)
+        ) {
+          pixels = previousPreparedPixels;
+        }
+        const changedRect =
+          options.deltas && previousPixels
+            ? GifReader.findChangedRect(
+                previousPixels,
+                canvas,
+                this.width_,
+                this.height_
+              )
+            : null;
+        const changedPixels = changedRect
+          ? GifReader.copyRectPixels(canvas, this.width_, changedRect)
+          : undefined;
+        let frameBytes = 0;
+        const deltaBytes = changedPixels?.byteLength ?? 0;
+
+        if (!pixels) {
+          this.enforcePreparedByteBudget(
+            byteLength + canvas.byteLength + deltaBytes,
+            options.maxBytes
+          );
+          pixels = new Uint32Array(canvas);
+          frameBytes = pixels.byteLength;
+          byteLength += frameBytes + deltaBytes;
+
+          if (dedupe) {
+            if (bucket) {
+              bucket.push(pixels);
+            } else {
+              dedupe.set(hash, [pixels]);
+            }
+          }
+        } else {
+          this.enforcePreparedByteBudget(
+            byteLength + deltaBytes,
+            options.maxBytes
+          );
+          byteLength += deltaBytes;
+        }
+
+        frames.push({
+          index: frameIndex,
+          x: 0,
+          y: 0,
+          width: this.width_,
+          height: this.height_,
+          delay: frame.delay,
+          disposal: frame.disposal,
+          byteLength: frameBytes + deltaBytes,
+          isFullCanvas: true,
+          ...(changedRect
+            ? {
+                changedX: changedRect.x,
+                changedY: changedRect.y,
+                changedWidth: changedRect.width,
+                changedHeight: changedRect.height,
+                changedPixels,
+              }
+            : {}),
+          pixels,
+        });
+        previousPixels = pixels;
+        previousPreparedPixels = pixels;
+      }
+
+      this.applyFrameDisposal(frame, canvas, restore);
+    }
+
+    return this.createPreparedFramesResult(
+      options.format,
+      true,
+      frames,
+      byteLength,
+      options.maxBytes ?? null,
+      cacheKey
+    );
+  }
+
+  private prepareUncompositedFrames(
+    options: NormalizedPrepareFramesOptions,
+    frameIndices: readonly number[],
+    cacheKey: string
+  ): PreparedGifFrames {
+    const frames: PreparedGifFrame[] = [];
+    let byteLength = 0;
+
+    for (const frameIndex of frameIndices) {
+      const frame = this.frames[frameIndex]!;
+      let prepared: PreparedGifFrame;
+
+      if (options.cache === "indices") {
+        const indices = this.getFrameIndices(frame);
+        const palette = this.getFramePalette(frame, options.format);
+        prepared = {
+          index: frameIndex,
+          x: frame.x,
+          y: frame.y,
+          width: frame.width,
+          height: frame.height,
+          delay: frame.delay,
+          disposal: frame.disposal,
+          byteLength: indices.byteLength + palette.byteLength,
+          isFullCanvas: false,
+          indices,
+          palette,
+        };
+      } else {
+        const colors = this.getFrameColors(frame, options.format, this.width_);
+        const spans = frame.opaqueSpans;
+        const positions = spans ? undefined : frame.opaquePositions;
+        prepared = {
+          index: frameIndex,
+          x: frame.x,
+          y: frame.y,
+          width: frame.width,
+          height: frame.height,
+          delay: frame.delay,
+          disposal: frame.disposal,
+          byteLength:
+            colors.byteLength +
+            (spans?.byteLength ?? positions?.byteLength ?? 0),
+          isFullCanvas: false,
+          colors,
+        };
+        if (spans) {
+          prepared.spans = spans;
+        } else if (positions) {
+          prepared.positions = positions;
+        }
+      }
+
+      byteLength += prepared.byteLength;
+      this.enforcePreparedByteBudget(byteLength, options.maxBytes);
+      frames.push(prepared);
+    }
+
+    return this.createPreparedFramesResult(
+      options.format,
+      false,
+      frames,
+      byteLength,
+      options.maxBytes ?? null,
+      cacheKey
+    );
+  }
+
+  private createPreparedFramesResult(
+    format: PreparedFrameFormat,
+    composited: boolean,
+    frames: PreparedGifFrame[],
+    byteLength: number,
+    maxBytes: number | null,
+    cacheKey: string
+  ): PreparedGifFrames {
+    const byIndex = new Map<number, PreparedGifFrame>();
+    for (const frame of frames) {
+      byIndex.set(frame.index, frame);
+    }
+
+    return {
+      width: this.width_,
+      height: this.height_,
+      format,
+      composited,
+      frames,
+      byteLength,
+      maxBytes,
+      getFrame: (index: number) => byIndex.get(index),
+      getFramePixels: (index: number) => byIndex.get(index)?.pixels,
+      getFrameBytes: (index: number) => {
+        const pixels = byIndex.get(index)?.pixels;
+        return pixels
+          ? new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.byteLength)
+          : undefined;
+      },
+      copyFrame: (index: number, target: Uint8Array | Uint32Array) => {
+        const frame = byIndex.get(index);
+        if (!frame) {
+          throw new Error("Frame index out of range.");
+        }
+        this.copyPreparedFrame(frame, target);
+      },
+      createPlayer: (target?: Uint8Array | Uint32Array) =>
+        this.createPreparedPlayer(byIndex, target),
+      dispose: () => {
+        this.preparedFramesCache.delete(cacheKey);
+      },
+    };
+  }
+
+  private createPreparedPlayer(
+    byIndex: Map<number, PreparedGifFrame>,
+    target?: Uint8Array | Uint32Array
+  ): PreparedGifPlayer {
+    const target32 = target
+      ? this.getPreparedTarget32(target)
+      : new Uint32Array(this.width_ * this.height_);
+    let currentIndex = -1;
+    const drawFrame = (index: number): Uint32Array => {
+      const frame = byIndex.get(index);
+      if (!frame) {
+        throw new Error("Frame index out of range.");
+      }
+
+      const previousFrame = byIndex.get(currentIndex);
+      if (currentIndex === index - 1 && previousFrame?.pixels === frame.pixels) {
+        currentIndex = index;
+        return target32;
+      }
+
+      const changedPixelCount = frame.changedPixels?.length ?? 0;
+      const fullPixelCount = frame.pixels?.length ?? target32.length;
+      if (
+        frame.changedPixels &&
+        frame.changedX !== undefined &&
+        frame.changedY !== undefined &&
+        frame.changedWidth !== undefined &&
+        frame.changedHeight !== undefined &&
+        changedPixelCount <= (fullPixelCount >>> 3) &&
+        currentIndex === index - 1
+      ) {
+        GifReader.blitRectPixels(
+          frame.changedPixels,
+          target32,
+          this.width_,
+          frame.changedX,
+          frame.changedY,
+          frame.changedWidth,
+          frame.changedHeight
+        );
+      } else {
+        this.copyPreparedFrame(frame, target32);
+      }
+
+      currentIndex = index;
+      return target32;
+    };
+
+    return {
+      target: target32,
+      get currentIndex() {
+        return currentIndex;
+      },
+      drawFrame,
+      next: () => {
+        const nextIndex = currentIndex + 1;
+        return byIndex.has(nextIndex) ? drawFrame(nextIndex) : target32;
+      },
+      reset: () => {
+        currentIndex = -1;
+        target32.fill(0);
+      },
+    };
+  }
+
+  private copyPreparedFrame(
+    frame: PreparedGifFrame,
+    target: Uint8Array | Uint32Array
+  ): void {
+    const target32 = this.getPreparedTarget32(target);
+    if (frame.pixels) {
+      target32.set(frame.pixels);
+      return;
+    }
+
+    if (frame.colors) {
+      this.blitPreparedColors(frame, target32);
+      return;
+    }
+
+    if (frame.indices && frame.palette) {
+      this.blitPreparedIndices(frame, target32);
+      return;
+    }
+  }
+
+  private blitPreparedColors(
+    frame: PreparedGifFrame,
+    target32: Uint32Array
+  ): void {
+    const colors = frame.colors!;
+    if (frame.spans) {
+      const spans = frame.spans;
+      for (let i = 0; i < spans.length; i += 3) {
+        const dst = spans[i]!;
+        const length = spans[i + 1]!;
+        const src = spans[i + 2]!;
+        if (length >= 8) {
+          target32.set(colors.subarray(src, src + length), dst);
+        } else {
+          for (let j = 0; j < length; j++) {
+            target32[dst + j] = colors[src + j]!;
+          }
+        }
+      }
+      return;
+    }
+
+    if (frame.positions) {
+      const positions = frame.positions;
+      for (let i = 0; i < colors.length; i++) {
+        target32[positions[i]!] = colors[i]!;
+      }
+      return;
+    }
+
+    let src = 0;
+    let dst = (frame.y * this.width_ + frame.x) | 0;
+    if (frame.x === 0 && frame.width === this.width_) {
+      target32.set(colors, dst);
+      return;
+    }
+
+    const rowStride = this.width_ - frame.width;
+    for (let y = 0; y < frame.height; y++) {
+      for (let x = 0; x < frame.width; x++) {
+        target32[dst++] = colors[src++]!;
+      }
+      dst += rowStride;
+    }
+  }
+
+  private blitPreparedIndices(
+    frame: PreparedGifFrame,
+    target32: Uint32Array
+  ): void {
+    const indices = frame.indices!;
+    const palette = frame.palette!;
+    const sourceFrame = this.frames[frame.index]!;
+    const transparentIndex = sourceFrame.transparent_index ?? 256;
+    let src = 0;
+    let dst = (frame.y * this.width_ + frame.x) | 0;
+    const rowStride = this.width_ - frame.width;
+
+    for (let y = 0; y < frame.height; y++) {
+      for (let x = 0; x < frame.width; x++) {
+        const index = indices[src++]!;
+        if (index !== transparentIndex) {
+          target32[dst] = palette[index]!;
+        }
+        dst++;
+      }
+      dst += rowStride;
+    }
+  }
+
+  private getPreparedTarget32(target: Uint8Array | Uint32Array): Uint32Array {
+    const requiredPixels = this.width_ * this.height_;
+    if (target instanceof Uint32Array) {
+      if (target.length < requiredPixels) {
+        throw new Error(
+          `Buffer too small: need ${requiredPixels * 4} bytes, got ${
+            target.byteLength
+          }`
+        );
+      }
+      return target;
+    }
+
+    if (target.byteLength < requiredPixels * 4) {
+      throw new Error(
+        `Buffer too small: need ${requiredPixels * 4} bytes, got ${
+          target.byteLength
+        }`
+      );
+    }
+
+    if ((target.byteOffset & 3) !== 0) {
+      throw new Error("Pixel buffer byteOffset must be aligned to 4 bytes.");
+    }
+
+    let target32 = this.preparedOut32Cache.get(target);
+    if (!target32) {
+      target32 = new Uint32Array(
+        target.buffer,
+        target.byteOffset,
+        requiredPixels
+      );
+      this.preparedOut32Cache.set(target, target32);
+    }
+    return target32;
+  }
+
+  private applyFrameDisposal(
+    frame: FrameInfo,
+    canvas: Uint32Array,
+    restore: Uint32Array | null
+  ): void {
+    if (frame.disposal === 2) {
+      this.clearFrameRect(canvas, frame);
+    } else if (frame.disposal === 3 && restore) {
+      canvas.set(restore);
+    }
+  }
+
+  private clearFrameRect(canvas: Uint32Array, frame: FrameInfo): void {
+    const x = Math.max(0, frame.x | 0);
+    const y = Math.max(0, frame.y | 0);
+    const right = Math.min(this.width_, x + (frame.width | 0));
+    const bottom = Math.min(this.height_, y + (frame.height | 0));
+    const width = right - x;
+    if (width <= 0) {
+      return;
+    }
+
+    for (let row = y; row < bottom; row++) {
+      const start = row * this.width_ + x;
+      canvas.fill(0, start, start + width);
+    }
+  }
+
+  private static findChangedRect(
+    previous: Uint32Array,
+    current: Uint32Array,
+    width: number,
+    height: number
+  ): ChangedRect | null {
+    let top = 0;
+    let bottom = height - 1;
+
+    while (top < height) {
+      const row = top * width;
+      let changed = false;
+      for (let x = 0; x < width; x++) {
+        if (previous[row + x] !== current[row + x]) {
+          changed = true;
+          break;
+        }
+      }
+      if (changed) break;
+      top++;
+    }
+
+    if (top === height) {
+      return null;
+    }
+
+    while (bottom > top) {
+      const row = bottom * width;
+      let changed = false;
+      for (let x = 0; x < width; x++) {
+        if (previous[row + x] !== current[row + x]) {
+          changed = true;
+          break;
+        }
+      }
+      if (changed) break;
+      bottom--;
+    }
+
+    let left = width - 1;
+    let right = 0;
+    for (let y = top; y <= bottom; y++) {
+      const row = y * width;
+      for (let x = 0; x < width; x++) {
+        if (previous[row + x] !== current[row + x]) {
+          if (x < left) left = x;
+          if (x > right) right = x;
+        }
+      }
+    }
+
+    return {
+      x: left,
+      y: top,
+      width: right - left + 1,
+      height: bottom - top + 1,
+    };
+  }
+
+  private static copyRectPixels(
+    source: Uint32Array,
+    sourceWidth: number,
+    rect: ChangedRect
+  ): Uint32Array {
+    const pixels = new Uint32Array(rect.width * rect.height);
+    for (let y = 0; y < rect.height; y++) {
+      const src = (rect.y + y) * sourceWidth + rect.x;
+      pixels.set(source.subarray(src, src + rect.width), y * rect.width);
+    }
+    return pixels;
+  }
+
+  private static blitRectPixels(
+    source: Uint32Array,
+    target: Uint32Array,
+    targetWidth: number,
+    x: number,
+    y: number,
+    width: number,
+    height: number
+  ): void {
+    for (let row = 0; row < height; row++) {
+      const src = row * width;
+      const dst = (y + row) * targetWidth + x;
+      target.set(source.subarray(src, src + width), dst);
+    }
+  }
+
+  private enforcePreparedByteBudget(
+    nextByteLength: number,
+    maxBytes: number | undefined
+  ): void {
+    if (maxBytes !== undefined && nextByteLength > maxBytes) {
+      throw new Error(
+        `Prepared frame cache exceeds maxBytes (${nextByteLength} > ${maxBytes}).`
+      );
+    }
+  }
+
+  private static hashPixels(pixels: Uint32Array): number {
+    let hash = 2166136261;
+    for (let i = 0; i < pixels.length; i++) {
+      hash ^= pixels[i]!;
+      hash = Math.imul(hash, 16777619);
+    }
+    return hash >>> 0;
+  }
+
+  private static findMatchingPixels(
+    pixels: Uint32Array,
+    bucket: Uint32Array[] | undefined
+  ): Uint32Array | null {
+    if (!bucket) {
+      return null;
+    }
+
+    for (const candidate of bucket) {
+      if (candidate.length !== pixels.length) {
+        continue;
+      }
+
+      let match = true;
+      for (let i = 0; i < pixels.length; i++) {
+        if (candidate[i] !== pixels[i]) {
+          match = false;
+          break;
+        }
+      }
+      if (match) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  private static pixelsEqual(a: Uint32Array, b: Uint32Array): boolean {
+    if (a.length !== b.length) {
+      return false;
+    }
+
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   /* Return decoder tables to pool for reuse (call when done with this GifReader) */
   dispose(): void {
-    if (this.pooledTables && this.gifHash) {
+    if (this.pooledTables && this.usePooling) {
       returnDecoderTablesToPool(this.pooledTables);
+      this.pooledTables = null;
     }
   }
 
@@ -1094,21 +1878,30 @@ export class GifReader {
     if (frameNum < 0 || frameNum >= this.frames.length)
       throw new Error("Frame index out of range.");
 
+    this.ensureDecoderTables();
+
     // Reuse a cached Uint32 view for this pixels buffer
-    let out32 = this.out32Cache.get(pixels);
+    const out32Cache = this.out32Cache!;
+    let out32 = out32Cache.get(pixels);
     if (!out32) {
       out32 = new Uint32Array(
         pixels.buffer,
         pixels.byteOffset,
         pixels.byteLength >>> 2
       );
-      this.out32Cache.set(pixels, out32);
+      out32Cache.set(pixels, out32);
     }
 
     const frame = this.frames[frameNum];
+    const cachedColors = order === "rgba" ? frame.rgbaColors : frame.bgraColors;
+    if (cachedColors || frame.indices || (frame.decodeCount ?? 0) > 0) {
+      this.blitFrameColors(frame, out32, this.width_, order);
+      return;
+    }
+
+    frame.decodeCount = 1;
     const pal32 = this.getFramePalette(frame, order);
     const trans = frame.transparent_index ?? 256;
-
     this.lzwDecodeToPixels(
       this.buf,
       frame.data_offset,
@@ -1118,6 +1911,212 @@ export class GifReader {
       pal32,
       trans
     );
+  }
+
+  private getFrameColors(
+    frame: FrameInfo,
+    order: "rgba" | "bgra",
+    canvasWidth: number,
+  ): Uint32Array {
+    const existing = order === "rgba" ? frame.rgbaColors : frame.bgraColors;
+    if (existing) {
+      return existing;
+    }
+
+    const indices = this.getFrameIndices(frame);
+    const pal32 = this.getFramePalette(frame, order);
+    const fw = frame.width | 0;
+    const fh = frame.height | 0;
+    const trans = frame.transparent_index ?? 256;
+    const total = fw * fh;
+    let colors: Uint32Array;
+
+    if (trans === 256) {
+      colors = new Uint32Array(total);
+      for (let i = 0; i < total; i++) {
+        colors[i] = pal32[indices[i]] >>> 0;
+      }
+    } else {
+      let spans = frame.opaqueSpans;
+      let positions = frame.opaquePositions;
+      let opaqueCount = 0;
+      if (spans) {
+        for (let i = 1; i < spans.length; i += 3) {
+          opaqueCount += spans[i]!;
+        }
+      } else if (positions) {
+        opaqueCount = positions.length;
+      } else {
+        let spanCount = 0;
+        for (let y = 0; y < fh; y++) {
+          const row = y * fw;
+          let x = 0;
+          while (x < fw) {
+            while (x < fw && indices[row + x] === trans) {
+              x++;
+            }
+            if (x >= fw) break;
+            spanCount++;
+            while (x < fw && indices[row + x] !== trans) {
+              opaqueCount++;
+              x++;
+            }
+          }
+        }
+
+        if (spanCount === 0 || opaqueCount / spanCount >= 4) {
+          spans = new Uint32Array(spanCount * 3);
+          frame.opaqueSpans = spans;
+        } else {
+          positions = new Uint32Array(opaqueCount);
+          frame.opaquePositions = positions;
+        }
+      }
+
+      colors = new Uint32Array(opaqueCount);
+      if (spans) {
+        let out = 0;
+        let spanOut = 0;
+        for (let y = 0; y < fh; y++) {
+          const row = y * fw;
+          const dstRow = ((frame.y + y) | 0) * canvasWidth + (frame.x | 0);
+          let x = 0;
+          while (x < fw) {
+            while (x < fw && indices[row + x] === trans) {
+              x++;
+            }
+            if (x >= fw) break;
+
+            const dst = dstRow + x;
+            const colorStart = out;
+            const xStart = x;
+            while (x < fw) {
+              const index = indices[row + x]!;
+              if (index === trans) break;
+              colors[out++] = pal32[index] >>> 0;
+              x++;
+            }
+
+            if (spanOut < spans.length) {
+              spans[spanOut++] = dst;
+              spans[spanOut++] = x - xStart;
+              spans[spanOut++] = colorStart;
+            }
+          }
+        }
+      } else if (positions) {
+        let out = 0;
+        for (let y = 0; y < fh; y++) {
+          const row = y * fw;
+          let dst = ((frame.y + y) | 0) * canvasWidth + (frame.x | 0);
+          for (let x = 0; x < fw; x++) {
+            const index = indices[row + x]!;
+            if (index !== trans) {
+              positions[out] = dst;
+              colors[out++] = pal32[index] >>> 0;
+            }
+            dst++;
+          }
+        }
+      }
+    }
+
+    if (order === "rgba") {
+      frame.rgbaColors = colors;
+    } else {
+      frame.bgraColors = colors;
+    }
+
+    return colors;
+  }
+
+  private blitFrameColors(
+    frame: FrameInfo,
+    out32: Uint32Array,
+    canvasWidth: number,
+    order: "rgba" | "bgra"
+  ): void {
+    const colors = this.getFrameColors(frame, order, canvasWidth);
+    const spans = frame.opaqueSpans;
+
+    if (spans) {
+      for (let i = 0; i < spans.length; i += 3) {
+        const dst = spans[i]!;
+        const length = spans[i + 1]!;
+        const src = spans[i + 2]!;
+        if (length >= 8) {
+          out32.set(colors.subarray(src, src + length), dst);
+        } else {
+          for (let j = 0; j < length; j++) {
+            out32[dst + j] = colors[src + j]!;
+          }
+        }
+      }
+      return;
+    }
+
+    const positions = frame.opaquePositions;
+    if (positions) {
+      for (let i = 0; i < colors.length; i++) {
+        out32[positions[i]!] = colors[i]!;
+      }
+      return;
+    }
+
+    const fw = frame.width | 0;
+    const fh = frame.height | 0;
+    let src = 0;
+    let dst = ((frame.y | 0) * canvasWidth + (frame.x | 0)) | 0;
+
+    if ((frame.x | 0) === 0 && fw === canvasWidth) {
+      out32.set(colors, dst);
+      return;
+    }
+
+    const rowStride = canvasWidth - fw;
+    for (let y = 0; y < fh; y++) {
+      for (let x = 0; x < fw; x++) {
+        out32[dst++] = colors[src++];
+      }
+      dst += rowStride;
+    }
+  }
+
+  private blitFrameIndicesToCanvas(
+    frame: FrameInfo,
+    out32: Uint32Array,
+    canvasWidth: number,
+    order: "rgba" | "bgra"
+  ): void {
+    const indices = this.getFrameIndices(frame);
+    const pal32 = this.getFramePalette(frame, order);
+    const fw = frame.width | 0;
+    const fh = frame.height | 0;
+    const trans = frame.transparent_index ?? 256;
+    const rowStride = canvasWidth - fw;
+    let src = 0;
+    let dst = ((frame.y | 0) * canvasWidth + (frame.x | 0)) | 0;
+
+    if (trans === 256) {
+      for (let y = 0; y < fh; y++) {
+        for (let x = 0; x < fw; x++) {
+          out32[dst++] = pal32[indices[src++]!]!;
+        }
+        dst += rowStride;
+      }
+      return;
+    }
+
+    for (let y = 0; y < fh; y++) {
+      for (let x = 0; x < fw; x++) {
+        const index = indices[src++]!;
+        if (index !== trans) {
+          out32[dst] = pal32[index]!;
+        }
+        dst++;
+      }
+      dst += rowStride;
+    }
   }
 
   /* Optimized LZW decoder that streams symbols directly to destination pixels. */
@@ -1130,6 +2129,7 @@ export class GifReader {
     pal32: Uint32Array,
     transparentIndex: number
   ) {
+    this.ensureDecoderTables();
     const bytes = this.getFrameCodes(frame);
     const minCodeSize = frame.min_code_size | 0;
     let q = 0; // cursor into contiguous bytes

@@ -1,5 +1,6 @@
 .claude
 repomix-output.xml
+.DS_Store
 
 # Logs
 logs
@@ -64,6 +65,10 @@ web_modules/
 
 # Output of 'npm pack'
 *.tgz
+
+# Generated Rust/Wasm package output
+crates/**/pkg/
+crates/**/target/
 
 # Yarn Integrity file
 .yarn-integrity

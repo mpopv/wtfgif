@@ -2,6 +2,25 @@ import { describe, expect, test } from "vitest";
 import { GifReader, GifWriter } from "../src/index";
 
 describe("GifReader frame decoding", () => {
+  function makeDisposalGif(): Uint8Array {
+    const palette = [0x000000, 0xff0000, 0x00ff00, 0x0000ff];
+    const buf = new Uint8Array(100);
+    const writer = new GifWriter(buf, 2, 2, { palette });
+
+    writer.addFrame(0, 0, 2, 2, new Uint8Array([1, 1, 1, 1]));
+    writer.addFrame(
+      0,
+      0,
+      2,
+      2,
+      new Uint8Array([2, 0, 2, 0]),
+      { transparent: 0, disposal: 2 }
+    );
+    writer.addFrame(1, 0, 1, 2, new Uint8Array([3, 3]));
+
+    return buf.slice(0, writer.end());
+  }
+
   test("decodes frames with transparency and disposal", () => {
     const palette = [0x000000, 0xff0000, 0x00ff00, 0x0000ff];
     const buf = new Uint8Array(100);
@@ -94,5 +113,238 @@ describe("GifReader frame decoding", () => {
       9, 8, 7, 6,
       0, 255, 0, 255,
     ]);
+  });
+
+  test("preparePlayback returns composited frames with disposal applied", () => {
+    const reader = new GifReader(makeDisposalGif());
+    const prepared = reader.preparePlayback();
+    const pixels = new Uint8Array(16);
+
+    prepared.copyFrame(0, pixels);
+    expect(Array.from(pixels)).toStrictEqual([
+      255, 0, 0, 255,
+      255, 0, 0, 255,
+      255, 0, 0, 255,
+      255, 0, 0, 255,
+    ]);
+
+    prepared.copyFrame(1, pixels);
+    expect(Array.from(pixels)).toStrictEqual([
+      0, 255, 0, 255,
+      255, 0, 0, 255,
+      0, 255, 0, 255,
+      255, 0, 0, 255,
+    ]);
+
+    prepared.copyFrame(2, pixels);
+    expect(Array.from(pixels)).toStrictEqual([
+      0, 0, 0, 0,
+      0, 0, 255, 255,
+      0, 0, 0, 0,
+      0, 0, 255, 255,
+    ]);
+  });
+
+  test("decodeAndBlitCompositedFrameRGBA uses the prepared playback cache", () => {
+    const reader = new GifReader(makeDisposalGif());
+    const pixels = new Uint8Array(16);
+
+    reader.decodeAndBlitCompositedFrameRGBA(1, pixels);
+
+    expect(Array.from(pixels)).toStrictEqual([
+      0, 255, 0, 255,
+      255, 0, 0, 255,
+      0, 255, 0, 255,
+      255, 0, 0, 255,
+    ]);
+  });
+
+  test("preparePlayback handles restore-to-previous disposal", () => {
+    const palette = [0x000000, 0xff0000, 0x00ff00, 0x0000ff];
+    const buf = new Uint8Array(100);
+    const writer = new GifWriter(buf, 2, 2, { palette });
+    writer.addFrame(0, 0, 2, 2, new Uint8Array([1, 1, 1, 1]), {
+      disposal: 1,
+    });
+    writer.addFrame(0, 0, 1, 2, new Uint8Array([2, 2]), {
+      disposal: 3,
+    });
+    writer.addFrame(1, 0, 1, 2, new Uint8Array([3, 3]));
+    const reader = new GifReader(buf.slice(0, writer.end()));
+    const prepared = reader.preparePlayback();
+    const pixels = new Uint8Array(16);
+
+    prepared.copyFrame(2, pixels);
+
+    expect(Array.from(pixels)).toStrictEqual([
+      255, 0, 0, 255,
+      0, 0, 255, 255,
+      255, 0, 0, 255,
+      0, 0, 255, 255,
+    ]);
+  });
+
+  test("preparePlayback deduplicates identical composited frames", () => {
+    const palette = [0x000000, 0xff0000];
+    const buf = new Uint8Array(100);
+    const writer = new GifWriter(buf, 2, 2, { palette });
+    writer.addFrame(0, 0, 2, 2, new Uint8Array([1, 1, 1, 1]));
+    writer.addFrame(0, 0, 2, 2, new Uint8Array([1, 1, 1, 1]));
+    const reader = new GifReader(buf.slice(0, writer.end()));
+    const prepared = reader.preparePlayback();
+
+    expect(prepared.frames[0]?.pixels).toBe(prepared.frames[1]?.pixels);
+    expect(prepared.byteLength).toBe(16);
+  });
+
+  test("preparePlayback can disable composited frame dedupe", () => {
+    const palette = [0x000000, 0xff0000];
+    const buf = new Uint8Array(100);
+    const writer = new GifWriter(buf, 2, 2, { palette });
+    writer.addFrame(0, 0, 2, 2, new Uint8Array([1, 1, 1, 1]));
+    writer.addFrame(0, 0, 2, 2, new Uint8Array([1, 1, 1, 1]));
+    const reader = new GifReader(buf.slice(0, writer.end()));
+    const prepared = reader.preparePlayback({ dedupe: "none" });
+
+    expect(prepared.frames[0]?.pixels).not.toBe(prepared.frames[1]?.pixels);
+    expect(prepared.byteLength).toBe(32);
+  });
+
+  test("preparePlayback exposes zero-copy frame views", () => {
+    const reader = new GifReader(makeDisposalGif());
+    const prepared = reader.preparePlayback();
+
+    expect(prepared.getFramePixels(0)?.length).toBe(4);
+    expect(prepared.getFrameBytes(0)?.byteLength).toBe(16);
+    expect(prepared.getFramePixels(99)).toBeUndefined();
+    expect(prepared.getFrameBytes(99)).toBeUndefined();
+  });
+
+  test("prepared player draws sequential frames with deltas", () => {
+    const reader = new GifReader(makeDisposalGif());
+    const prepared = reader.preparePlayback({ deltas: true });
+    const frame1 = prepared.getFrame(1);
+    const target = new Uint8Array(16);
+    const player = prepared.createPlayer(target);
+
+    expect(frame1?.changedX).toBe(0);
+    expect(frame1?.changedY).toBe(0);
+    expect(frame1?.changedWidth).toBe(1);
+    expect(frame1?.changedHeight).toBe(2);
+    expect(frame1?.changedPixels?.length).toBe(2);
+
+    player.next();
+    expect(player.currentIndex).toBe(0);
+    expect(Array.from(target)).toStrictEqual([
+      255, 0, 0, 255,
+      255, 0, 0, 255,
+      255, 0, 0, 255,
+      255, 0, 0, 255,
+    ]);
+
+    player.next();
+    expect(player.currentIndex).toBe(1);
+    expect(Array.from(target)).toStrictEqual([
+      0, 255, 0, 255,
+      255, 0, 0, 255,
+      0, 255, 0, 255,
+      255, 0, 0, 255,
+    ]);
+
+    player.drawFrame(2);
+    expect(player.currentIndex).toBe(2);
+    expect(Array.from(target)).toStrictEqual([
+      0, 0, 0, 0,
+      0, 0, 255, 255,
+      0, 0, 0, 0,
+      0, 0, 255, 255,
+    ]);
+
+    player.reset();
+    expect(player.currentIndex).toBe(-1);
+    expect(Array.from(target)).toStrictEqual(new Array(16).fill(0));
+  });
+
+  test("prepared player falls back to full copy for non-sequential seeks", () => {
+    const reader = new GifReader(makeDisposalGif());
+    const prepared = reader.preparePlayback({ deltas: true });
+    const target = new Uint8Array(16);
+    const player = prepared.createPlayer(target);
+
+    player.drawFrame(2);
+
+    expect(Array.from(target)).toStrictEqual([
+      0, 0, 0, 0,
+      0, 0, 255, 255,
+      0, 0, 0, 0,
+      0, 0, 255, 255,
+    ]);
+  });
+
+  test("prepareFrames respects maxBytes", () => {
+    const reader = new GifReader(makeDisposalGif());
+
+    expect(() => reader.preparePlayback({ maxBytes: 15 })).toThrow(
+      /maxBytes/
+    );
+  });
+
+  test("prepareFrames can cache sparse transparent pixels", () => {
+    const reader = new GifReader(makeDisposalGif());
+    const prepared = reader.prepareFrames({
+      composited: false,
+      cache: "sparse-rgba",
+      frameIndices: [1],
+    });
+    const frame = prepared.getFrame(1);
+    const pixels = new Uint8Array([
+      9, 8, 7, 6,
+      1, 2, 3, 4,
+      5, 6, 7, 8,
+      9, 10, 11, 12,
+    ]);
+
+    expect(
+      (frame?.spans?.length ?? 0) + (frame?.positions?.length ?? 0)
+    ).toBeGreaterThan(0);
+    prepared.copyFrame(1, pixels);
+
+    expect(Array.from(pixels)).toStrictEqual([
+      0, 255, 0, 255,
+      1, 2, 3, 4,
+      0, 255, 0, 255,
+      9, 10, 11, 12,
+    ]);
+  });
+
+  test("prepareFrames uses spans for long transparent runs", () => {
+    const palette = [0x000000, 0xff0000, 0x00ff00, 0x0000ff];
+    const buf = new Uint8Array(100);
+    const writer = new GifWriter(buf, 8, 1, { palette });
+    writer.addFrame(
+      0,
+      0,
+      8,
+      1,
+      new Uint8Array([1, 1, 1, 1, 0, 0, 0, 0]),
+      { transparent: 0 }
+    );
+    const reader = new GifReader(buf.slice(0, writer.end()));
+
+    const prepared = reader.prepareFrames({
+      composited: false,
+      cache: "sparse-rgba",
+    });
+
+    expect(prepared.getFrame(0)?.spans?.length).toBe(3);
+  });
+
+  test("native backend status is unavailable by default", () => {
+    GifReader.setDecodeBackend(null);
+
+    expect(GifReader.getDecodeBackendStatus()).toStrictEqual({
+      name: "javascript",
+      available: false,
+    });
   });
 });

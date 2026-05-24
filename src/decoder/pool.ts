@@ -15,11 +15,6 @@ export function createDecoderTables(): PooledDecoderTables {
 }
 
 export function getPooledDecoderTables(gifHash: string): PooledDecoderTables {
-  const pooledIndex = decoderTablePool.findIndex((p) => p.hash === gifHash);
-  if (pooledIndex >= 0) {
-    const pooled = decoderTablePool.splice(pooledIndex, 1)[0];
-    return pooled;
-  }
   if (decoderTablePool.length > 0) {
     const pooled = decoderTablePool.pop()!;
     pooled.decTable.fill(0);

@@ -1,18 +1,15 @@
-import { WasmGifDecoder, WasmWorkerPool } from "../types";
+import { WasmCoreModule, WasmGifDecoder, WasmWorkerPool } from "../types";
 
 interface WasmModule {
-  createWasmGifDecoder: (
-    wasmPath?: string
-  ) => Promise<WasmGifDecoder | null>;
-  createWasmWorkerPool: (
-    wasmPath?: string
-  ) => Promise<WasmWorkerPool | null>;
+  createWasmGifDecoder: (wasmPath?: string) => Promise<WasmGifDecoder | null>;
+  createWasmWorkerPool: (wasmPath?: string) => Promise<WasmWorkerPool | null>;
   isWasmSupported: () => boolean;
   isWasmSIMDSupported: () => boolean;
   isWasmThreadsSupported: () => boolean;
 }
 
 let cachedWasmModule: WasmModule | null | undefined;
+let cachedWasmCoreModule: WasmCoreModule | null | undefined;
 
 const loadWasmModule = (): WasmModule | null => {
   if (cachedWasmModule === undefined) {
@@ -25,15 +22,50 @@ const loadWasmModule = (): WasmModule | null => {
   return cachedWasmModule;
 };
 
+const tryRequire = (id: string): unknown => {
+  if (typeof require !== "function") {
+    return null;
+  }
+
+  try {
+    return require(id);
+  } catch {
+    return null;
+  }
+};
+
+const loadWasmCoreModule = (): WasmCoreModule | null => {
+  if (cachedWasmCoreModule !== undefined) {
+    return cachedWasmCoreModule;
+  }
+
+  const loaded =
+    tryRequire("../../crates/wtfgif-core/pkg/wtfgif_core.js") ??
+    tryRequire("../crates/wtfgif-core/pkg/wtfgif_core.js");
+  cachedWasmCoreModule =
+    loaded && typeof (loaded as WasmCoreModule).WtfGifCore === "function"
+      ? (loaded as WasmCoreModule)
+      : null;
+  return cachedWasmCoreModule;
+};
+
+export function setWasmCoreModule(module: WasmCoreModule | null): void {
+  cachedWasmCoreModule = module;
+}
+
+export function getWasmCoreModule(): WasmCoreModule | null {
+  return loadWasmCoreModule();
+}
+
 const createWasmGifDecoder = async (
-  wasmPath?: string
+  wasmPath?: string,
 ): Promise<WasmGifDecoder | null> => {
   const wasmModule = loadWasmModule();
   return wasmModule ? wasmModule.createWasmGifDecoder(wasmPath) : null;
 };
 
 const createWasmWorkerPool = async (
-  wasmPath?: string
+  wasmPath?: string,
 ): Promise<WasmWorkerPool | null> => {
   const wasmModule = loadWasmModule();
   return wasmModule ? wasmModule.createWasmWorkerPool(wasmPath) : null;
@@ -58,9 +90,11 @@ let globalWasmDecoder: WasmGifDecoder | null = null;
 let globalWasmWorkerPool: WasmWorkerPool | null = null;
 let wasmInitPromise: Promise<void> | null = null;
 
-let wasmFeatures:
-  | { supported: boolean; simd: boolean; threads: boolean }
-  | null = null;
+let wasmFeatures: {
+  supported: boolean;
+  simd: boolean;
+  threads: boolean;
+} | null = null;
 
 export function getWasmFeatures() {
   if (!wasmFeatures) {
@@ -74,7 +108,7 @@ export function getWasmFeatures() {
 }
 
 export const initializeGlobalWasm = async (
-  wasmPath?: string
+  wasmPath?: string,
 ): Promise<void> => {
   try {
     const features = getWasmFeatures();

@@ -1,0 +1,13 @@
+[package]
+name = "wtfgif-core"
+version = "0.1.0"
+edition = "2021"
+repository = "https://github.com/mpopv/wtfgif"
+license = "MIT"
+description = "Rust/Wasm core for wtfgif"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wasm-bindgen = "0.2"

@@ -46,7 +46,7 @@ describe("Palette edge cases", () => {
     expect(bufWtf.slice(0, wtfLen)).toStrictEqual(bufOmg.slice(0, omgLen));
   });
 
-  test("two-color palette uses 1-bit LZW and decodes correctly", () => {
+  test("two-color palette decodes correctly", () => {
     const width = 2;
     const height = 2;
     const palette = [0x000000, 0xffffff];
