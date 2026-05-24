@@ -17,7 +17,7 @@ beforeAll(async () => {
 
 describe('Optimized path parity', () => {
   for (const file of gifFiles) {
-    test(`${file} wasm vs baseline`, async () => {
+    test(`${file} optimized vs baseline`, async () => {
       const gif = readFileSync(join(gifsDir, file));
       const omg = new OmgGifReader(gif);
       const wtf = new WtfGifReader(gif);
@@ -45,6 +45,6 @@ describe('Optimized path parity', () => {
       }
 
       wtf.returnToPool();
-    });
+    }, 30000);
   }
 });

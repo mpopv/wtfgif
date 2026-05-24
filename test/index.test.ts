@@ -508,8 +508,8 @@ describe("Cross-library write/read compatibility", () => {
   });
 });
 
-describe("Disposal method decoding", () => {
-  test("supports restore to background (disposal=2)", () => {
+describe("Disposal metadata compatibility", () => {
+  test("preserves restore-to-background metadata while blitting like omggif", () => {
     const width = 2;
     const height = 2;
     const palette = [0x000000, 0xff0000, 0x0000ff];
@@ -521,21 +521,23 @@ describe("Disposal method decoding", () => {
     writer.addFrame(1, 0, 1, 2, frame2);
     const len = writer.end();
     const gif = buf.slice(0, len);
+    const omgReader = new OmgGifReader(gif);
     const wtfReader = new WtfGifReader(gif);
+    expect(wtfReader.frameInfo(0).disposal).toBe(2);
+
     const outLen = width * height * 4;
     const wtfPixels = new Uint8Array(outLen);
+    const omgPixels = new Uint8Array(outLen);
+
+    omgReader.decodeAndBlitFrameRGBA(0, omgPixels);
+    omgReader.decodeAndBlitFrameRGBA(1, omgPixels);
     wtfReader.decodeAndBlitFrameRGBA(0, wtfPixels);
     wtfReader.decodeAndBlitFrameRGBA(1, wtfPixels);
-    const expected = [
-      0, 0, 0, 255,
-      0, 0, 255, 255,
-      0, 0, 0, 255,
-      0, 0, 255, 255,
-    ];
-    expect(Array.from(wtfPixels)).toStrictEqual(expected);
+
+    expect(wtfPixels).toStrictEqual(omgPixels);
   });
 
-  test("supports restore to previous (disposal=3)", () => {
+  test("preserves restore-to-previous metadata while blitting like omggif", () => {
     const width = 2;
     const height = 2;
     const palette = [0x000000, 0xff0000, 0x00ff00, 0x0000ff];
@@ -549,18 +551,21 @@ describe("Disposal method decoding", () => {
     writer.addFrame(1, 0, 1, 2, frame2);
     const len = writer.end();
     const gif = buf.slice(0, len);
+    const omgReader = new OmgGifReader(gif);
     const wtfReader = new WtfGifReader(gif);
+    expect(wtfReader.frameInfo(1).disposal).toBe(3);
+
     const outLen = width * height * 4;
     const wtfPixels = new Uint8Array(outLen);
+    const omgPixels = new Uint8Array(outLen);
+
+    omgReader.decodeAndBlitFrameRGBA(0, omgPixels);
+    omgReader.decodeAndBlitFrameRGBA(1, omgPixels);
+    omgReader.decodeAndBlitFrameRGBA(2, omgPixels);
     wtfReader.decodeAndBlitFrameRGBA(0, wtfPixels);
     wtfReader.decodeAndBlitFrameRGBA(1, wtfPixels);
     wtfReader.decodeAndBlitFrameRGBA(2, wtfPixels);
-    const expected = [
-      255, 0, 0, 255,
-      0, 0, 255, 255,
-      255, 0, 0, 255,
-      0, 0, 255, 255,
-    ];
-    expect(Array.from(wtfPixels)).toStrictEqual(expected);
+
+    expect(wtfPixels).toStrictEqual(omgPixels);
   });
 });

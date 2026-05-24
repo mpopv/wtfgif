@@ -50,10 +50,6 @@ export class GifReader {
   private loop_count: number | null = null;
 
   private backgroundIndex = 0;
-  private bgColor32rgba = 0;
-  private bgColor32bgra = 0;
-
-  private restoreBuffer32: Uint32Array | null = null;
 
   // Pooled decoder tables for reuse across instances
   private pooledTables: PooledDecoderTables;
@@ -135,25 +131,6 @@ export class GifReader {
       this.globalPaletteOffset = p;
       this.globalPaletteSize = gctColors;
       p += gctColors * 3;
-      const pal32rgba = buildPal32(
-        buf,
-        this.globalPaletteOffset,
-        this.globalPaletteSize,
-        "rgba",
-        null
-      );
-      const pal32bgra = buildPal32(
-        buf,
-        this.globalPaletteOffset,
-        this.globalPaletteSize,
-        "bgra",
-        null
-      );
-      this.bgColor32rgba = pal32rgba[background] || 0;
-      this.bgColor32bgra = pal32bgra[background] || 0;
-    } else {
-      this.bgColor32rgba = 0;
-      this.bgColor32bgra = 0;
     }
 
     let delay = 0;
@@ -244,25 +221,6 @@ export class GifReader {
             p += size;
           }
 
-          // NEW: flatten payload & capture min code size
-          const { bytes: codes, mcs } = concatSubBlocks(buf, data_offset);
-
-          // NEW: prebuild pal32 variants once per frame with transparent index optimization
-          const pal32rgba = buildPal32(
-            buf,
-            palette_offset ?? 0,
-            palette_size ?? 0,
-            "rgba",
-            transparent_index
-          );
-          const pal32bgra = buildPal32(
-            buf,
-            palette_offset ?? 0,
-            palette_size ?? 0,
-            "bgra",
-            transparent_index
-          );
-
           this.frames.push({
             x,
             y,
@@ -277,11 +235,7 @@ export class GifReader {
             interlaced: interlace,
             delay,
             disposal,
-            // NEW:
-            min_code_size: mcs,
-            codes,
-            pal32rgba,
-            pal32bgra,
+            min_code_size: buf[data_offset] | 0,
           });
 
           // Reset GCE state for next frame
@@ -455,7 +409,7 @@ export class GifReader {
     }
 
     // Use worker pool for parallel decode
-    return workerPool.decodeParallel(this.buf, frameIndices);
+    return workerPool.decodeFrames(this.buf, frameIndices);
   }
 
   getWasmStats(): {
@@ -523,7 +477,7 @@ export class GifReader {
     if (targetCanvas) {
       const success = await this.gpuRenderer.renderToCanvas(
         indexData,
-        frame.pal32rgba || new Uint32Array(256),
+        this.getFramePalette(frame, "rgba"),
         frame.width,
         frame.height,
         targetCanvas
@@ -532,7 +486,7 @@ export class GifReader {
     } else {
       return await this.gpuRenderer.renderFrame(
         indexData,
-        frame.pal32rgba || new Uint32Array(256),
+        this.getFramePalette(frame, "rgba"),
         frame.width,
         frame.height
       );
@@ -599,7 +553,7 @@ export class GifReader {
     if (!this.gpuRenderer) return null;
     const success = await this.gpuRenderer.renderToCanvas(
       indexData,
-      frame.pal32rgba || new Uint32Array(256),
+      this.getFramePalette(frame, "rgba"),
       frame.width,
       frame.height,
       offscreen as unknown as HTMLCanvasElement // OffscreenCanvas compatible with HTMLCanvasElement interface
@@ -629,7 +583,7 @@ export class GifReader {
     if (!this.gpuRenderer) return null;
     const success = await this.gpuRenderer.renderToCanvas(
       indexData,
-      frame.pal32rgba || new Uint32Array(256),
+      this.getFramePalette(frame, "rgba"),
       frame.width,
       frame.height,
       offscreen as unknown as HTMLCanvasElement
@@ -838,7 +792,7 @@ export class GifReader {
     frame: FrameInfo,
     outputIndices: Uint8Array
   ): void {
-    const bytes = frame.codes;
+    const bytes = this.getFrameCodes(frame);
     const minCodeSize = frame.min_code_size | 0;
     let q = 0;
 
@@ -1003,6 +957,40 @@ export class GifReader {
     return this.frames[i];
   }
 
+  private getFrameCodes(frame: FrameInfo): Uint8Array {
+    if (!frame.codes) {
+      const { bytes, mcs } = concatSubBlocks(this.buf, frame.data_offset);
+      frame.codes = bytes;
+      frame.min_code_size = mcs;
+    }
+    return frame.codes;
+  }
+
+  private getFramePalette(
+    frame: FrameInfo,
+    order: "rgba" | "bgra"
+  ): Uint32Array {
+    if (order === "rgba") {
+      frame.pal32rgba ??= buildPal32(
+        this.buf,
+        frame.palette_offset,
+        frame.palette_size,
+        "rgba",
+        frame.transparent_index
+      );
+      return frame.pal32rgba;
+    }
+
+    frame.pal32bgra ??= buildPal32(
+      this.buf,
+      frame.palette_offset,
+      frame.palette_size,
+      "bgra",
+      frame.transparent_index
+    );
+    return frame.pal32bgra;
+  }
+
   /* Public API mirrors omggif: BGRA and RGBA outputs (Uint8Array). */
   decodeAndBlitFrameBGRA(frameNum: number, pixels: Uint8Array) {
     this.decodeAndBlitFrame32(frameNum, pixels, "bgra");
@@ -1106,8 +1094,6 @@ export class GifReader {
     if (frameNum < 0 || frameNum >= this.frames.length)
       throw new Error("Frame index out of range.");
 
-    const bgColor = order === "rgba" ? this.bgColor32rgba : this.bgColor32bgra;
-
     // Reuse a cached Uint32 view for this pixels buffer
     let out32 = this.out32Cache.get(pixels);
     if (!out32) {
@@ -1119,45 +1105,19 @@ export class GifReader {
       this.out32Cache.set(pixels, out32);
     }
 
-    out32.fill(bgColor);
+    const frame = this.frames[frameNum];
+    const pal32 = this.getFramePalette(frame, order);
+    const trans = frame.transparent_index ?? 256;
 
-    if (!this.restoreBuffer32 || this.restoreBuffer32.length !== out32.length)
-      this.restoreBuffer32 = new Uint32Array(out32.length);
-    const restore = this.restoreBuffer32;
-
-    for (let i = 0; i <= frameNum; i++) {
-      const frame = this.frames[i];
-      const pal32 = order === "rgba" ? frame.pal32rgba! : frame.pal32bgra!;
-      let trans = frame.transparent_index;
-      if (trans === null) trans = 256;
-
-      let needsRestore = frame.disposal === 3;
-      if (needsRestore) restore.set(out32);
-
-      this.lzwDecodeToPixels(
-        this.buf,
-        frame.data_offset,
-        out32,
-        this.width_,
-        frame,
-        pal32,
-        trans
-      );
-
-      if (i < frameNum) {
-        if (frame.disposal === 2) {
-          const w = frame.width | 0;
-          const h = frame.height | 0;
-          let dst = (frame.y * this.width_ + frame.x) >>> 0;
-          for (let y = 0; y < h; y++) {
-            out32.fill(bgColor, dst, dst + w);
-            dst += this.width_;
-          }
-        } else if (frame.disposal === 3) {
-          out32.set(restore);
-        }
-      }
-    }
+    this.lzwDecodeToPixels(
+      this.buf,
+      frame.data_offset,
+      out32,
+      this.width_,
+      frame,
+      pal32,
+      trans
+    );
   }
 
   /* Optimized LZW decoder that streams symbols directly to destination pixels. */
@@ -1170,8 +1130,7 @@ export class GifReader {
     pal32: Uint32Array,
     transparentIndex: number
   ) {
-    // NEW: use flattened bytes
-    const bytes = frame.codes;
+    const bytes = this.getFrameCodes(frame);
     const minCodeSize = frame.min_code_size | 0;
     let q = 0; // cursor into contiguous bytes
 
@@ -1354,10 +1313,12 @@ export class GifReader {
           let cur = code;
 
           if (cur < CLEAR) {
-            // Single byte - transparency pre-baked in palette
+            // Single byte - transparent pixels leave the caller's buffer as-is.
             outFirst = cur;
             const b = outFirst & 0xff;
-            out32[dst32] = pal32[b] >>> 0;
+            if (b !== transparentIndex) {
+              out32[dst32] = pal32[b] >>> 0;
+            }
             dst32++;
             if (--xleft === 0) {
               dst32 += rowStride32;
@@ -1381,18 +1342,22 @@ export class GifReader {
               stack[sp++] = entry & 0xff;
               cur = entry >>> 8;
             }
-            // Write first base - transparency pre-baked in palette
+            // Write first base - transparent pixels leave the caller's buffer as-is.
             const base = cur & 0xff;
-            out32[dst32] = pal32[base] >>> 0;
+            if (base !== transparentIndex) {
+              out32[dst32] = pal32[base] >>> 0;
+            }
             dst32++;
             if (--xleft === 0) {
               dst32 += rowStride32;
               xleft = fw;
             }
-            // Write stack backwards - transparency pre-baked in palette
+            // Write stack backwards - transparent pixels leave the caller's buffer as-is.
             while (sp) {
               const b = stack[--sp] & 0xff;
-              out32[dst32] = pal32[b] >>> 0;
+              if (b !== transparentIndex) {
+                out32[dst32] = pal32[b] >>> 0;
+              }
               dst32++;
               if (--xleft === 0) {
                 dst32 += rowStride32;
@@ -1533,9 +1498,9 @@ export class GifReader {
           // Emit exactly fw pixels on this row
           for (let x = 0; x < fw && pixelIndex < framePixels.length; x++) {
             const b = framePixels[pixelIndex++] & 0xff;
-            // Always write: transparency is pre-baked into palette (0-alpha)
-            // No branching needed - palette[transparentIndex] already has alpha=0
-            out32[dst32] = pal32[b] >>> 0;
+            if (b !== transparentIndex) {
+              out32[dst32] = pal32[b] >>> 0;
+            }
             dst32++;
           }
         }
@@ -1722,7 +1687,8 @@ export class GifReader {
       this.colorMapWasm.idxPtr,
       this.colorMapWasm.outPtr,
       this.colorMapWasm.palPtr,
-      count
+      count,
+      1
     );
 
     // Copy result back to output buffer
@@ -1734,4 +1700,3 @@ export class GifReader {
     out32.set(wasmOut32, startDst32);
   }
 }
-

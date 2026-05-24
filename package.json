@@ -15,9 +15,12 @@
     }
   },
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && tsc -p tsconfig.build.json --emitDeclarationOnly",
+    "typecheck": "tsc -p tsconfig.build.json --noEmit",
     "test": "vitest run --coverage",
     "lint": "biome lint .",
+    "bench": "npm run build && node scripts/bench.mjs",
+    "check": "npm run lint && npm run typecheck && npm test && npm run build && npm pack --dry-run",
     "prepare": "npm run build"
   },
   "repository": {

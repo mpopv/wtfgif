@@ -31,6 +31,14 @@ describe("GifReader error handling", () => {
         )
     ).toThrow(/WebAssembly not available/);
   });
+
+  test("gpu acceleration reports unavailable without a renderer module", async () => {
+    const reader = new GifReader(sampleGif);
+    await expect(reader.initGPU()).resolves.toBe(false);
+    await expect(reader.framePixelsGPU(0)).resolves.toBeNull();
+    expect(reader.isGPUEnabled()).toBe(false);
+    expect(reader.getGPUBackend()).toBe("none");
+  });
 });
 
 describe("GifWriter error handling", () => {

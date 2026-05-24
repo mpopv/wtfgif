@@ -6,7 +6,7 @@ beforeEach(() => {
 });
 
 describe("WebAssembly runtime integration", () => {
-  test("initializes and cleans up with available wasm module", async () => {
+  test("reports unavailable when no real wasm module is bundled", async () => {
     const runtime = await import("../src/wasm/runtime");
     const {
       initializeGlobalWasm,
@@ -17,20 +17,17 @@ describe("WebAssembly runtime integration", () => {
     } = runtime;
 
     await initializeGlobalWasm();
-    const workerPool = getWasmWorkerPool();
-    expect(getWasmDecoder()).not.toBeNull();
-    expect(workerPool).not.toBeNull();
+    expect(getWasmDecoder()).toBeNull();
+    expect(getWasmWorkerPool()).toBeNull();
     expect(getWasmStatus()).toMatchObject({
-      supported: true,
-      simd: true,
-      threads: true,
-      initialized: true,
-      workerPoolAvailable: true,
+      supported: false,
+      simd: false,
+      threads: false,
+      initialized: false,
+      workerPoolAvailable: false,
     });
 
-    const terminateSpy = vi.spyOn(workerPool!, "terminate");
     cleanupWasm();
-    expect(terminateSpy).toHaveBeenCalled();
     expect(getWasmDecoder()).toBeNull();
     expect(getWasmWorkerPool()).toBeNull();
     expect(getWasmStatus()).toMatchObject({
@@ -39,4 +36,3 @@ describe("WebAssembly runtime integration", () => {
     });
   });
 });
-

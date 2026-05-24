@@ -22,7 +22,8 @@ console.log(reader.width, reader.height);
 // Encode a GIF
 const buf = Buffer.alloc(1024 * 1024);
 const writer = new GifWriter(buf, 2, 2, { palette: [0x000000, 0xffffff] });
-writer.finish();
+const length = writer.end();
+const gif = buf.subarray(0, length);
 ```
 
 ### React
@@ -54,6 +55,8 @@ function GifInfo({ url }: { url: string }) {
 
 - `npm run build` – bundle the library with type definitions.
 - `npm test` – run tests verifying behaviour against the latest `omggif`.
+- `npm run bench` – compare decode/encode timings against `omggif`.
+- `npm run check` – run linting, typecheck, tests, build, and package dry-run.
 
 ## Contributing
 

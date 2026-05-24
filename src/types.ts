@@ -105,7 +105,7 @@ export type FrameInfo = {
   delay: number;
   disposal: number;
   min_code_size: number;
-  codes: Uint8Array;
+  codes?: Uint8Array;
   pal32rgba?: Uint32Array;
   pal32bgra?: Uint32Array;
 };

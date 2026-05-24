@@ -1,22 +1,17 @@
 module.exports = {
   async createWasmGifDecoder() {
-    return {};
+    return null;
   },
   async createWasmWorkerPool() {
-    return {
-      decodeFrame: async () => ({ pixels: new Uint32Array(), delay: 0 }),
-      decodeFrames: async () => [],
-      terminate: () => {},
-      getStats: () => ({ activeWorkers: 0, completedJobs: 0, avgDecodeTime: 0 }),
-    };
+    return null;
   },
   isWasmSupported() {
-    return true;
+    return false;
   },
   isWasmSIMDSupported() {
-    return true;
+    return false;
   },
   isWasmThreadsSupported() {
-    return true;
+    return false;
   },
 };

@@ -73,5 +73,26 @@ describe("GifReader frame decoding", () => {
       0, 0, 255, 255,
     ]);
   });
-});
 
+  test("transparent pixels leave existing destination pixels unchanged", () => {
+    const palette = [0x000000, 0xff0000, 0x00ff00];
+    const buf = new Uint8Array(100);
+    const writer = new GifWriter(buf, 2, 1, { palette });
+    writer.addFrame(0, 0, 2, 1, new Uint8Array([0, 2]), {
+      transparent: 0,
+    });
+    const len = writer.end();
+    const reader = new GifReader(buf.slice(0, len));
+    const pixels = new Uint8Array([
+      9, 8, 7, 6,
+      1, 2, 3, 4,
+    ]);
+
+    reader.decodeAndBlitFrameRGBA(0, pixels);
+
+    expect(Array.from(pixels)).toStrictEqual([
+      9, 8, 7, 6,
+      0, 255, 0, 255,
+    ]);
+  });
+});
