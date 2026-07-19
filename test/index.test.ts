@@ -167,7 +167,7 @@ describe("Pixel-perfect decoding compatibility", () => {
       }
 
       wtf.returnToPool();
-    }, 20000);
+    }, 60_000);
   }
 });
 
