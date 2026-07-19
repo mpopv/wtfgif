@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -11,8 +11,18 @@ const files = [
 ];
 
 const packages = [
-	{ source: "pkg", target: "wasm-core", label: "Node" },
-	{ source: "pkg-web", target: "wasm-web", label: "browser" },
+	{
+		source: "pkg",
+		target: "wasm-core",
+		label: "Node",
+		moduleType: "commonjs",
+	},
+	{
+		source: "pkg-web",
+		target: "wasm-web",
+		label: "browser",
+		moduleType: "module",
+	},
 ];
 
 for (const wasmPackage of packages) {
@@ -35,4 +45,8 @@ for (const wasmPackage of packages) {
 	for (const file of files) {
 		copyFileSync(join(sourceDir, file), join(targetDir, file));
 	}
+	writeFileSync(
+		join(targetDir, "package.json"),
+		`${JSON.stringify({ type: wasmPackage.moduleType }, null, 2)}\n`,
+	);
 }

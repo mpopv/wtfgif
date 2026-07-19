@@ -23,11 +23,28 @@ const run = (command, args, options = {}) =>
 		...options,
 	});
 
+const parsePackResult = (output) => {
+	let jsonStart = output.lastIndexOf("[");
+	while (jsonStart !== -1) {
+		try {
+			const result = JSON.parse(output.slice(jsonStart));
+			if (Array.isArray(result)) {
+				return result[0];
+			}
+		} catch {
+			// npm 10 can print lifecycle output before the JSON payload.
+		}
+		jsonStart = output.lastIndexOf("[", jsonStart - 1);
+	}
+	throw new Error("npm pack did not return a JSON payload.");
+};
+
 try {
 	const packJson = execFileSync(
 		"npm",
 		[
 			"pack",
+			"--silent",
 			"--ignore-scripts",
 			"--pack-destination",
 			temporaryRoot,
@@ -35,7 +52,7 @@ try {
 		],
 		{ cwd: root, encoding: "utf8" },
 	);
-	const packResult = JSON.parse(packJson)[0];
+	const packResult = parsePackResult(packJson);
 	if (!packResult?.filename) {
 		throw new Error("npm pack did not return a package filename.");
 	}
