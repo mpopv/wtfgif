@@ -56,6 +56,7 @@ web_modules/
 
 # Optional eslint cache
 .eslintcache
+.playwright-cli/
 
 # Optional stylelint cache
 .stylelintcache
@@ -68,6 +69,7 @@ web_modules/
 
 # Generated Rust/Wasm package output
 crates/**/pkg/
+crates/**/pkg-web/
 crates/**/target/
 
 # Yarn Integrity file

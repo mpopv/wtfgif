@@ -1,164 +1,162 @@
-import { WasmCoreModule, WasmGifDecoder, WasmWorkerPool } from "../types";
+import { WasmCoreModule } from "../types";
 
-interface WasmModule {
-  createWasmGifDecoder: (wasmPath?: string) => Promise<WasmGifDecoder | null>;
-  createWasmWorkerPool: (wasmPath?: string) => Promise<WasmWorkerPool | null>;
-  isWasmSupported: () => boolean;
-  isWasmSIMDSupported: () => boolean;
-  isWasmThreadsSupported: () => boolean;
-}
-
-let cachedWasmModule: WasmModule | null | undefined;
 let cachedWasmCoreModule: WasmCoreModule | null | undefined;
+let wasmInitPromise: Promise<void> | null = null;
 
-const loadWasmModule = (): WasmModule | null => {
-  if (cachedWasmModule === undefined) {
-    try {
-      cachedWasmModule = require("../wasm-full/wasmDecoder") as WasmModule;
-    } catch {
-      cachedWasmModule = null;
-    }
-  }
-  return cachedWasmModule;
+type WasmWebModule = WasmCoreModule & {
+	default?: (moduleOrPath?: unknown) => Promise<unknown>;
+};
+
+type NodeModuleBuiltin = {
+	createRequire?: (filename: string | URL) => NodeRequire;
+};
+
+type ProcessWithBuiltinModule = NodeJS.Process & {
+	getBuiltinModule?: (id: string) => NodeModuleBuiltin | undefined;
+};
+
+const getSynchronousRequire = (): NodeRequire | null => {
+	const processWithBuiltins =
+		typeof process === "undefined"
+			? undefined
+			: (process as ProcessWithBuiltinModule);
+	const createRequire =
+		processWithBuiltins?.getBuiltinModule?.("node:module")?.createRequire;
+	if (createRequire) {
+		return createRequire(import.meta.url);
+	}
+	return typeof require === "function" ? require : null;
 };
 
 const tryRequire = (id: string): unknown => {
-  if (typeof require !== "function") {
-    return null;
-  }
+	try {
+		return getSynchronousRequire()?.(id) ?? null;
+	} catch {
+		return null;
+	}
+};
 
-  try {
-    return require(id);
-  } catch {
-    return null;
-  }
+const asWasmCoreModule = (value: unknown): WasmCoreModule | null => {
+	if (!value || typeof (value as WasmCoreModule).WtfGifCore !== "function") {
+		return null;
+	}
+	return value as WasmCoreModule;
 };
 
 const loadWasmCoreModule = (): WasmCoreModule | null => {
-  if (cachedWasmCoreModule !== undefined) {
-    return cachedWasmCoreModule;
-  }
+	if (cachedWasmCoreModule !== undefined) {
+		return cachedWasmCoreModule;
+	}
 
-  const loaded =
-    tryRequire("../../crates/wtfgif-core/pkg/wtfgif_core.js") ??
-    tryRequire("../crates/wtfgif-core/pkg/wtfgif_core.js");
-  cachedWasmCoreModule =
-    loaded && typeof (loaded as WasmCoreModule).WtfGifCore === "function"
-      ? (loaded as WasmCoreModule)
-      : null;
-  return cachedWasmCoreModule;
+	const loaded =
+		tryRequire("wtfgif/wasm-core") ??
+		tryRequire("../../crates/wtfgif-core/pkg/wtfgif_core.js") ??
+		tryRequire("../crates/wtfgif-core/pkg/wtfgif_core.js");
+	cachedWasmCoreModule = asWasmCoreModule(loaded);
+	return cachedWasmCoreModule;
 };
 
 export function setWasmCoreModule(module: WasmCoreModule | null): void {
-  cachedWasmCoreModule = module;
+	cachedWasmCoreModule = module;
 }
 
 export function getWasmCoreModule(): WasmCoreModule | null {
-  return loadWasmCoreModule();
+	return loadWasmCoreModule();
 }
 
-const createWasmGifDecoder = async (
-  wasmPath?: string,
-): Promise<WasmGifDecoder | null> => {
-  const wasmModule = loadWasmModule();
-  return wasmModule ? wasmModule.createWasmGifDecoder(wasmPath) : null;
+const loadBrowserWasmCoreModule = async (
+	moduleOrPath?: unknown,
+): Promise<WasmCoreModule | null> => {
+	if (typeof WebAssembly === "undefined") {
+		return null;
+	}
+
+	const moduleUrl = new URL(
+		"./wasm-web/wtfgif_core.js",
+		import.meta.url,
+	).href;
+	const loaded = (await import(moduleUrl)) as WasmWebModule;
+	if (typeof loaded.default === "function") {
+		await loaded.default(moduleOrPath);
+	}
+	return asWasmCoreModule(loaded);
 };
 
-const createWasmWorkerPool = async (
-  wasmPath?: string,
-): Promise<WasmWorkerPool | null> => {
-  const wasmModule = loadWasmModule();
-  return wasmModule ? wasmModule.createWasmWorkerPool(wasmPath) : null;
-};
-
-const isWasmSupported = (): boolean => {
-  const wasmModule = loadWasmModule();
-  return wasmModule ? wasmModule.isWasmSupported() : false;
-};
-
-const isWasmSIMDSupported = (): boolean => {
-  const wasmModule = loadWasmModule();
-  return wasmModule ? wasmModule.isWasmSIMDSupported() : false;
-};
-
-const isWasmThreadsSupported = (): boolean => {
-  const wasmModule = loadWasmModule();
-  return wasmModule ? wasmModule.isWasmThreadsSupported() : false;
-};
-
-let globalWasmDecoder: WasmGifDecoder | null = null;
-let globalWasmWorkerPool: WasmWorkerPool | null = null;
-let wasmInitPromise: Promise<void> | null = null;
-
-let wasmFeatures: {
-  supported: boolean;
-  simd: boolean;
-  threads: boolean;
-} | null = null;
-
-export function getWasmFeatures() {
-  if (!wasmFeatures) {
-    wasmFeatures = {
-      supported: isWasmSupported(),
-      simd: isWasmSIMDSupported(),
-      threads: isWasmThreadsSupported(),
-    };
-  }
-  return wasmFeatures;
-}
-
-export const initializeGlobalWasm = async (
-  wasmPath?: string,
+export const initializeGlobalWasm = (
+	moduleOrPath?: unknown,
 ): Promise<void> => {
-  try {
-    const features = getWasmFeatures();
-    if (!features.supported) {
-      return;
-    }
+	if (wasmInitPromise) {
+		return wasmInitPromise;
+	}
 
-    globalWasmDecoder = await createWasmGifDecoder(wasmPath);
-    if (features.threads) {
-      globalWasmWorkerPool = await createWasmWorkerPool(wasmPath);
-    }
-    console.log("WebAssembly GIF decoder initialized:", {
-      decoder: !!globalWasmDecoder,
-      workerPool: !!globalWasmWorkerPool,
-      features,
-    });
-  } catch (error) {
-    console.warn("Failed to initialize WebAssembly decoder:", error);
-    globalWasmDecoder = null;
-    globalWasmWorkerPool = null;
-  }
+	wasmInitPromise = (async () => {
+		const providedModule = asWasmCoreModule(moduleOrPath);
+		if (providedModule) {
+			const providedWebModule = moduleOrPath as WasmWebModule;
+			if (typeof providedWebModule.default === "function") {
+				await providedWebModule.default();
+			}
+			setWasmCoreModule(providedModule);
+			return;
+		}
+		if (cachedWasmCoreModule === null) {
+			cachedWasmCoreModule = undefined;
+		}
+		if (getWasmCoreModule()) {
+			return;
+		}
+		const browserModule = await loadBrowserWasmCoreModule(moduleOrPath);
+		if (browserModule) {
+			setWasmCoreModule(browserModule);
+		}
+	})().finally(() => {
+		wasmInitPromise = null;
+	});
+
+	return wasmInitPromise;
 };
-export function getWasmDecoder() {
-  return globalWasmDecoder;
+
+export function getWasmFeatures(): {
+	supported: boolean;
+	simd: boolean;
+	threads: boolean;
+} {
+	return {
+		supported: typeof WebAssembly !== "undefined",
+		simd: false,
+		threads:
+			typeof SharedArrayBuffer !== "undefined" &&
+			(typeof crossOriginIsolated === "undefined" || crossOriginIsolated),
+	};
 }
-export function getWasmWorkerPool() {
-  return globalWasmWorkerPool;
+
+export function getWasmStatus(): {
+	supported: boolean;
+	simd: boolean;
+	threads: boolean;
+	initialized: boolean;
+	workerPoolAvailable: boolean;
+} {
+	return {
+		...getWasmFeatures(),
+		initialized: getWasmCoreModule() !== null,
+		workerPoolAvailable: false,
+	};
 }
-export function getWasmInitPromise() {
-  return wasmInitPromise;
+
+export function getWasmInitPromise(): Promise<void> | null {
+	return wasmInitPromise;
 }
-export function setWasmInitPromise(p: Promise<void> | null) {
-  wasmInitPromise = p;
+
+export function setWasmInitPromise(promise: Promise<void> | null): void {
+	wasmInitPromise = promise;
 }
-export function isWasmReady() {
-  return globalWasmDecoder !== null;
+
+export function isWasmReady(): boolean {
+	return getWasmCoreModule() !== null;
 }
-export function getWasmStatus() {
-  const features = getWasmFeatures();
-  return {
-    ...features,
-    initialized: globalWasmDecoder !== null,
-    workerPoolAvailable: globalWasmWorkerPool !== null,
-  };
-}
-export function cleanupWasm() {
-  if (globalWasmWorkerPool) {
-    globalWasmWorkerPool.terminate();
-    globalWasmWorkerPool = null;
-  }
-  globalWasmDecoder = null;
-  wasmInitPromise = null;
+
+export function cleanupWasm(): void {
+	cachedWasmCoreModule = null;
+	wasmInitPromise = null;
 }

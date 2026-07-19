@@ -205,6 +205,23 @@ describe("GifWriter encoding utilities", () => {
 		]);
 	});
 
+	test("encodeIndexedGifFrames writes per-frame delays", () => {
+		const gif = encodeIndexedGifFrames({
+			width: 1,
+			height: 1,
+			palette: [0x000000, 0xffffff],
+			frames: new Uint8Array([0, 1, 0]),
+			delay: [2, 7, 11],
+			loop: 0,
+		});
+		const reader = new GifReader(gif);
+
+		expect(reader.numFrames()).toBe(3);
+		expect(reader.frameInfo(0).delay).toBe(2);
+		expect(reader.frameInfo(1).delay).toBe(7);
+		expect(reader.frameInfo(2).delay).toBe(11);
+	});
+
 	test("encodeIndexedGifFrames can write changed rectangles", () => {
 		const width = 4;
 		const height = 4;
@@ -227,7 +244,7 @@ describe("GifWriter encoding utilities", () => {
 			height,
 			palette,
 			frames: [frame0, frame1],
-			delay: 3,
+			delay: [3, 9],
 			backend: "javascript",
 			delta: true,
 		});
@@ -238,6 +255,8 @@ describe("GifWriter encoding utilities", () => {
 		expect(deltaReader.frameInfo(1).y).toBe(0);
 		expect(deltaReader.frameInfo(1).width).toBe(1);
 		expect(deltaReader.frameInfo(1).height).toBe(2);
+		expect(deltaReader.frameInfo(0).delay).toBe(3);
+		expect(deltaReader.frameInfo(1).delay).toBe(9);
 		expect(deltaGif.length).toBeLessThan(fullGif.length);
 
 		const fullPixels = new Uint8Array(width * height * 4);
@@ -276,6 +295,113 @@ describe("GifWriter encoding utilities", () => {
 		reader.decodeAndBlitFrameRGBA(1, second);
 		expect(first).toStrictEqual(frames.subarray(0, 16));
 		expect(second).toStrictEqual(frames.subarray(16));
+	});
+
+	test("encodeRgbaGifFrames writes per-frame delays", () => {
+		const width = 1;
+		const height = 1;
+		const frames = new Uint8Array([
+			255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255,
+		]);
+		const gif = encodeRgbaGifFrames({
+			width,
+			height,
+			frames,
+			palette: [0xff0000, 0x00ff00, 0x0000ff],
+			delay: new Uint16Array([4, 8, 12]),
+		});
+		const reader = new GifReader(gif);
+
+		expect(reader.numFrames()).toBe(3);
+		expect(reader.frameInfo(0).delay).toBe(4);
+		expect(reader.frameInfo(1).delay).toBe(8);
+		expect(reader.frameInfo(2).delay).toBe(12);
+	});
+
+	test("encodeRgbaGifFrames preserves transparent alpha with a generated palette", () => {
+		const gif = encodeRgbaGifFrames({
+			width: 2,
+			height: 1,
+			frames: new Uint8Array([255, 0, 0, 255, 0, 0, 255, 0]),
+		});
+		const reader = new GifReader(gif);
+		const prepared = reader.preparePlayback();
+
+		expect(reader.frameInfo(0).transparent_index).not.toBeNull();
+		expect(Array.from(prepared.getFrameBytes(0)!)).toStrictEqual([
+			255, 0, 0, 255, 0, 0, 0, 0,
+		]);
+		prepared.dispose();
+	});
+
+	test("encodeRgbaGifFrames lets callers choose the alpha threshold", () => {
+		const frame = new Uint8Array([255, 0, 0, 64, 0, 0, 255, 255]);
+		const defaultGif = encodeRgbaGifFrames({
+			width: 2,
+			height: 1,
+			palette: [0xff0000, 0x0000ff],
+			frames: frame,
+		});
+		const lowerThresholdGif = encodeRgbaGifFrames({
+			width: 2,
+			height: 1,
+			palette: [0xff0000, 0x0000ff],
+			frames: frame,
+			alphaThreshold: 32,
+		});
+
+		const defaultReader = new GifReader(defaultGif);
+		const defaultPrepared = defaultReader.preparePlayback();
+		expect(defaultReader.frameInfo(0).transparent_index).not.toBeNull();
+		expect(Array.from(defaultPrepared.getFrameBytes(0)!)).toStrictEqual([
+			0, 0, 0, 0, 0, 0, 255, 255,
+		]);
+		defaultPrepared.dispose();
+
+		const lowerThresholdReader = new GifReader(lowerThresholdGif);
+		const lowerThresholdPrepared = lowerThresholdReader.preparePlayback();
+		expect(lowerThresholdReader.frameInfo(0).transparent_index).toBeNull();
+		expect(Array.from(lowerThresholdPrepared.getFrameBytes(0)!)).toStrictEqual([
+			255, 0, 0, 255, 0, 0, 255, 255,
+		]);
+		lowerThresholdPrepared.dispose();
+	});
+
+	test("high-level encoders validate delay arrays and alpha threshold", () => {
+		expect(() =>
+			encodeIndexedGifFrames({
+				width: 1,
+				height: 1,
+				palette: [0x000000, 0xffffff],
+				frames: new Uint8Array([0, 1]),
+				delay: [1],
+			}),
+		).toThrow(/Delay count/);
+		expect(() =>
+			encodeRgbaGifFrames({
+				width: 1,
+				height: 1,
+				frames: new Uint8Array([0, 0, 0, 255]),
+				alphaThreshold: 256,
+			}),
+		).toThrow(/Alpha threshold/);
+	});
+
+	test("encodeRgbaGifFrames reserves a transparent slot with a caller palette", () => {
+		const gif = encodeRgbaGifFrames({
+			width: 2,
+			height: 1,
+			palette: [0xff0000],
+			frames: new Uint8Array([255, 0, 0, 255, 0, 0, 255, 0]),
+		});
+		const reader = new GifReader(gif);
+		const prepared = reader.preparePlayback();
+
+		expect(reader.frameInfo(0).transparent_index).toBe(1);
+		expect(Array.from(prepared.getFrameBytes(0)!)).toStrictEqual([
+			255, 0, 0, 255, 0, 0, 0, 0,
+		]);
+		prepared.dispose();
 	});
 
 	test("encodeRgbaGifFrames can write changed rectangles", () => {

@@ -53,7 +53,7 @@ describe("Rust/Wasm core decode backend", () => {
 		GifReader.setDecodeBackend(null);
 	});
 
-	maybeTest("installs as the GifReader native backend", () => {
+	maybeTest("installs as the GifReader Wasm backend", () => {
 		expect(installWasmCoreBackend()).toStrictEqual({
 			name: "wtfgif-rust-wasm",
 			available: true,
@@ -88,14 +88,15 @@ describe("Rust/Wasm core decode backend", () => {
 	});
 
 	maybeTest("prepares composited playback frames like the JS backend", () => {
-		GifReader.setDecodeBackend(backend);
 		const gif = makeDisposalGif();
 		const jsReader = new GifReader(gif);
 		const nativeReader = new GifReader(gif);
+		GifReader.setDecodeBackend(null);
 		const expectedPrepared = jsReader.preparePlayback({
 			backend: "javascript",
 			deltas: true,
 		});
+		GifReader.setDecodeBackend(backend);
 		const actualPrepared = nativeReader.preparePlayback({
 			backend: "native",
 			deltas: true,
@@ -141,7 +142,7 @@ describe("Rust/Wasm core decode backend", () => {
 		nativeReader.returnToPool();
 	});
 
-	maybeTest("deduplicates identical native composited frames", () => {
+	maybeTest("deduplicates identical Wasm composited frames", () => {
 		GifReader.setDecodeBackend(backend);
 		const reader = new GifReader(makeDuplicateFrameGif());
 		const prepared = reader.preparePlayback({ backend: "native" });
@@ -184,7 +185,7 @@ describe("Rust/Wasm core decode backend", () => {
 		reader.returnToPool();
 	});
 
-	maybeTest("encodes indexed delta GIFs through the native batch wrapper", () => {
+	maybeTest("encodes indexed delta GIFs through the Wasm wrapper", () => {
 		const width = 4;
 		const height = 4;
 		const palette = [0x000000, 0xff0000, 0x00ff00];
@@ -214,7 +215,24 @@ describe("Rust/Wasm core decode backend", () => {
 		expect(reader.frameInfo(1).height).toBe(2);
 	});
 
-	maybeTest("keeps native batch pixel index validation in Rust", () => {
+	maybeTest("encodes per-frame delays through the Wasm wrapper", () => {
+		const encoded = encodeIndexedGifFrames({
+			width: 1,
+			height: 1,
+			palette: [0x000000, 0xffffff],
+			frames: new Uint8Array([0, 1, 0]),
+			delay: new Uint16Array([2, 5, 13]),
+			backend: "native",
+		});
+		const reader = new GifReader(encoded);
+
+		expect(reader.numFrames()).toBe(3);
+		expect(reader.frameInfo(0).delay).toBe(2);
+		expect(reader.frameInfo(1).delay).toBe(5);
+		expect(reader.frameInfo(2).delay).toBe(13);
+	});
+
+	maybeTest("keeps Wasm pixel index validation in Rust", () => {
 		expect(() =>
 			encodeIndexedGifFrames({
 				width: 1,
@@ -228,7 +246,7 @@ describe("Rust/Wasm core decode backend", () => {
 		).toThrow(/Pixel index out of range/);
 	});
 
-	maybeTest("encodes RGBA GIFs through the native batch wrapper", () => {
+	maybeTest("encodes RGBA GIFs through the Wasm wrapper", () => {
 		const width = 2;
 		const height = 2;
 		const frames = new Uint8Array([
@@ -255,7 +273,43 @@ describe("Rust/Wasm core decode backend", () => {
 		expect(second).toStrictEqual(frames.subarray(16));
 	});
 
-	maybeTest("encodes RGBA delta GIFs through the native batch wrapper", () => {
+	maybeTest("encodes RGBA transparency through the Wasm wrapper", () => {
+		const encoded = encodeRgbaGifFrames({
+			width: 2,
+			height: 1,
+			frames: new Uint8Array([255, 0, 0, 255, 0, 0, 255, 0]),
+			backend: "native",
+		});
+		const reader = new GifReader(encoded);
+		const prepared = reader.preparePlayback();
+
+		expect(reader.frameInfo(0).transparent_index).not.toBeNull();
+		expect(Array.from(prepared.getFrameBytes(0)!)).toStrictEqual([
+			255, 0, 0, 255, 0, 0, 0, 0,
+		]);
+		prepared.dispose();
+	});
+
+	maybeTest("encodes custom RGBA alpha thresholds through the Wasm wrapper", () => {
+		const encoded = encodeRgbaGifFrames({
+			width: 2,
+			height: 1,
+			palette: [0xff0000, 0x0000ff],
+			frames: new Uint8Array([255, 0, 0, 64, 0, 0, 255, 255]),
+			alphaThreshold: 32,
+			backend: "native",
+		});
+		const reader = new GifReader(encoded);
+		const prepared = reader.preparePlayback();
+
+		expect(reader.frameInfo(0).transparent_index).toBeNull();
+		expect(Array.from(prepared.getFrameBytes(0)!)).toStrictEqual([
+			255, 0, 0, 255, 0, 0, 255, 255,
+		]);
+		prepared.dispose();
+	});
+
+	maybeTest("encodes RGBA delta GIFs through the Wasm wrapper", () => {
 		const width = 3;
 		const height = 2;
 		const frame0 = new Uint8Array([

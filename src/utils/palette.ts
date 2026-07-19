@@ -39,24 +39,24 @@ export function buildPal32(
   const limit = Math.min(paletteSize, 256);
   if (order === "rgba") {
     for (let i = 0; i < limit; i++) {
-      const r = buf[paletteOffset + i * 3] | 0;
-      const g = buf[paletteOffset + i * 3 + 1] | 0;
-      const b = buf[paletteOffset + i * 3 + 2] | 0;
+      const r = buf[paletteOffset + i * 3]! | 0;
+      const g = buf[paletteOffset + i * 3 + 1]! | 0;
+      const b = buf[paletteOffset + i * 3 + 2]! | 0;
       if (transparentIndex !== null && i === transparentIndex) {
-        pal32[i] = SHIFT_16[b] | SHIFT_8[g] | SHIFT_0[r];
+        pal32[i] = SHIFT_16[b]! | SHIFT_8[g]! | SHIFT_0[r]!;
       } else {
-        pal32[i] = SHIFT_24[255] | SHIFT_16[b] | SHIFT_8[g] | SHIFT_0[r];
+        pal32[i] = SHIFT_24[255]! | SHIFT_16[b]! | SHIFT_8[g]! | SHIFT_0[r]!;
       }
     }
   } else {
     for (let i = 0; i < limit; i++) {
-      const r = buf[paletteOffset + i * 3] | 0;
-      const g = buf[paletteOffset + i * 3 + 1] | 0;
-      const b = buf[paletteOffset + i * 3 + 2] | 0;
+      const r = buf[paletteOffset + i * 3]! | 0;
+      const g = buf[paletteOffset + i * 3 + 1]! | 0;
+      const b = buf[paletteOffset + i * 3 + 2]! | 0;
       if (transparentIndex !== null && i === transparentIndex) {
-        pal32[i] = SHIFT_16[r] | SHIFT_8[g] | SHIFT_0[b];
+        pal32[i] = SHIFT_16[r]! | SHIFT_8[g]! | SHIFT_0[b]!;
       } else {
-        pal32[i] = SHIFT_24[255] | SHIFT_16[r] | SHIFT_8[g] | SHIFT_0[b];
+        pal32[i] = SHIFT_24[255]! | SHIFT_16[r]! | SHIFT_8[g]! | SHIFT_0[b]!;
       }
     }
   }

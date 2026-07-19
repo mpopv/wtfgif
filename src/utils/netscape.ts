@@ -43,6 +43,6 @@ export function readNetscapeLoopCount(
   if (buf[p + 12] !== 0x03 || buf[p + 13] !== 0x01 || buf[p + 16] !== 0x00) {
     return null;
   }
-  const loopCount = (buf[p + 14] | (buf[p + 15] << 8)) >>> 0;
+  const loopCount = (buf[p + 14]! | (buf[p + 15]! << 8)) >>> 0;
   return { loopCount, nextPos: p + 17 };
 }

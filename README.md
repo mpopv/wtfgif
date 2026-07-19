@@ -11,6 +11,8 @@ app tasks like "make frames from a GIF" and "make a GIF from frames".
 npm install wtfgif
 ```
 
+Node ESM automatic Wasm loading requires Node `20.16+` or `22.3+`.
+
 ## Import
 
 ```ts
@@ -37,9 +39,10 @@ There is no default export. Browser builds also expose `window.wtfgif`.
   changes from frame to frame, `delta: true` lets wtfgif write only the changed
   area. Use this for stickers, blinking text, small moving sprites, cursors, and
   UI captures with a static background.
-- **Wasm/native backend** means the optional Rust/WebAssembly implementation.
-  The public option is currently named `backend: "native"`, but it selects Wasm.
-  `backend: "auto"` uses Wasm when available and falls back to JavaScript.
+- **Wasm acceleration** means the optional Rust/WebAssembly implementation.
+  JavaScript is always available. CommonJS and Node ESM load the packaged Wasm
+  core automatically. Browsers can initialize the packaged web Wasm core with
+  `initializeWasmGlobally()`.
 
 ## Common Tasks
 
@@ -112,6 +115,17 @@ const gif = encodeRgbaGifFrames({
 });
 ```
 
+Use one delay for every frame, or pass one delay per frame:
+
+```ts
+const gif = encodeRgbaGifFrames({
+	width,
+	height,
+	frames,
+	delay: [4, 8, 12],
+});
+```
+
 If you know the exact colors you want the GIF to use, pass a palette:
 
 ```ts
@@ -125,6 +139,14 @@ const gif = encodeRgbaGifFrames({
 
 If you do not pass a palette, wtfgif builds one when possible. If the frames use
 more than 256 colors, it falls back to a simple 256-color palette.
+
+RGBA alpha is encoded as GIF transparency. By default, pixels with alpha below
+`128` become transparent; pixels at `128` or above are opaque because GIF does
+not support partial alpha. Set `alphaThreshold` if your app treats softer edges
+differently. For example, `alphaThreshold: 32` keeps pixels with alpha `32` and
+up; `alphaThreshold: 255` keeps only fully opaque pixels. When you pass a
+palette, wtfgif reserves a transparent palette slot when needed. If the palette
+is full and no unused index can be reserved, encoding throws.
 
 For mostly static animations:
 
@@ -163,6 +185,8 @@ const gif = encodeIndexedGifFrames({
 	loop: 0,
 });
 ```
+
+`delay` can also be an array or `Uint16Array` with one delay per frame.
 
 For mostly static indexed frames:
 
@@ -297,13 +321,17 @@ type PrepareFramesOptions = {
 - `format`: output byte order. Default is `"rgba"`.
 - `frameIndices`: prepare only selected frames.
 - `maxBytes`: throw if preparation would use more than this many bytes.
-- `backend`: `"auto"` uses Wasm when available; `"javascript"` forces JS;
-  `"native"` requires the optional Wasm backend.
+- `backend`: `"auto"` uses the configured Wasm decode backend when available;
+  `"javascript"` forces JS; `"native"` requires Wasm.
 - `deltas`: store only changed areas for mostly static animations when possible.
 - `dedupe`: reuse identical frame pixel buffers.
 - `cache`: controls the internal prepared-frame storage shape.
 - `composited`: whether frames should represent the full visible animation
   state. `preparePlayback()` always sets this to `true`.
+
+Prepared playback uses JavaScript until you call `installWasmCoreBackend()`.
+After installation, `"auto"` uses Wasm when available and safely falls back to
+JavaScript.
 
 The returned object:
 
@@ -408,6 +436,7 @@ const gif = encodeRgbaGifFrames({
 	loop,
 	backend,
 	delta,
+	alphaThreshold,
 });
 ```
 
@@ -420,10 +449,11 @@ type EncodeRgbaGifFramesOptions = {
 	frames: Uint8Array | Uint8ClampedArray | (Uint8Array | Uint8ClampedArray)[];
 	frameCount?: number;
 	palette?: number[];
-	delay?: number;
+	delay?: number | readonly number[] | Uint16Array;
 	loop?: number | null;
 	backend?: "auto" | "javascript" | "native";
 	delta?: boolean;
+	alphaThreshold?: number;
 };
 ```
 
@@ -432,11 +462,17 @@ type EncodeRgbaGifFramesOptions = {
 - `frameCount`: required only when `frames` is a flat stream and you want an
   explicit count check.
 - `palette`: optional `0xRRGGBB` color list. If omitted, wtfgif chooses one.
-- `delay`: same delay for every frame, in hundredths of a second.
+- `delay`: one delay for every frame, or one delay per frame, in hundredths of a
+  second.
 - `loop`: `0` loops forever. `null` or `undefined` omits loop metadata.
 - `backend`: `"auto"` tries Wasm first, then JS. `"javascript"` forces JS.
   `"native"` requires Wasm and throws if it is unavailable.
 - `delta`: use the mostly-static-frame path.
+- `alphaThreshold`: alpha values below this become transparent. Defaults to
+  `128`.
+
+If the packaged Wasm core is available, wtfgif uses it automatically. Otherwise
+it uses the JavaScript encoder.
 
 Returns a `Uint8Array` containing the complete GIF.
 
@@ -466,24 +502,27 @@ type EncodeIndexedGifFramesOptions = {
 	frames: Uint8Array | (Uint8Array | number[])[];
 	frameCount?: number;
 	palette: number[];
-	delay?: number;
+	delay?: number | readonly number[] | Uint16Array;
 	loop?: number | null;
 	backend?: "auto" | "javascript" | "native";
 	delta?: boolean;
 };
 ```
 
-Every pixel value must be a valid index into `palette`. Returns a `Uint8Array`
-containing the complete GIF.
+Every pixel value must be a valid index into `palette`. `delay` can be one delay
+for every frame, or one delay per frame, in hundredths of a second. `backend`
+uses the same `"auto"`, `"javascript"`, and `"native"` behavior as the RGBA
+helper. Returns a `Uint8Array` containing the complete GIF.
 
 ### Wasm Backend Helpers
 
 The normal APIs work without calling these. Use them only when you are wiring the
-optional Rust/Wasm core yourself or want to force/check the accelerated backend.
+optional Rust/Wasm core yourself or want to inspect the accelerated path.
 
 ```ts
 import {
 	createWasmCoreDecodeBackend,
+	initializeWasmGlobally,
 	installWasmCoreBackend,
 	setWasmCoreModule,
 	getWasmStatus,
@@ -494,47 +533,28 @@ import {
 | Function | Purpose |
 | --- | --- |
 | `setWasmCoreModule(moduleOrNull)` | Manually provides or clears the Rust/Wasm core module. |
+| `initializeWasmGlobally(input?)` | Loads the packaged browser Wasm core, or accepts a custom module/wasm input. |
 | `createWasmCoreDecodeBackend()` | Creates a decode backend object for `GifReader.setDecodeBackend()`. |
 | `installWasmCoreBackend()` | Installs the Wasm backend globally on `GifReader` and returns status. |
 | `GifReader.setDecodeBackend(backendOrNull)` | Sets or clears the global prepared-frame decode backend. |
 | `GifReader.getDecodeBackendStatus()` | Returns `{ name, available }` for the current backend. |
-| `getWasmStatus()` | Returns support and initialization flags for the legacy Wasm loader. |
-| `initializeWasmGlobally(path?)` | Initializes the legacy Wasm decoder loader. |
-| `cleanupWasm()` | Terminates Wasm worker resources and clears global Wasm state. |
+| `getWasmStatus()` | Returns support and initialization flags. |
+| `cleanupWasm()` | Clears the configured Wasm module and initialization state. |
 
-The option value `"native"` is kept for API compatibility, but in practice it
-means "use the optional Rust/Wasm core".
+Node CommonJS and ESM consumers normally need no setup. In a browser:
 
-### Advanced Reader Helpers
+```ts
+import {
+	initializeWasmGlobally,
+	installWasmCoreBackend,
+} from "wtfgif";
 
-These methods are available for specialized browser, worker, or experimental
-rendering flows:
+await initializeWasmGlobally();
+installWasmCoreBackend();
+```
 
-- `reader.initWasm(path?)`
-- `reader.isWasmReady()`
-- `reader.framePixelsWasm(index, target?)`
-- `reader.framePixelsParallel(indices)`
-- `reader.getWasmStats()`
-- `reader.initGPU(canvas?)`
-- `reader.framePixelsGPU(index, canvas?)`
-- `reader.frameImageBitmapGPU(index)`
-- `reader.frameTransferBitmapGPU(index)`
-- `reader.isGPUEnabled()`
-- `reader.getGPUBackend()`
-- `reader.benchmarkGPU(width?, height?)`
-- `reader.disableGPU()`
-- `reader.initWorkerPool()`
-- `reader.framePixelsThreadedPool(indices)`
-- `reader.framePixelsWorkerPool(index)`
-- `reader.getWorkerPoolStats()`
-- `reader.isWorkerPoolReady()`
-- `reader.cleanupWorkerPool()`
-- `reader.enableWasmColorMapping(colorMapWasm)`
-- `reader.disableWasmColorMapping()`
-- `reader.isWasmEnabled()`
-
-Most users should prefer `decodeAndBlitFrameRGBA()`, `preparePlayback()`, or
-`encodeRgbaGifFrames()`.
+The browser build and `.wasm` asset are also exported as `wtfgif/wasm-web` and
+`wtfgif/wasm-web/wasm` for custom loaders.
 
 ## Type Exports
 
@@ -543,6 +563,7 @@ wtfgif exports these public TypeScript types:
 - `EncodeIndexedGifFramesBackend`
 - `EncodeIndexedGifFramesOptions`
 - `EncodeRgbaGifFramesOptions`
+- `GifFrameDelay`
 - `IndexedGifFrame`
 - `IndexedGifFrames`
 - `RgbaGifFrame`

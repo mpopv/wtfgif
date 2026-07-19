@@ -1,38 +1,62 @@
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
+import type { WasmCoreModule } from "../src/types";
+import {
+	cleanupWasm,
+	getWasmFeatures,
+	getWasmStatus,
+	initializeGlobalWasm,
+	isWasmReady,
+	setWasmCoreModule,
+} from "../src/wasm/runtime";
 
-beforeEach(() => {
-  vi.resetModules();
-  vi.clearAllMocks();
+const fakeCoreModule = {
+	WtfGifCore: class {
+		width = () => 1;
+		height = () => 1;
+		frame_count = () => 0;
+		metadata_json = () => "{}";
+		decode_frame_indices = () => new Uint8Array();
+		decode_frame_rgba = () => new Uint8Array();
+		decode_frame_bgra = () => new Uint8Array();
+		prepare_composited_rgba = () => new Uint32Array();
+		prepare_composited_bgra = () => new Uint32Array();
+		prepare_composited_delta_rgba = () => new Uint32Array();
+		prepare_composited_delta_bgra = () => new Uint32Array();
+		free = () => undefined;
+	},
+} satisfies WasmCoreModule;
+
+afterEach(() => {
+	cleanupWasm();
 });
 
 describe("WebAssembly runtime integration", () => {
-  test("reports unavailable when no real wasm module is bundled", async () => {
-    const runtime = await import("../src/wasm/runtime");
-    const {
-      initializeGlobalWasm,
-      getWasmDecoder,
-      getWasmWorkerPool,
-      getWasmStatus,
-      cleanupWasm,
-    } = runtime;
+	test("accepts a provided core module through the compatibility initializer", async () => {
+		cleanupWasm();
+		await initializeGlobalWasm(fakeCoreModule);
 
-    await initializeGlobalWasm();
-    expect(getWasmDecoder()).toBeNull();
-    expect(getWasmWorkerPool()).toBeNull();
-    expect(getWasmStatus()).toMatchObject({
-      supported: false,
-      simd: false,
-      threads: false,
-      initialized: false,
-      workerPoolAvailable: false,
-    });
+		expect(isWasmReady()).toBe(true);
+		expect(getWasmStatus()).toMatchObject({
+			supported: true,
+			initialized: true,
+			workerPoolAvailable: false,
+		});
+	});
 
-    cleanupWasm();
-    expect(getWasmDecoder()).toBeNull();
-    expect(getWasmWorkerPool()).toBeNull();
-    expect(getWasmStatus()).toMatchObject({
-      initialized: false,
-      workerPoolAvailable: false,
-    });
-  });
+	test("cleanup disables the configured core", () => {
+		setWasmCoreModule(fakeCoreModule);
+		expect(isWasmReady()).toBe(true);
+
+		cleanupWasm();
+		expect(isWasmReady()).toBe(false);
+		expect(getWasmStatus().initialized).toBe(false);
+	});
+
+	test("reports runtime WebAssembly capabilities", () => {
+		expect(getWasmFeatures()).toEqual({
+			supported: typeof WebAssembly !== "undefined",
+			simd: false,
+			threads: typeof SharedArrayBuffer !== "undefined",
+		});
+	});
 });

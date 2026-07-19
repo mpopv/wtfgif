@@ -544,6 +544,26 @@ function validateNativeIndexedGifEncoding() {
 	}
 }
 
+function validateNativeIndexedGifPerFrameDelays() {
+	const encoded = toByteArray(
+		wasmCore.encode_indexed_gif_with_delays(
+			new Uint8Array([0, 1, 0]),
+			1,
+			1,
+			3,
+			new Uint32Array([0x000000, 0xffffff]),
+			new Uint16Array([2, 5, 13]),
+			0,
+		),
+	);
+	const omg = new OmgGifReader(encoded);
+
+	assertEqual(omg.numFrames(), 3, "native per-frame delay frame count");
+	assertEqual(omg.frameInfo(0).delay, 2, "native per-frame delay frame 0");
+	assertEqual(omg.frameInfo(1).delay, 5, "native per-frame delay frame 1");
+	assertEqual(omg.frameInfo(2).delay, 13, "native per-frame delay frame 2");
+}
+
 function validateNativeIndexedDeltaGifEncoding() {
 	const width = 4;
 	const height = 4;
@@ -589,6 +609,34 @@ function validateNativeIndexedDeltaGifEncoding() {
 	}
 }
 
+function validateNativeIndexedDeltaGifPerFrameDelays() {
+	const width = 2;
+	const height = 2;
+	const encoded = toByteArray(
+		wasmCore.encode_indexed_delta_gif_with_delays(
+			new Uint8Array([
+				1, 1, 1, 1, //
+				1, 2, 1, 1, //
+				1, 2, 1, 1,
+			]),
+			width,
+			height,
+			3,
+			new Uint32Array([0x000000, 0xff0000, 0x00ff00]),
+			new Uint16Array([3, 7, 11]),
+			0,
+		),
+	);
+	const omg = new OmgGifReader(encoded);
+
+	assertEqual(omg.numFrames(), 3, "native delta per-frame delay frame count");
+	assertEqual(omg.frameInfo(0).delay, 3, "native delta frame 0 delay");
+	assertEqual(omg.frameInfo(1).delay, 7, "native delta frame 1 delay");
+	assertEqual(omg.frameInfo(2).delay, 11, "native delta frame 2 delay");
+	assertEqual(omg.frameInfo(1).x, 1, "native delta per-frame frame 1 x");
+	assertEqual(omg.frameInfo(2).width, 1, "native delta per-frame no-op width");
+}
+
 function validateNativeRgbaGifEncoding() {
 	const width = 2;
 	const height = 2;
@@ -622,6 +670,46 @@ function validateNativeRgbaGifEncoding() {
 			toByteArray(decoder.decode_frame_rgba(1)),
 			frames.subarray(16),
 			"native RGBA encode frame 1 pixels",
+		);
+	} finally {
+		decoder.free();
+	}
+}
+
+function validateNativeRgbaGifOptionsEncoding() {
+	const width = 2;
+	const height = 1;
+	const frames = new Uint8Array([
+		255, 0, 0, 64, 0, 0, 255, 255, 255, 0, 0, 255, 0, 0, 255, 255,
+	]);
+	const encoded = toByteArray(
+		wasmCore.encode_rgba_gif_with_options(
+			frames,
+			width,
+			height,
+			2,
+			new Uint32Array([0xff0000, 0x0000ff]),
+			new Uint16Array([4, 9]),
+			0,
+			false,
+			32,
+		),
+	);
+	const omg = new OmgGifReader(encoded);
+	const decoder = new wasmCore.WtfGifCore(encoded);
+	try {
+		assertEqual(omg.numFrames(), 2, "native RGBA options frame count");
+		assertEqual(omg.frameInfo(0).delay, 4, "native RGBA options frame 0 delay");
+		assertEqual(omg.frameInfo(1).delay, 9, "native RGBA options frame 1 delay");
+		assertEqual(
+			omg.frameInfo(0).transparent_index ?? null,
+			null,
+			"native RGBA options transparent index",
+		);
+		assertBytesEqual(
+			toByteArray(decoder.decode_frame_rgba(0)),
+			new Uint8Array([255, 0, 0, 255, 0, 0, 255, 255]),
+			"native RGBA options frame 0 pixels",
 		);
 	} finally {
 		decoder.free();
@@ -686,8 +774,11 @@ for (const [label, data] of fixtures) {
 	validateGif(data, label);
 }
 validateNativeIndexedGifEncoding();
+validateNativeIndexedGifPerFrameDelays();
 validateNativeIndexedDeltaGifEncoding();
+validateNativeIndexedDeltaGifPerFrameDelays();
 validateNativeRgbaGifEncoding();
+validateNativeRgbaGifOptionsEncoding();
 validateNativeRgbaDeltaGifEncoding();
 
 console.log(

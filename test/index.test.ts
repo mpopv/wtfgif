@@ -9,15 +9,11 @@ import {
 import type { FrameInfo } from "../src/types";
 
 const gifsDir = join(__dirname, "gifs");
-// Test ALL GIF files for comprehensive compatibility
 const allGifFiles = readdirSync(gifsDir).filter((f) => f.endsWith(".gif"));
-// For performance, test a representative subset in CI, all files when needed
-const gifFiles = ["party_blob.gif"];
+const gifFiles = allGifFiles;
 
 describe("GIF file inventory", () => {
   test("discovers all GIF files in test directory", () => {
-    console.log(`Found ${allGifFiles.length} GIF files:`, allGifFiles);
-    console.log(`Testing ${gifFiles.length} files:`, gifFiles);
     expect(allGifFiles.length).toBeGreaterThan(0);
     expect(gifFiles.length).toBeGreaterThan(0);
   });
@@ -120,7 +116,7 @@ describe("GifReader parity with omggif", () => {
   }
 
   test("pooling API", () => {
-    const gif = readFileSync(join(gifsDir, gifFiles[0]));
+    const gif = readFileSync(join(gifsDir, gifFiles[0]!));
     const pooled = WtfGifReader.createPooled(gif);
     expect(() => pooled.returnToPool()).not.toThrow();
     const unpooled = WtfGifReader.createUnpooled(gif);
@@ -264,7 +260,7 @@ describe("GifWriter parity with omggif", () => {
     const buf = new Uint8Array(10000);
     const writer = new WtfGifWriter(buf, width, height, { palette });
     for (let i = 0; i < frameCount; i++) {
-      const f = frames[i & 1];
+      const f = frames[i & 1]!;
       writer.addFrame(0, 0, width, height, f);
     }
     const len = writer.end();
@@ -278,7 +274,7 @@ describe("GifWriter parity with omggif", () => {
     const expected = frames.map((data) => {
       const rgba = new Uint8Array(outLen);
       for (let i = 0; i < data.length; i++) {
-        const color = palette[data[i]];
+        const color = palette[data[i]!]!;
         const o = i * 4;
         rgba[o] = (color >> 16) & 0xff;
         rgba[o + 1] = (color >> 8) & 0xff;
@@ -420,8 +416,6 @@ describe("Cross-library write/read compatibility", () => {
       // Extract basic properties
       const width = wtfReader.width;
       const height = wtfReader.height;
-      const numFrames = Math.min(wtfReader.numFrames(), 2); // Limit for performance
-
       // Decode first frame to create a simple palette
       const pixelCount = width * height * 4;
       const firstFramePixels = new Uint8Array(pixelCount);
@@ -436,9 +430,9 @@ describe("Cross-library write/read compatibility", () => {
         // Simple thresholding to create binary data
         const pixelOffset = i * 4;
         const brightness =
-          (firstFramePixels[pixelOffset] +
-            firstFramePixels[pixelOffset + 1] +
-            firstFramePixels[pixelOffset + 2]) /
+          (firstFramePixels[pixelOffset]! +
+            firstFramePixels[pixelOffset + 1]! +
+            firstFramePixels[pixelOffset + 2]!) /
           3;
         frameData[i] = brightness > 127 ? 1 : 0;
       }
@@ -468,7 +462,7 @@ describe("Cross-library write/read compatibility", () => {
   }
 
   test("performance comparison - wtfgif vs omggif decoding speed", () => {
-    const file = gifFiles[0]; // Use first available file
+    const file = gifFiles[0]!; // Use first available file
     const gif = readFileSync(join(gifsDir, file));
     const omgReader = new OmgGifReader(gif);
     const wtfReader = new WtfGifReader(gif);
@@ -495,12 +489,6 @@ describe("Cross-library write/read compatibility", () => {
     const wtfTime = performance.now() - wtfStart;
 
     const speedup = omgTime / wtfTime;
-    console.log(
-      `Performance: wtfgif ${speedup.toFixed(2)}x ${
-        speedup >= 1 ? "faster" : "slower"
-      } than omggif on ${file}`
-    );
-
     // wtfgif should be competitive (at least 50% of omggif speed)
     expect(speedup).toBeGreaterThan(0.3);
 

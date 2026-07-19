@@ -1,85 +1,3 @@
-export interface UnifiedGPUGifRenderer {
-	initialize: (canvas?: HTMLCanvasElement) => Promise<boolean>;
-	renderFrame: (
-		indexData: Uint8Array,
-		palette: Uint32Array,
-		width: number,
-		height: number,
-	) => Promise<HTMLCanvasElement | null>;
-	renderToCanvas: (
-		indexData: Uint8Array,
-		palette: Uint32Array,
-		width: number,
-		height: number,
-		targetCanvas: HTMLCanvasElement,
-	) => Promise<boolean>;
-	updatePalette: (palette: Uint32Array) => void;
-	getBackend: () => string;
-	isGPUAccelerated: () => boolean;
-	benchmark: (width?: number, height?: number) => Promise<number>;
-	dispose: () => void;
-}
-
-export interface ColorMapWasm {
-	maxRowWidth?: number;
-	heapU8: Uint8Array;
-	heapU32: Uint32Array;
-	palPtr: number;
-	idxPtr: number;
-	outPtr: number;
-	map32: (
-		idxPtr: number,
-		outPtr: number,
-		palPtr: number,
-		width: number,
-		height: number,
-	) => void;
-}
-
-export interface WasmGifDecoder {
-	memory: WebAssembly.Memory;
-	decode_rgba: (
-		gifPtr: number,
-		gifLen: number,
-		frameIndex: number,
-		outPtr: number,
-		outLen: number,
-	) => number;
-	decode_rgba_threaded: (
-		gifPtr: number,
-		gifLen: number,
-		frameIndex: number,
-		outPtr: number,
-		outLen: number,
-		numThreads: number,
-	) => number;
-	init_heap: () => void;
-	reset_heap: () => void;
-	get_heap_usage: () => number;
-	test_simd: () => number;
-	wasm_malloc: (size: number) => number;
-	wasm_free: (ptr: number) => void;
-	heapU8: Uint8Array;
-	heapU32: Uint32Array;
-}
-
-export interface WasmWorkerPool {
-	decodeFrame: (
-		gifData: Uint8Array,
-		frameIndex: number,
-	) => Promise<{ pixels: Uint32Array; delay: number }>;
-	decodeFrames: (
-		gifData: Uint8Array,
-		frameIndices: number[],
-	) => Promise<{ pixels: Uint32Array; delay: number }[]>;
-	terminate: () => void;
-	getStats: () => {
-		activeWorkers: number;
-		completedJobs: number;
-		avgDecodeTime: number;
-	};
-}
-
 export interface WasmCoreInstance {
 	width: () => number;
 	height: () => number;
@@ -132,6 +50,15 @@ export interface WasmCoreModule {
 		delay: number,
 		loopCount: number,
 	) => Uint8Array;
+	encode_indexed_gif_with_delays?: (
+		indexStream: Uint8Array,
+		width: number,
+		height: number,
+		frameCount: number,
+		paletteRgb: Uint32Array,
+		delays: Uint16Array,
+		loopCount: number,
+	) => Uint8Array;
 	encode_indexed_delta_gif?: (
 		indexStream: Uint8Array,
 		width: number,
@@ -139,6 +66,15 @@ export interface WasmCoreModule {
 		frameCount: number,
 		paletteRgb: Uint32Array,
 		delay: number,
+		loopCount: number,
+	) => Uint8Array;
+	encode_indexed_delta_gif_with_delays?: (
+		indexStream: Uint8Array,
+		width: number,
+		height: number,
+		frameCount: number,
+		paletteRgb: Uint32Array,
+		delays: Uint16Array,
 		loopCount: number,
 	) => Uint8Array;
 	encode_rgba_gif?: (
@@ -150,6 +86,17 @@ export interface WasmCoreModule {
 		delay: number,
 		loopCount: number,
 		deltas: boolean,
+	) => Uint8Array;
+	encode_rgba_gif_with_options?: (
+		rgbaStream: Uint8Array,
+		width: number,
+		height: number,
+		frameCount: number,
+		paletteRgb: Uint32Array,
+		delays: Uint16Array,
+		loopCount: number,
+		deltas: boolean,
+		alphaThreshold: number,
 	) => Uint8Array;
 }
 
@@ -201,7 +148,7 @@ export interface PreparedGifFrame {
 	changedY?: number;
 	changedWidth?: number;
 	changedHeight?: number;
-	changedPixels?: Uint32Array;
+	changedPixels?: Uint32Array | undefined;
 	pixels?: Uint32Array;
 	colors?: Uint32Array;
 	spans?: Uint32Array;

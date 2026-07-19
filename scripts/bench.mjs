@@ -21,6 +21,14 @@ try {
 } catch {
 	setWasmCoreModule(null);
 }
+const wasmCoreBackend = createWasmCoreDecodeBackend();
+const wasmCoreAvailable = wasmCoreBackend.isAvailable();
+
+function setBenchmarkDecodeBackend(useWasm) {
+	WtfGifReader.setDecodeBackend(
+		useWasm && wasmCoreAvailable ? wasmCoreBackend : null,
+	);
+}
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const gifsDir = join(root, "test", "gifs");
@@ -28,6 +36,9 @@ const gifsDir = join(root, "test", "gifs");
 const iterations = Number(process.env.BENCH_ITERATIONS ?? 10);
 const warmupIterations = Number(process.env.BENCH_WARMUP_ITERATIONS ?? 3);
 const frameLimit = Number(process.env.BENCH_FRAME_LIMIT ?? 5);
+const minSampleMs = Number(process.env.BENCH_MIN_SAMPLE_MS ?? 8);
+const maxMeasureRepeats = Number(process.env.BENCH_MAX_MEASURE_REPEATS ?? 1 << 20);
+let measureSink = 0;
 
 function median(values) {
 	const sorted = values.toSorted((a, b) => a - b);
@@ -42,14 +53,28 @@ function percentile(values, p) {
 
 function measure(fn) {
 	for (let i = 0; i < warmupIterations; i++) {
-		fn();
+		measureSink ^= (fn() ?? 0) & 0xff;
+	}
+
+	let repeats = 1;
+	while (repeats < maxMeasureRepeats) {
+		const start = performance.now();
+		for (let i = 0; i < repeats; i++) {
+			measureSink ^= (fn() ?? 0) & 0xff;
+		}
+		if (performance.now() - start >= minSampleMs) {
+			break;
+		}
+		repeats <<= 1;
 	}
 
 	const samples = [];
 	for (let i = 0; i < iterations; i++) {
 		const start = performance.now();
-		fn();
-		samples.push(performance.now() - start);
+		for (let repeat = 0; repeat < repeats; repeat++) {
+			measureSink ^= (fn() ?? 0) & 0xff;
+		}
+		samples.push((performance.now() - start) / repeats);
 	}
 
 	return {
@@ -76,75 +101,88 @@ function createDecodeTask(Reader, data, maxFrames) {
 	};
 }
 
-function createPreparedPlaybackTask(data, maxFrames) {
-	const reader = new WtfGifReader(data);
-	const frames = Math.min(reader.numFrames(), maxFrames);
-	const prepared = reader.preparePlayback({
-		format: "rgba",
-		backend: "javascript",
-	});
-	const pixels = new Uint32Array(reader.width * reader.height);
-	return {
-		run() {
-			for (let frame = 0; frame < frames; frame++) {
-				prepared.copyFrame(frame, pixels);
-			}
-			return pixels[pixels.length - 1] ?? 0;
-		},
-		cleanup() {
-			prepared.dispose();
-			reader.returnToPool?.();
-		},
-	};
+function createPreparedPlaybackTask(data, maxFrames, useWasm = false) {
+	setBenchmarkDecodeBackend(useWasm);
+	try {
+		const reader = new WtfGifReader(data);
+		const frames = Math.min(reader.numFrames(), maxFrames);
+		const prepared = reader.preparePlayback({
+			format: "rgba",
+		});
+		const pixels = new Uint32Array(reader.width * reader.height);
+		return {
+			run() {
+				for (let frame = 0; frame < frames; frame++) {
+					prepared.copyFrame(frame, pixels);
+				}
+				return pixels[pixels.length - 1] ?? 0;
+			},
+			cleanup() {
+				prepared.dispose();
+				reader.returnToPool?.();
+			},
+		};
+	} finally {
+		setBenchmarkDecodeBackend(true);
+	}
 }
 
-function createPreparedPlayerTask(data, maxFrames, backend = "javascript") {
-	const reader = new WtfGifReader(data);
-	const frames = Math.min(reader.numFrames(), maxFrames);
-	const prepared = reader.preparePlayback({
-		format: "rgba",
-		deltas: true,
-		backend,
-	});
-	const player = prepared.createPlayer();
-	return {
-		run() {
-			for (let frame = 0; frame < frames; frame++) {
-				player.drawFrame(frame);
-			}
-			return player.target[player.target.length - 1] ?? 0;
-		},
-		cleanup() {
-			prepared.dispose();
-			reader.returnToPool?.();
-		},
-	};
+function createPreparedPlayerTask(data, maxFrames, useWasm = false) {
+	setBenchmarkDecodeBackend(useWasm);
+	try {
+		const reader = new WtfGifReader(data);
+		const frames = Math.min(reader.numFrames(), maxFrames);
+		const prepared = reader.preparePlayback({
+			format: "rgba",
+			deltas: true,
+		});
+		const player = prepared.createPlayer();
+		return {
+			run() {
+				for (let frame = 0; frame < frames; frame++) {
+					player.drawFrame(frame);
+				}
+				return player.target[player.target.length - 1] ?? 0;
+			},
+			cleanup() {
+				prepared.dispose();
+				reader.returnToPool?.();
+			},
+		};
+	} finally {
+		setBenchmarkDecodeBackend(true);
+	}
 }
 
 function preparePlaybackCold(
 	data,
 	maxFrames,
-	backend = "javascript",
+	useWasm = false,
 	deltas = false,
 ) {
-	const reader = new WtfGifReader(data);
-	const frames = Math.min(reader.numFrames(), maxFrames);
-	const frameIndices = Array.from({ length: frames }, (_, index) => index);
-	const prepared = reader.preparePlayback({
-		format: "rgba",
-		frameIndices,
-		backend,
-		deltas,
-	});
-	const pixels = prepared.getFramePixels(frames - 1);
-	const value = pixels?.[pixels.length - 1] ?? 0;
-	prepared.dispose();
-	reader.returnToPool?.();
-	return value;
+	setBenchmarkDecodeBackend(useWasm);
+	try {
+		const reader = WtfGifReader.createUnpooled(data);
+		const frames = Math.min(reader.numFrames(), maxFrames);
+		const frameIndices = Array.from({ length: frames }, (_, index) => index);
+		const prepared = reader.preparePlayback({
+			format: "rgba",
+			frameIndices,
+			deltas,
+		});
+		const pixels = prepared.getFramePixels(frames - 1);
+		const value = pixels?.[pixels.length - 1] ?? 0;
+		prepared.dispose();
+		reader.returnToPool?.();
+		return value;
+	} finally {
+		setBenchmarkDecodeBackend(true);
+	}
 }
 
 function decodeCold(Reader, data, maxFrames) {
-	const reader = new Reader(data);
+	const reader =
+		Reader === WtfGifReader ? WtfGifReader.createUnpooled(data) : new Reader(data);
 	const frames = Math.min(reader.numFrames(), maxFrames);
 	const pixels = new Uint8Array(reader.width * reader.height * 4);
 	for (let frame = 0; frame < frames; frame++) {
@@ -156,7 +194,8 @@ function decodeCold(Reader, data, maxFrames) {
 }
 
 function framesFromGifRgba(Reader, data, maxFrames) {
-	const reader = new Reader(data);
+	const reader =
+		Reader === WtfGifReader ? WtfGifReader.createUnpooled(data) : new Reader(data);
 	const frames = Math.min(reader.numFrames(), maxFrames);
 	const frameBytes = reader.width * reader.height * 4;
 	const decodedFrames = new Array(frames);
@@ -173,7 +212,7 @@ function framesFromGifRgba(Reader, data, maxFrames) {
 
 function verifyFrameParity(data, file) {
 	const omg = new OmgGifReader(data);
-	const wtf = new WtfGifReader(data);
+	const wtf = WtfGifReader.createUnpooled(data);
 	const frames = Math.min(omg.numFrames(), wtf.numFrames(), frameLimit);
 	const length = omg.width * omg.height * 4;
 	for (let frame = 0; frame < frames; frame++) {
@@ -349,7 +388,6 @@ function encodeSyntheticRgbaWtf(fixture, useNative, delta = false) {
 			frames: fixture.flatFrames,
 			delay: 2,
 			loop: 0,
-			backend: useNative ? "native" : "javascript",
 			delta,
 		}).length;
 	} finally {
@@ -367,7 +405,6 @@ function encodeSyntheticBatchNativeWtf(fixture) {
 			frames: fixture.flatFrames,
 			delay: 2,
 			loop: 0,
-			backend: "native",
 		}).length;
 	} finally {
 		setWasmCoreModule(wasmCoreModule);
@@ -384,7 +421,6 @@ function encodeSyntheticDeltaBatchNativeWtf(fixture) {
 			frames: fixture.flatFrames,
 			delay: 2,
 			loop: 0,
-			backend: "native",
 			delta: true,
 		}).length;
 	} finally {
@@ -450,11 +486,7 @@ const preparedPlayerRows = [];
 const nativePreparePlaybackRows = [];
 const nativePreparePlaybackDeltaRows = [];
 const nativePreparedPlayerRows = [];
-const wasmCoreBackend = createWasmCoreDecodeBackend();
-const wasmCoreAvailable = wasmCoreBackend.isAvailable();
-if (wasmCoreAvailable) {
-	WtfGifReader.setDecodeBackend(wasmCoreBackend);
-}
+setBenchmarkDecodeBackend(true);
 
 for (const file of files) {
 	const data = readFileSync(join(gifsDir, file));
@@ -462,8 +494,7 @@ for (const file of files) {
 
 	const omgParse = measure(() => new OmgGifReader(data));
 	const wtfParse = measure(() => {
-		const reader = new WtfGifReader(data);
-		reader.returnToPool();
+		WtfGifReader.createUnpooled(data);
 	});
 	parseRows.push({
 		file,
@@ -519,10 +550,10 @@ for (const file of files) {
 
 	if (wasmCoreAvailable) {
 		const nativePreparePlayback = measure(() =>
-			preparePlaybackCold(data, frameLimit, "native"),
+			preparePlaybackCold(data, frameLimit, true),
 		);
 		const nativePreparePlaybackDelta = measure(() =>
-			preparePlaybackCold(data, frameLimit, "native", true),
+			preparePlaybackCold(data, frameLimit, true, true),
 		);
 		nativePreparePlaybackRows.push({
 			file,
@@ -586,7 +617,7 @@ for (const file of files) {
 		const nativePreparedPlayerTask = createPreparedPlayerTask(
 			data,
 			frameLimit,
-			"native",
+			true,
 		);
 		const nativePreparedPlayer = measure(nativePreparedPlayerTask.run);
 		nativePreparedPlayerTask.cleanup();
@@ -618,7 +649,7 @@ if (
 	omgEncodedLength !== wtfNativeBatchEncodedLength
 ) {
 	throw new Error(
-		`synthetic encode length mismatch: omggif=${omgEncodedLength}, wtfgif-js=${wtfJsEncodedLength}, wtfgif-native=${wtfNativeEncodedLength}, wtfgif-native-batch=${wtfNativeBatchEncodedLength}`,
+		`synthetic encode length mismatch: omggif=${omgEncodedLength}, wtfgif-js=${wtfJsEncodedLength}, wtfgif-wasm=${wtfNativeEncodedLength}, wtfgif-wasm-all-frames=${wtfNativeBatchEncodedLength}`,
 	);
 }
 
@@ -773,16 +804,16 @@ printRows("Frames from GIF RGBA", framesFromGifRows);
 printRows("Cached decode RGBA", decodeRows);
 printRows("Prepare playback build RGBA", preparePlaybackRows);
 if (nativePreparePlaybackRows.length > 0) {
-	printRows("Native prepare playback build RGBA", nativePreparePlaybackRows);
+	printRows("Wasm prepare playback build RGBA", nativePreparePlaybackRows);
 	printRows(
-		"Native prepare playback build deltas RGBA",
+		"Wasm prepare playback build deltas RGBA",
 		nativePreparePlaybackDeltaRows,
 	);
 }
 printRows("Prepared playback copy RGBA", preparedPlaybackRows);
 printRows("Prepared playback player RGBA", preparedPlayerRows);
 if (nativePreparedPlayerRows.length > 0) {
-	printRows("Native prepared playback player RGBA", nativePreparedPlayerRows);
+	printRows("Wasm prepared playback player RGBA", nativePreparedPlayerRows);
 }
 printRows("Encode indexed frames JS", encodeRows);
 if (nativeEncodeRows.length > 0) {

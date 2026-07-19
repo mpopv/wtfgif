@@ -220,6 +220,19 @@ describe("GifReader frame decoding", () => {
     expect(prepared.getFrameBytes(99)).toBeUndefined();
   });
 
+  test("dispose clears prepared frame caches", () => {
+    const reader = new GifReader(makeDisposalGif());
+    const prepared = reader.preparePlayback();
+
+    reader.dispose();
+
+    expect(prepared.frames).toHaveLength(0);
+    expect(() => prepared.copyFrame(0, new Uint8Array(16))).toThrow(
+      "Frame index out of range."
+    );
+    expect(reader.preparePlayback()).not.toBe(prepared);
+  });
+
   test("prepared player draws sequential frames with deltas", () => {
     const reader = new GifReader(makeDisposalGif());
     const prepared = reader.preparePlayback({ deltas: true });
@@ -339,7 +352,7 @@ describe("GifReader frame decoding", () => {
     expect(prepared.getFrame(0)?.spans?.length).toBe(3);
   });
 
-  test("native backend status is unavailable by default", () => {
+  test("Wasm backend status is unavailable by default", () => {
     GifReader.setDecodeBackend(null);
 
     expect(GifReader.getDecodeBackendStatus()).toStrictEqual({

@@ -5,9 +5,9 @@ import {
 } from "./encoder/writer";
 import { GifReader } from "./decoder/reader";
 import {
-	initializeGlobalWasm,
-	getWasmStatus,
 	cleanupWasm,
+	getWasmStatus,
+	initializeGlobalWasm,
 	setWasmCoreModule,
 } from "./wasm/runtime";
 import { createWasmCoreDecodeBackend } from "./wasm/coreBackend";
@@ -37,6 +37,7 @@ export type {
 	EncodeIndexedGifFramesBackend,
 	EncodeIndexedGifFramesOptions,
 	EncodeRgbaGifFramesOptions,
+	GifFrameDelay,
 	IndexedGifFrame,
 	IndexedGifFrames,
 	RgbaGifFrame,
@@ -71,21 +72,13 @@ const browserExports = {
 	installWasmCoreBackend,
 };
 
-// Browser global export under wtfgif namespace
-(function () {
-	if (typeof window !== "undefined") {
-		(window as Window & { wtfgif: typeof browserExports }).wtfgif =
-			browserExports;
-	} else if (typeof globalThis !== "undefined") {
-		(
-			globalThis as typeof globalThis & { wtfgif: typeof browserExports }
-		).wtfgif = browserExports;
-	}
-})();
+if (typeof window !== "undefined") {
+	(window as Window & { wtfgif: typeof browserExports }).wtfgif =
+		browserExports;
+}
 
 declare global {
 	interface Window {
 		wtfgif: typeof browserExports;
 	}
-	var wtfgif: typeof browserExports;
 }

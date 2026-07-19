@@ -4,26 +4,65 @@
   "main": "dist/index.cjs",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
+  "engines": {
+    "node": "^20.16.0 || >=22.3.0"
+  },
   "files": [
     "dist"
   ],
-  "sideEffects": false,
+  "sideEffects": [
+    "./dist/index.cjs",
+    "./dist/index.mjs"
+  ],
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.mjs",
       "require": "./dist/index.cjs"
-    }
+    },
+    "./wasm-core": {
+      "types": "./dist/wasm-core/wtfgif_core.d.ts",
+      "browser": {
+        "types": "./dist/wasm-web/wtfgif_core.d.ts",
+        "import": "./dist/wasm-web/wtfgif_core.js",
+        "default": "./dist/wasm-web/wtfgif_core.js"
+      },
+      "node": {
+        "types": "./dist/wasm-core/wtfgif_core.d.ts",
+        "import": "./dist/wasm-core/wtfgif_core.js",
+        "require": "./dist/wasm-core/wtfgif_core.js"
+      },
+      "import": "./dist/wasm-web/wtfgif_core.js",
+      "require": "./dist/wasm-core/wtfgif_core.js",
+      "default": "./dist/wasm-web/wtfgif_core.js"
+    },
+    "./wasm-core/wasm": {
+      "browser": "./dist/wasm-web/wtfgif_core_bg.wasm",
+      "node": "./dist/wasm-core/wtfgif_core_bg.wasm",
+      "default": "./dist/wasm-web/wtfgif_core_bg.wasm"
+    },
+    "./wasm-web": {
+      "types": "./dist/wasm-web/wtfgif_core.d.ts",
+      "import": "./dist/wasm-web/wtfgif_core.js",
+      "default": "./dist/wasm-web/wtfgif_core.js"
+    },
+    "./wasm-web/wasm": "./dist/wasm-web/wtfgif_core_bg.wasm"
   },
   "scripts": {
-    "build": "tsup && tsc -p tsconfig.build.json --emitDeclarationOnly",
-    "build:wasm": "wasm-pack build crates/wtfgif-core --target nodejs --out-dir pkg --release",
-    "typecheck": "tsc -p tsconfig.build.json --noEmit",
+    "build": "tsup && tsc -p tsconfig.build.json --emitDeclarationOnly && node scripts/copy-wasm-core.mjs",
+    "build:wasm": "npm run build:wasm:node && npm run build:wasm:web",
+    "build:wasm:node": "wasm-pack build crates/wtfgif-core --target nodejs --out-dir pkg --release",
+    "build:wasm:web": "wasm-pack build crates/wtfgif-core --target web --out-dir pkg-web --release",
+    "typecheck": "tsc -p tsconfig.build.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "test": "vitest run --coverage",
     "test:wasm-core": "cargo test --manifest-path crates/wtfgif-core/Cargo.toml && npm run validate:wasm-core && vitest run test/wasm-core-backend.test.ts",
+    "test:package": "node scripts/validate-package.mjs",
+    "audit": "npm audit --audit-level=moderate",
     "lint": "biome lint .",
     "validate:wasm-core": "npm run build:wasm && node scripts/validate-wasm-core.mjs",
     "bench": "npm run build && node scripts/bench.mjs",
-    "check": "npm run lint && npm run typecheck && npm test && npm run build && npm pack --dry-run",
+    "check": "npm run lint && npm run typecheck && npm run audit && npm run build:wasm && npm test && npm run build && npm run test:package && npm pack --dry-run",
+    "prepack": "npm run build:wasm",
     "prepare": "npm run build"
   },
   "repository": {
@@ -59,12 +98,10 @@
     "@biomejs/biome": "^2.2.0",
     "@types/node": "^24.2.1",
     "@types/omggif": "^1.0.5",
-    "@vitest/coverage-v8": "^3.2.4",
+    "@vitest/coverage-v8": "^3.2.7",
+    "omggif": "^1.0.10",
     "tsup": "^8.5.0",
     "typescript": "^5.9.2",
-    "vitest": "^3.2.4"
-  },
-  "dependencies": {
-    "omggif": "^1.0.10"
+    "vitest": "^3.2.7"
   }
 }

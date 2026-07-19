@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>wtfgif browser Wasm smoke test</title>
+	</head>
+	<body>
+		<main>
+			<h1>wtfgif browser Wasm smoke test</h1>
+			<output id="result">running</output>
+		</main>
+		<script type="module">
+			import {
+				GifReader,
+				encodeIndexedGifFrames,
+				getWasmStatus,
+				initializeWasmGlobally,
+				installWasmCoreBackend,
+			} from "../dist/index.mjs";
+
+			const result = document.querySelector("#result");
+			try {
+				await initializeWasmGlobally();
+				const backend = installWasmCoreBackend();
+				const gif = encodeIndexedGifFrames({
+					width: 2,
+					height: 2,
+					frames: new Uint8Array([0, 1, 1, 0]),
+					palette: [0, 0xffffff],
+					backend: "native",
+				});
+				const reader = new GifReader(gif);
+				const passed =
+					backend.available &&
+					getWasmStatus().initialized &&
+					reader.numFrames() === 1 &&
+					window.wtfgif?.GifReader === GifReader;
+				reader.dispose();
+				result.textContent = passed ? "PASS" : "FAIL";
+				result.dataset.backend = backend.name;
+			} catch (error) {
+				result.textContent = "FAIL";
+				result.dataset.error =
+					error instanceof Error ? error.message : String(error);
+				console.error(error);
+			}
+		</script>
+	</body>
+</html>

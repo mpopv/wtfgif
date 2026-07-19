@@ -5,12 +5,14 @@ import { writeNetscapeLoopCount } from "../utils/netscape";
 import { getWasmCoreModule } from "../wasm/runtime";
 
 const WASM_LZW_MIN_INDEX_COUNT = 8192;
+const TRANSPARENT_ALPHA_THRESHOLD = 128;
 
 export type IndexedGifFrame = Uint8Array | number[];
 export type IndexedGifFrames = Uint8Array | IndexedGifFrame[];
 export type EncodeIndexedGifFramesBackend = "auto" | "javascript" | "native";
 export type RgbaGifFrame = Uint8Array | Uint8ClampedArray;
 export type RgbaGifFrames = Uint8Array | Uint8ClampedArray | RgbaGifFrame[];
+export type GifFrameDelay = number | readonly number[] | Uint16Array;
 
 export interface EncodeIndexedGifFramesOptions {
 	width: number;
@@ -18,7 +20,7 @@ export interface EncodeIndexedGifFramesOptions {
 	frames: IndexedGifFrames;
 	frameCount?: number;
 	palette: PaletteRGB;
-	delay?: number;
+	delay?: GifFrameDelay;
 	loop?: number | null;
 	backend?: EncodeIndexedGifFramesBackend;
 	delta?: boolean;
@@ -30,10 +32,11 @@ export interface EncodeRgbaGifFramesOptions {
 	frames: RgbaGifFrames;
 	frameCount?: number;
 	palette?: PaletteRGB;
-	delay?: number;
+	delay?: GifFrameDelay;
 	loop?: number | null;
 	backend?: EncodeIndexedGifFramesBackend;
 	delta?: boolean;
+	alphaThreshold?: number;
 }
 
 type IndexedPixels = IndexedGifFrame;
@@ -65,15 +68,15 @@ export function encodeIndexedGifFrames(
 		frameSize,
 		options.frameCount,
 	);
-	const delay = checkedU16(options.delay ?? 0, "Delay invalid.");
+	const delays = normalizeFrameDelays(options.delay, frameCount);
 	const loop =
 		options.loop === undefined || options.loop === null
 			? null
 			: checkedU16(options.loop, "Loop count invalid.");
-	const backend = options.backend ?? "auto";
 
-	if (backend !== "javascript") {
-		const wasmCore = getWasmCoreModule();
+	const backend = options.backend ?? "auto";
+	const wasmCore = backend === "javascript" ? null : getWasmCoreModule();
+	if (typeof delays === "number") {
 		const encodeIndexedGif = options.delta
 			? wasmCore?.encode_indexed_delta_gif
 			: wasmCore?.encode_indexed_gif;
@@ -91,13 +94,35 @@ export function encodeIndexedGifFrames(
 				height,
 				frameCount,
 				paletteToUint32Array(options.palette),
-				delay,
+				delays,
 				loop === null ? -1 : loop,
 			);
 		}
-		if (backend === "native") {
-			throw new Error("Rust/Wasm GIF encoder unavailable.");
+	} else {
+		const encodeIndexedGifWithDelays = options.delta
+			? wasmCore?.encode_indexed_delta_gif_with_delays
+			: wasmCore?.encode_indexed_gif_with_delays;
+		if (encodeIndexedGifWithDelays) {
+			const flatFrames = flattenIndexedFrames(
+				options.frames,
+				frameSize,
+				frameCount,
+				colorCount,
+				false,
+			);
+			return encodeIndexedGifWithDelays(
+				flatFrames,
+				width,
+				height,
+				frameCount,
+				paletteToUint32Array(options.palette),
+				delays,
+				loop === null ? -1 : loop,
+			);
 		}
+	}
+	if (backend === "native") {
+		throw new Error("Rust/Wasm GIF encoder unavailable.");
 	}
 
 	return encodeIndexedGifFramesJavascript(
@@ -107,7 +132,7 @@ export function encodeIndexedGifFrames(
 		frameSize,
 		frameCount,
 		options.palette,
-		delay,
+		delays,
 		loop,
 		options.delta === true,
 	);
@@ -133,35 +158,56 @@ export function encodeRgbaGifFrames(
 		frameByteSize,
 		options.frameCount,
 	);
-	const delay = checkedU16(options.delay ?? 0, "Delay invalid.");
+	const delays = normalizeFrameDelays(options.delay, frameCount);
+	const alphaThreshold = normalizeAlphaThreshold(options.alphaThreshold);
 	const loop =
 		options.loop === undefined || options.loop === null
 			? null
 			: checkedU16(options.loop, "Loop count invalid.");
-	const backend = options.backend ?? "auto";
 
-	if (backend !== "javascript") {
-		const encodeRgbaGif = getWasmCoreModule()?.encode_rgba_gif;
+	const rgbaFrames = flattenRgbaFrames(options.frames, frameByteSize, frameCount);
+	const backend = options.backend ?? "auto";
+	const wasmCore = backend === "javascript" ? null : getWasmCoreModule();
+	if (
+		typeof delays === "number" &&
+		alphaThreshold === TRANSPARENT_ALPHA_THRESHOLD
+	) {
+		const encodeRgbaGif = wasmCore?.encode_rgba_gif;
 		if (encodeRgbaGif) {
 			return encodeRgbaGif(
-				flattenRgbaFrames(options.frames, frameByteSize, frameCount),
+				rgbaFrames,
 				width,
 				height,
 				frameCount,
 				paletteToUint32Array(options.palette ?? []),
-				delay,
+				delays,
 				loop === null ? -1 : loop,
 				options.delta === true,
 			);
 		}
-		if (backend === "native") {
-			throw new Error("Rust/Wasm GIF encoder unavailable.");
-		}
+	}
+	const encodeRgbaGifWithOptions = wasmCore?.encode_rgba_gif_with_options;
+	if (encodeRgbaGifWithOptions) {
+		return encodeRgbaGifWithOptions(
+			rgbaFrames,
+			width,
+			height,
+			frameCount,
+			paletteToUint32Array(options.palette ?? []),
+			delayArray(delays, frameCount),
+			loop === null ? -1 : loop,
+			options.delta === true,
+			alphaThreshold,
+		);
+	}
+	if (backend === "native") {
+		throw new Error("Rust/Wasm GIF encoder unavailable.");
 	}
 
-	const { indexed, palette } = indexRgbaFramesJavascript(
-		flattenRgbaFrames(options.frames, frameByteSize, frameCount),
+	const { indexed, palette, transparentIndex } = indexRgbaFramesJavascript(
+		rgbaFrames,
 		options.palette,
+		alphaThreshold,
 	);
 	return encodeIndexedGifFramesJavascript(
 		indexed,
@@ -170,9 +216,10 @@ export function encodeRgbaGifFrames(
 		frameSize,
 		frameCount,
 		palette,
-		delay,
+		delays,
 		loop,
 		options.delta === true,
+		transparentIndex,
 	);
 }
 
@@ -514,9 +561,10 @@ function encodeIndexedGifFramesJavascript(
 	frameSize: number,
 	frameCount: number,
 	palette: PaletteRGB,
-	delay: number,
+	delays: NormalizedFrameDelays,
 	loop: number | null,
 	delta: boolean,
+	transparentIndex: number | null = null,
 ): Uint8Array {
 	const colorCount = checkPalette(palette);
 	const estimatedSize =
@@ -525,12 +573,14 @@ function encodeIndexedGifFramesJavascript(
 	const writer = new GifWriter(output, width, height, { palette, loop });
 	for (let frameIndex = 0; frameIndex < frameCount; frameIndex++) {
 		const frame = getIndexedFrame(frames, frameSize, frameIndex);
+		const frameOptions = {
+			delay: frameDelay(delays, frameIndex),
+			...(transparentIndex === null ? {} : { transparent: transparentIndex }),
+		};
 		if (delta) {
-			writer.addFrameDelta(frame, { delay });
+			writer.addFrameDelta(frame, frameOptions);
 		} else {
-			writer.addFrame(0, 0, width, height, frame, {
-				delay,
-			});
+			writer.addFrame(0, 0, width, height, frame, frameOptions);
 		}
 	}
 	return output.slice(0, writer.end());
@@ -695,47 +745,105 @@ function getIndexedFrame(
 function indexRgbaFramesJavascript(
 	rgba: Uint8Array,
 	palette: PaletteRGB | undefined,
-): { indexed: Uint8Array; palette: PaletteRGB } {
+	alphaThreshold: number,
+): { indexed: Uint8Array; palette: PaletteRGB; transparentIndex: number | null } {
+	const hasTransparentPixels = rgbaHasTransparentPixels(rgba, alphaThreshold);
 	if (palette !== undefined) {
-		return {
-			indexed: indexRgbaFramesToPaletteJavascript(rgba, palette),
+		return indexRgbaFramesToPaletteJavascript(
+			rgba,
 			palette,
-		};
+			hasTransparentPixels,
+			alphaThreshold,
+		);
 	}
 
-	const exact = tryIndexRgbaFramesExactJavascript(rgba);
-	return exact ?? indexRgbaFrames332Javascript(rgba);
+	const exact = tryIndexRgbaFramesExactJavascript(
+		rgba,
+		hasTransparentPixels,
+		alphaThreshold,
+	);
+	return (
+		exact ??
+		indexRgbaFrames332Javascript(rgba, hasTransparentPixels, alphaThreshold)
+	);
 }
 
 function tryIndexRgbaFramesExactJavascript(
 	rgba: Uint8Array,
-): { indexed: Uint8Array; palette: PaletteRGB } | null {
+	hasTransparentPixels: boolean,
+	alphaThreshold: number,
+): { indexed: Uint8Array; palette: PaletteRGB; transparentIndex: number | null } | null {
 	const palette: number[] = [];
 	const colorToIndex = new Map<number, number>();
 	const indexed = new Uint8Array(rgba.length >> 2);
-	let output = 0;
+
+	if (!hasTransparentPixels) {
+		let output = 0;
+		for (let offset = 0; offset < rgba.length; offset += 4) {
+			const color = rgbKey(
+				rgba[offset]!,
+				rgba[offset + 1]!,
+				rgba[offset + 2]!,
+			);
+			let index = colorToIndex.get(color);
+			if (index === undefined) {
+				if (palette.length === 256) {
+					return null;
+				}
+				index = palette.length;
+				colorToIndex.set(color, index);
+				palette.push(color);
+			}
+			indexed[output++] = index;
+		}
+		return { indexed, palette, transparentIndex: null };
+	}
 
 	for (let offset = 0; offset < rgba.length; offset += 4) {
+		if (rgba[offset + 3]! < alphaThreshold) {
+			continue;
+		}
+
 		const color = rgbKey(rgba[offset]!, rgba[offset + 1]!, rgba[offset + 2]!);
 		let index = colorToIndex.get(color);
 		if (index === undefined) {
-			if (palette.length === 256) {
+			if (palette.length === (hasTransparentPixels ? 255 : 256)) {
 				return null;
 			}
 			index = palette.length;
 			colorToIndex.set(color, index);
 			palette.push(color);
 		}
-		indexed[output++] = index;
 	}
 
-	return { indexed, palette };
+	if (hasTransparentPixels && palette.length === 256) {
+		return null;
+	}
+
+	const transparentIndex = hasTransparentPixels ? palette.length : null;
+	if (transparentIndex !== null) {
+		palette.push(0);
+	}
+
+	let output = 0;
+	for (let offset = 0; offset < rgba.length; offset += 4) {
+		if (rgba[offset + 3]! < alphaThreshold) {
+			indexed[output++] = transparentIndex!;
+			continue;
+		}
+		const color = rgbKey(rgba[offset]!, rgba[offset + 1]!, rgba[offset + 2]!);
+		indexed[output++] = colorToIndex.get(color)!;
+	}
+
+	return { indexed, palette, transparentIndex };
 }
 
 function indexRgbaFramesToPaletteJavascript(
 	rgba: Uint8Array,
 	palette: PaletteRGB,
-): Uint8Array {
+	hasTransparentPixels: boolean,
+	alphaThreshold: number,
+): { indexed: Uint8Array; palette: PaletteRGB; transparentIndex: number | null } {
 	const exact = new Map<number, number>();
 	for (let index = 0; index < palette.length; index++) {
 		const color = (palette[index] ?? 0) & 0x00ff_ffff;
@@ -744,24 +852,99 @@ function indexRgbaFramesToPaletteJavascript(
 		}
 	}
 
-	const indexed = new Uint8Array(rgba.length >> 2);
-	let output = 0;
+	if (!hasTransparentPixels) {
+		const indexed = new Uint8Array(rgba.length >> 2);
+		let output = 0;
+		for (let offset = 0; offset < rgba.length; offset += 4) {
+			const r = rgba[offset]!;
+			const g = rgba[offset + 1]!;
+			const b = rgba[offset + 2]!;
+			const color = rgbKey(r, g, b);
+			indexed[output++] =
+				exact.get(color) ?? nearestPaletteIndex(r, g, b, palette);
+		}
+		return { indexed, palette, transparentIndex: null };
+	}
+
+	const usedIndexes = new Set<number>();
 	for (let offset = 0; offset < rgba.length; offset += 4) {
+		if (rgba[offset + 3]! < alphaThreshold) {
+			continue;
+		}
 		const r = rgba[offset]!;
 		const g = rgba[offset + 1]!;
 		const b = rgba[offset + 2]!;
 		const color = rgbKey(r, g, b);
-		indexed[output++] = exact.get(color) ?? nearestPaletteIndex(r, g, b, palette);
+		usedIndexes.add(exact.get(color) ?? nearestPaletteIndex(r, g, b, palette));
 	}
-	return indexed;
+
+	let outputPalette = palette;
+	let transparentIndex: number | null = null;
+	if (hasTransparentPixels) {
+		if (palette.length < 256) {
+			outputPalette = palette.slice();
+			transparentIndex = outputPalette.length;
+			outputPalette.push(0);
+		} else {
+			for (let index = 0; index < palette.length; index++) {
+				if (!usedIndexes.has(index)) {
+					transparentIndex = index;
+					break;
+				}
+			}
+			if (transparentIndex === null) {
+				throw new Error(
+					"RGBA frames contain transparent pixels, but the palette has no unused transparent slot.",
+				);
+			}
+		}
+	}
+
+	const indexed = new Uint8Array(rgba.length >> 2);
+	let output = 0;
+	for (let offset = 0; offset < rgba.length; offset += 4) {
+		if (rgba[offset + 3]! < alphaThreshold) {
+			indexed[output++] = transparentIndex!;
+			continue;
+		}
+		const r = rgba[offset]!;
+		const g = rgba[offset + 1]!;
+		const b = rgba[offset + 2]!;
+		const color = rgbKey(r, g, b);
+		indexed[output++] =
+			exact.get(color) ?? nearestPaletteIndex(r, g, b, palette);
+	}
+
+	return { indexed, palette: outputPalette, transparentIndex };
 }
 
-function indexRgbaFrames332Javascript(rgba: Uint8Array): {
+function indexRgbaFrames332Javascript(
+	rgba: Uint8Array,
+	hasTransparentPixels: boolean,
+	alphaThreshold: number,
+): {
 	indexed: Uint8Array;
 	palette: PaletteRGB;
+	transparentIndex: number | null;
 } {
 	const indexed = new Uint8Array(rgba.length >> 2);
 	let output = 0;
+	if (hasTransparentPixels) {
+		const transparentIndex = 255;
+		for (let offset = 0; offset < rgba.length; offset += 4) {
+			indexed[output++] =
+				rgba[offset + 3]! < alphaThreshold
+					? transparentIndex
+					: Math.min(
+							rgb332Index(rgba[offset]!, rgba[offset + 1]!, rgba[offset + 2]!),
+							transparentIndex - 1,
+						);
+		}
+		const palette = fixed332Palette();
+		palette[transparentIndex] = 0;
+		return { indexed, palette, transparentIndex };
+	}
+
 	for (let offset = 0; offset < rgba.length; offset += 4) {
 		indexed[output++] = rgb332Index(
 			rgba[offset]!,
@@ -769,7 +952,19 @@ function indexRgbaFrames332Javascript(rgba: Uint8Array): {
 			rgba[offset + 2]!,
 		);
 	}
-	return { indexed, palette: fixed332Palette() };
+	return { indexed, palette: fixed332Palette(), transparentIndex: null };
+}
+
+function rgbaHasTransparentPixels(
+	rgba: Uint8Array,
+	alphaThreshold: number,
+): boolean {
+	for (let offset = 3; offset < rgba.length; offset += 4) {
+		if (rgba[offset]! < alphaThreshold) {
+			return true;
+		}
+	}
+	return false;
 }
 
 function rgbKey(r: number, g: number, b: number): number {
@@ -825,6 +1020,59 @@ function paletteToUint32Array(palette: PaletteRGB): Uint32Array {
 function checkedU16(value: number, message: string): number {
 	const checked = value | 0;
 	if (checked < 0 || checked > 65535) {
+		throw new Error(message);
+	}
+	return checked;
+}
+
+type NormalizedFrameDelays = number | Uint16Array;
+
+function normalizeFrameDelays(
+	delay: GifFrameDelay | undefined,
+	frameCount: number,
+): NormalizedFrameDelays {
+	if (delay === undefined) {
+		return 0;
+	}
+	if (typeof delay === "number") {
+		return checkedU16(delay, "Delay invalid.");
+	}
+	if (delay.length !== frameCount) {
+		throw new Error("Delay count does not match frame count.");
+	}
+	const normalized = new Uint16Array(frameCount);
+	for (let i = 0; i < frameCount; i++) {
+		normalized[i] = checkedU16(delay[i] ?? 0, "Delay invalid.");
+	}
+	return normalized;
+}
+
+function delayArray(
+	delays: NormalizedFrameDelays,
+	frameCount: number,
+): Uint16Array {
+	if (delays instanceof Uint16Array) {
+		return delays;
+	}
+	const normalized = new Uint16Array(frameCount);
+	normalized.fill(delays);
+	return normalized;
+}
+
+function frameDelay(delays: NormalizedFrameDelays, frameIndex: number): number {
+	return delays instanceof Uint16Array ? delays[frameIndex]! : delays;
+}
+
+function normalizeAlphaThreshold(alphaThreshold: number | undefined): number {
+	return checkedU8(
+		alphaThreshold ?? TRANSPARENT_ALPHA_THRESHOLD,
+		"Alpha threshold invalid.",
+	);
+}
+
+function checkedU8(value: number, message: string): number {
+	const checked = value | 0;
+	if (checked < 0 || checked > 255) {
 		throw new Error(message);
 	}
 	return checked;
@@ -1043,7 +1291,7 @@ function GifWriterOutputLZWCodeStream_fast(
 		stridedRowSkip = indexStream.stride - indexStream.width;
 		ib = (stridedData[indexStream.offset] as number) | 0;
 	} else {
-		ib = (indexStream[0] as number) | 0;
+		ib = ((indexStream as IndexedPixels)[0] as number) | 0;
 	}
 	if (ib >>> 0 >= colorCount) throw new Error("Pixel index out of range.");
 
@@ -1057,7 +1305,7 @@ function GifWriterOutputLZWCodeStream_fast(
 			k = (stridedData[stridedIndex++] as number) | 0;
 			stridedRowRemaining--;
 		} else {
-			k = (indexStream[i] as number) | 0;
+			k = ((indexStream as IndexedPixels)[i] as number) | 0;
 		}
 		if (k >>> 0 >= colorCount) throw new Error("Pixel index out of range.");
 		const key = (ib << 8) | k;

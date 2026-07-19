@@ -47,6 +47,31 @@ const COMPOSITED_DELTA_HEADER_LEN: usize = 4;
 const COMPOSITED_DELTA_ENTRY_LEN: usize = 9;
 const LZW_TABLE_CAP: usize = 16_384;
 const COLOR_INDEX_CAP: usize = 1_024;
+const TRANSPARENT_ALPHA_THRESHOLD: u8 = 128;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DelaySource<'a> {
+    Constant(u16),
+    PerFrame(&'a [u16]),
+}
+
+impl<'a> DelaySource<'a> {
+    fn validate(self, frame_count: usize) -> Result<(), String> {
+        match self {
+            DelaySource::Constant(_) => Ok(()),
+            DelaySource::PerFrame(delays) if delays.len() == frame_count => Ok(()),
+            DelaySource::PerFrame(_) => Err("Delay count does not match frame count".to_string()),
+        }
+    }
+
+    #[inline]
+    fn get(self, frame_index: usize) -> u16 {
+        match self {
+            DelaySource::Constant(delay) => delay,
+            DelaySource::PerFrame(delays) => delays[frame_index],
+        }
+    }
+}
 
 #[wasm_bindgen]
 pub struct WtfGifCore {
@@ -150,8 +175,32 @@ pub fn encode_indexed_gif(
         height,
         frame_count,
         palette_rgb,
-        delay,
+        DelaySource::Constant(delay),
         loop_count,
+        None,
+    )
+    .map_err(|message| JsValue::from_str(&message))
+}
+
+#[wasm_bindgen]
+pub fn encode_indexed_gif_with_delays(
+    index_stream: &[u8],
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    palette_rgb: &[u32],
+    delays: &[u16],
+    loop_count: i32,
+) -> Result<Vec<u8>, JsValue> {
+    encode_indexed_gif_inner(
+        index_stream,
+        width,
+        height,
+        frame_count,
+        palette_rgb,
+        DelaySource::PerFrame(delays),
+        loop_count,
+        None,
     )
     .map_err(|message| JsValue::from_str(&message))
 }
@@ -172,7 +221,29 @@ pub fn encode_indexed_delta_gif(
         height,
         frame_count,
         palette_rgb,
-        delay,
+        DelaySource::Constant(delay),
+        loop_count,
+    )
+    .map_err(|message| JsValue::from_str(&message))
+}
+
+#[wasm_bindgen]
+pub fn encode_indexed_delta_gif_with_delays(
+    index_stream: &[u8],
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    palette_rgb: &[u32],
+    delays: &[u16],
+    loop_count: i32,
+) -> Result<Vec<u8>, JsValue> {
+    encode_indexed_delta_gif_inner(
+        index_stream,
+        width,
+        height,
+        frame_count,
+        palette_rgb,
+        DelaySource::PerFrame(delays),
         loop_count,
     )
     .map_err(|message| JsValue::from_str(&message))
@@ -195,9 +266,36 @@ pub fn encode_rgba_gif(
         height,
         frame_count,
         palette_rgb,
-        delay,
+        DelaySource::Constant(delay),
         loop_count,
         deltas,
+        TRANSPARENT_ALPHA_THRESHOLD,
+    )
+    .map_err(|message| JsValue::from_str(&message))
+}
+
+#[wasm_bindgen]
+pub fn encode_rgba_gif_with_options(
+    rgba_stream: &[u8],
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    palette_rgb: &[u32],
+    delays: &[u16],
+    loop_count: i32,
+    deltas: bool,
+    alpha_threshold: u8,
+) -> Result<Vec<u8>, JsValue> {
+    encode_rgba_gif_inner(
+        rgba_stream,
+        width,
+        height,
+        frame_count,
+        palette_rgb,
+        DelaySource::PerFrame(delays),
+        loop_count,
+        deltas,
+        alpha_threshold,
     )
     .map_err(|message| JsValue::from_str(&message))
 }
@@ -920,9 +1018,10 @@ fn encode_rgba_gif_inner(
     height: u16,
     frame_count: usize,
     palette_rgb: &[u32],
-    delay: u16,
+    delays: DelaySource<'_>,
     loop_count: i32,
     deltas: bool,
+    alpha_threshold: u8,
 ) -> Result<Vec<u8>, String> {
     if width == 0 || height == 0 {
         return Err("Width/Height invalid".to_string());
@@ -933,6 +1032,7 @@ fn encode_rgba_gif_inner(
     if loop_count < -1 || loop_count > i32::from(u16::MAX) {
         return Err("Loop count invalid".to_string());
     }
+    delays.validate(frame_count)?;
 
     let frame_pixels = usize::from(width)
         .checked_mul(usize::from(height))
@@ -945,28 +1045,33 @@ fn encode_rgba_gif_inner(
         return Err("RGBA frame stream length does not match dimensions".to_string());
     }
 
-    if deltas && !palette_rgb.is_empty() {
+    if deltas
+        && !palette_rgb.is_empty()
+        && !rgba_stream_has_transparent_pixels(rgba_stream, alpha_threshold)
+    {
         return encode_rgba_delta_gif_to_palette_inner(
             rgba_stream,
             width,
             height,
             frame_count,
             palette_rgb,
-            delay,
+            delays,
             loop_count,
         );
     }
 
-    let (palette, indexed) = index_rgba_frames(rgba_stream, palette_rgb)?;
+    let (palette, indexed, transparent_index) =
+        index_rgba_frames(rgba_stream, palette_rgb, alpha_threshold)?;
     encode_indexed_gif_inner_with_rects(
         &indexed,
         width,
         height,
         frame_count,
         &palette,
-        delay,
+        delays,
         loop_count,
         deltas,
+        transparent_index,
     )
 }
 
@@ -976,9 +1081,10 @@ fn encode_rgba_delta_gif_to_palette_inner(
     height: u16,
     frame_count: usize,
     palette_rgb: &[u32],
-    delay: u16,
+    delays: DelaySource<'_>,
     loop_count: i32,
 ) -> Result<Vec<u8>, String> {
+    delays.validate(frame_count)?;
     let color_count = checked_palette_color_count(palette_rgb.len())?;
     let min_code_size = (log2_pow2(color_count) as u8).max(2);
     let canvas_width = usize::from(width);
@@ -1004,7 +1110,8 @@ fn encode_rgba_delta_gif_to_palette_inner(
     write_loop_extension(&mut output, loop_count);
 
     let mut previous_frame: Option<&[u8]> = None;
-    for frame in rgba_stream.chunks_exact(frame_bytes) {
+    for (frame_index, frame) in rgba_stream.chunks_exact(frame_bytes).enumerate() {
+        let delay = delays.get(frame_index);
         if let Some(previous) = previous_frame {
             if let Some(rect) =
                 find_changed_rect_rgba_rgb(previous, frame, canvas_width, canvas_height)
@@ -1016,6 +1123,7 @@ fn encode_rgba_delta_gif_to_palette_inner(
                     rect.width as u16,
                     rect.height as u16,
                     delay,
+                    None,
                 );
                 map_rgba_rect_to_palette(frame, canvas_width, rect, &mapper, &mut mapped);
                 encode_indexed_lzw_to_with_tables(
@@ -1026,7 +1134,7 @@ fn encode_rgba_delta_gif_to_palette_inner(
                     &mut lzw_tables,
                 )?;
             } else {
-                write_indexed_gif_frame_header(&mut output, 0, 0, 1, 1, delay);
+                write_indexed_gif_frame_header(&mut output, 0, 0, 1, 1, delay, None);
                 let noop = [mapper.index_pixel(frame[0], frame[1], frame[2])];
                 encode_indexed_lzw_to_with_tables(
                     &mut output,
@@ -1037,7 +1145,7 @@ fn encode_rgba_delta_gif_to_palette_inner(
                 )?;
             }
         } else {
-            write_indexed_gif_frame_header(&mut output, 0, 0, width, height, delay);
+            write_indexed_gif_frame_header(&mut output, 0, 0, width, height, delay, None);
             map_rgba_frame_to_palette(frame, &mapper, &mut mapped);
             encode_indexed_lzw_to_with_tables(
                 &mut output,
@@ -1057,61 +1165,152 @@ fn encode_rgba_delta_gif_to_palette_inner(
 fn index_rgba_frames(
     rgba_stream: &[u8],
     palette_rgb: &[u32],
-) -> Result<(Vec<u32>, Vec<u8>), String> {
+    alpha_threshold: u8,
+) -> Result<(Vec<u32>, Vec<u8>, Option<u8>), String> {
     if !palette_rgb.is_empty() {
         checked_palette_color_count(palette_rgb.len())?;
-        return Ok((
-            palette_rgb
-                .iter()
-                .map(|color| color & 0x00ff_ffff)
-                .collect(),
-            index_rgba_frames_to_palette(rgba_stream, palette_rgb),
-        ));
+        return index_rgba_frames_to_palette(rgba_stream, palette_rgb, alpha_threshold);
     }
 
-    if let Some(exact) = try_index_rgba_frames_exact(rgba_stream) {
+    if let Some(exact) = try_index_rgba_frames_exact(rgba_stream, alpha_threshold) {
         return Ok(exact);
     }
 
-    Ok(index_rgba_frames_332(rgba_stream))
+    Ok(index_rgba_frames_332(rgba_stream, alpha_threshold))
 }
 
-fn try_index_rgba_frames_exact(rgba_stream: &[u8]) -> Option<(Vec<u32>, Vec<u8>)> {
+fn try_index_rgba_frames_exact(
+    rgba_stream: &[u8],
+    alpha_threshold: u8,
+) -> Option<(Vec<u32>, Vec<u8>, Option<u8>)> {
     let mut table = ColorIndexTable::new();
     let mut palette = Vec::with_capacity(256);
     let mut indexed = Vec::with_capacity(rgba_stream.len() / 4);
+    let mut has_transparent_pixels = false;
 
     let mut offset = 0usize;
     while offset < rgba_stream.len() {
+        if rgba_stream[offset + 3] < alpha_threshold {
+            has_transparent_pixels = true;
+            offset += 4;
+            continue;
+        }
         let rgb = rgb_key(
             rgba_stream[offset],
             rgba_stream[offset + 1],
             rgba_stream[offset + 2],
         );
-        if let Some(index) = table.get(rgb) {
-            indexed.push(index);
+        if table.get(rgb).is_some() {
             offset += 4;
             continue;
         }
-        if palette.len() == 256 {
+        if palette.len() == if has_transparent_pixels { 255 } else { 256 } {
             return None;
         }
 
         let index = palette.len() as u8;
         table.insert_if_absent(rgb, index);
         palette.push(rgb);
-        indexed.push(index);
         offset += 4;
     }
 
-    Some((palette, indexed))
+    if has_transparent_pixels && palette.len() == 256 {
+        return None;
+    }
+
+    let transparent_index = if has_transparent_pixels {
+        let index = palette.len() as u8;
+        palette.push(0);
+        Some(index)
+    } else {
+        None
+    };
+
+    offset = 0;
+    while offset < rgba_stream.len() {
+        if rgba_stream[offset + 3] < alpha_threshold {
+            indexed.push(transparent_index.unwrap());
+            offset += 4;
+            continue;
+        }
+        let rgb = rgb_key(
+            rgba_stream[offset],
+            rgba_stream[offset + 1],
+            rgba_stream[offset + 2],
+        );
+        indexed.push(table.get(rgb).unwrap());
+        offset += 4;
+    }
+
+    Some((palette, indexed, transparent_index))
 }
 
-fn index_rgba_frames_to_palette(rgba_stream: &[u8], palette_rgb: &[u32]) -> Vec<u8> {
+fn index_rgba_frames_to_palette(
+    rgba_stream: &[u8],
+    palette_rgb: &[u32],
+    alpha_threshold: u8,
+) -> Result<(Vec<u32>, Vec<u8>, Option<u8>), String> {
     let mapper = PaletteMapper::new(palette_rgb);
+    let mut palette: Vec<u32> = palette_rgb
+        .iter()
+        .map(|color| color & 0x00ff_ffff)
+        .collect();
+    let mut used_indexes = vec![false; palette_rgb.len()];
+    let mut has_transparent_pixels = false;
+
+    let mut offset = 0usize;
+    while offset < rgba_stream.len() {
+        if rgba_stream[offset + 3] < alpha_threshold {
+            has_transparent_pixels = true;
+            offset += 4;
+            continue;
+        }
+        let index = mapper.index_pixel(
+            rgba_stream[offset],
+            rgba_stream[offset + 1],
+            rgba_stream[offset + 2],
+        ) as usize;
+        used_indexes[index] = true;
+        offset += 4;
+    }
+
+    let transparent_index = if has_transparent_pixels {
+        if palette.len() < 256 {
+            let index = palette.len() as u8;
+            palette.push(0);
+            Some(index)
+        } else {
+            Some(
+                used_indexes
+                    .iter()
+                    .position(|used| !*used)
+                    .map(|index| index as u8)
+                    .ok_or_else(|| {
+                        "RGBA frames contain transparent pixels, but the palette has no unused transparent slot."
+                            .to_string()
+                    })?,
+            )
+        }
+    } else {
+        None
+    };
+
     let mut indexed = Vec::with_capacity(rgba_stream.len() / 4);
-    map_rgba_frame_to_palette(rgba_stream, &mapper, &mut indexed);
-    indexed
+    offset = 0;
+    while offset < rgba_stream.len() {
+        if rgba_stream[offset + 3] < alpha_threshold {
+            indexed.push(transparent_index.unwrap());
+        } else {
+            indexed.push(mapper.index_pixel(
+                rgba_stream[offset],
+                rgba_stream[offset + 1],
+                rgba_stream[offset + 2],
+            ));
+        }
+        offset += 4;
+    }
+
+    Ok((palette, indexed, transparent_index))
 }
 
 fn map_rgba_frame_to_palette(
@@ -1154,9 +1353,46 @@ fn map_rgba_rect_to_palette(
     }
 }
 
-fn index_rgba_frames_332(rgba_stream: &[u8]) -> (Vec<u32>, Vec<u8>) {
+fn rgba_stream_has_transparent_pixels(rgba_stream: &[u8], alpha_threshold: u8) -> bool {
+    let mut offset = 3usize;
+    while offset < rgba_stream.len() {
+        if rgba_stream[offset] < alpha_threshold {
+            return true;
+        }
+        offset += 4;
+    }
+    false
+}
+
+fn index_rgba_frames_332(
+    rgba_stream: &[u8],
+    alpha_threshold: u8,
+) -> (Vec<u32>, Vec<u8>, Option<u8>) {
+    let has_transparent_pixels = rgba_stream_has_transparent_pixels(rgba_stream, alpha_threshold);
     let mut indexed = Vec::with_capacity(rgba_stream.len() / 4);
     let mut offset = 0usize;
+    if has_transparent_pixels {
+        let transparent_index = 255u8;
+        while offset < rgba_stream.len() {
+            if rgba_stream[offset + 3] < alpha_threshold {
+                indexed.push(transparent_index);
+            } else {
+                indexed.push(
+                    rgb332_index(
+                        rgba_stream[offset],
+                        rgba_stream[offset + 1],
+                        rgba_stream[offset + 2],
+                    )
+                    .min(transparent_index - 1),
+                );
+            }
+            offset += 4;
+        }
+        let mut palette = fixed_332_palette();
+        palette[usize::from(transparent_index)] = 0;
+        return (palette, indexed, Some(transparent_index));
+    }
+
     while offset < rgba_stream.len() {
         indexed.push(rgb332_index(
             rgba_stream[offset],
@@ -1165,7 +1401,7 @@ fn index_rgba_frames_332(rgba_stream: &[u8]) -> (Vec<u32>, Vec<u8>) {
         ));
         offset += 4;
     }
-    (fixed_332_palette(), indexed)
+    (fixed_332_palette(), indexed, None)
 }
 
 #[inline]
@@ -1222,8 +1458,9 @@ fn encode_indexed_gif_inner(
     height: u16,
     frame_count: usize,
     palette_rgb: &[u32],
-    delay: u16,
+    delays: DelaySource<'_>,
     loop_count: i32,
+    transparent_index: Option<u8>,
 ) -> Result<Vec<u8>, String> {
     if width == 0 || height == 0 {
         return Err("Width/Height invalid".to_string());
@@ -1234,6 +1471,7 @@ fn encode_indexed_gif_inner(
     if loop_count < -1 || loop_count > i32::from(u16::MAX) {
         return Err("Loop count invalid".to_string());
     }
+    delays.validate(frame_count)?;
 
     let color_count = checked_palette_color_count(palette_rgb.len())?;
     let color_table_size_bits = (log2_pow2(color_count) as u8 - 1) & 7;
@@ -1280,20 +1518,16 @@ fn encode_indexed_gif_inner(
         output.push(0);
     }
 
-    for frame in index_stream.chunks_exact(frame_len) {
-        if delay != 0 {
-            output.extend_from_slice(&[0x21, 0xf9, 0x04, 0x00]);
-            push_u16_le(&mut output, delay);
-            output.extend_from_slice(&[0x00, 0x00]);
-        }
-
-        output.push(0x2c);
-        push_u16_le(&mut output, 0);
-        push_u16_le(&mut output, 0);
-        push_u16_le(&mut output, width);
-        push_u16_le(&mut output, height);
-        output.push(0);
-
+    for (frame_index, frame) in index_stream.chunks_exact(frame_len).enumerate() {
+        write_indexed_gif_frame_header(
+            &mut output,
+            0,
+            0,
+            width,
+            height,
+            delays.get(frame_index),
+            transparent_index,
+        );
         encode_indexed_lzw_to_with_tables(
             &mut output,
             frame,
@@ -1313,7 +1547,7 @@ fn encode_indexed_delta_gif_inner(
     height: u16,
     frame_count: usize,
     palette_rgb: &[u32],
-    delay: u16,
+    delays: DelaySource<'_>,
     loop_count: i32,
 ) -> Result<Vec<u8>, String> {
     encode_indexed_gif_inner_with_rects(
@@ -1322,9 +1556,10 @@ fn encode_indexed_delta_gif_inner(
         height,
         frame_count,
         palette_rgb,
-        delay,
+        delays,
         loop_count,
         true,
+        None,
     )
 }
 
@@ -1334,9 +1569,10 @@ fn encode_indexed_gif_inner_with_rects(
     height: u16,
     frame_count: usize,
     palette_rgb: &[u32],
-    delay: u16,
+    delays: DelaySource<'_>,
     loop_count: i32,
     deltas: bool,
+    transparent_index: Option<u8>,
 ) -> Result<Vec<u8>, String> {
     if !deltas {
         return encode_indexed_gif_inner(
@@ -1345,8 +1581,9 @@ fn encode_indexed_gif_inner_with_rects(
             height,
             frame_count,
             palette_rgb,
-            delay,
+            delays,
             loop_count,
+            transparent_index,
         );
     }
 
@@ -1359,6 +1596,7 @@ fn encode_indexed_gif_inner_with_rects(
     if loop_count < -1 || loop_count > i32::from(u16::MAX) {
         return Err("Loop count invalid".to_string());
     }
+    delays.validate(frame_count)?;
 
     let color_count = checked_palette_color_count(palette_rgb.len())?;
     let min_code_size = (log2_pow2(color_count) as u8).max(2);
@@ -1387,7 +1625,8 @@ fn encode_indexed_gif_inner_with_rects(
     write_loop_extension(&mut output, loop_count);
 
     let mut previous_frame: Option<&[u8]> = None;
-    for frame in index_stream.chunks_exact(frame_len) {
+    for (frame_index, frame) in index_stream.chunks_exact(frame_len).enumerate() {
+        let delay = delays.get(frame_index);
         if let Some(previous) = previous_frame {
             if let Some(rect) = find_changed_rect_u8(previous, frame, canvas_width, canvas_height) {
                 write_indexed_gif_frame_header(
@@ -1397,6 +1636,7 @@ fn encode_indexed_gif_inner_with_rects(
                     rect.width as u16,
                     rect.height as u16,
                     delay,
+                    transparent_index,
                 );
                 encode_indexed_lzw_rect_to(
                     &mut output,
@@ -1410,7 +1650,7 @@ fn encode_indexed_gif_inner_with_rects(
                     &mut lzw_tables,
                 )?;
             } else {
-                write_indexed_gif_frame_header(&mut output, 0, 0, 1, 1, delay);
+                write_indexed_gif_frame_header(&mut output, 0, 0, 1, 1, delay, transparent_index);
                 encode_indexed_lzw_to_with_tables(
                     &mut output,
                     &frame[..1],
@@ -1420,7 +1660,15 @@ fn encode_indexed_gif_inner_with_rects(
                 )?;
             }
         } else {
-            write_indexed_gif_frame_header(&mut output, 0, 0, width, height, delay);
+            write_indexed_gif_frame_header(
+                &mut output,
+                0,
+                0,
+                width,
+                height,
+                delay,
+                transparent_index,
+            );
             encode_indexed_lzw_to_with_tables(
                 &mut output,
                 frame,
@@ -1478,11 +1726,22 @@ fn write_indexed_gif_frame_header(
     width: u16,
     height: u16,
     delay: u16,
+    transparent_index: Option<u8>,
 ) {
-    if delay != 0 {
-        output.extend_from_slice(&[0x21, 0xf9, 0x04, 0x00]);
+    if delay != 0 || transparent_index.is_some() {
+        output.extend_from_slice(&[
+            0x21,
+            0xf9,
+            0x04,
+            if transparent_index.is_some() {
+                0x01
+            } else {
+                0x00
+            },
+        ]);
         push_u16_le(output, delay);
-        output.extend_from_slice(&[0x00, 0x00]);
+        output.push(transparent_index.unwrap_or(0));
+        output.push(0x00);
     }
 
     output.push(0x2c);
@@ -2496,8 +2755,17 @@ mod tests {
     #[test]
     fn encodes_indexed_gif_frames() {
         let palette = [0x000000, 0xff0000, 0x00ff00];
-        let encoded =
-            encode_indexed_gif_inner(&[1, 1, 1, 1, 2, 0, 0, 2], 2, 2, 2, &palette, 5, 0).unwrap();
+        let encoded = encode_indexed_gif_inner(
+            &[1, 1, 1, 1, 2, 0, 0, 2],
+            2,
+            2,
+            2,
+            &palette,
+            DelaySource::Constant(5),
+            0,
+            None,
+        )
+        .unwrap();
         let metadata = parse_metadata(&encoded).unwrap();
 
         assert_eq!(metadata.width, 2);
@@ -2529,7 +2797,7 @@ mod tests {
             2,
             3,
             &palette,
-            4,
+            DelaySource::Constant(4),
             0,
         )
         .unwrap();
@@ -2563,9 +2831,10 @@ mod tests {
             2,
             2,
             &[],
-            6,
+            DelaySource::Constant(6),
             0,
             false,
+            TRANSPARENT_ALPHA_THRESHOLD,
         )
         .unwrap();
         let metadata = parse_metadata(&encoded).unwrap();
@@ -2595,9 +2864,10 @@ mod tests {
             2,
             2,
             &palette,
-            4,
+            DelaySource::Constant(4),
             0,
             true,
+            TRANSPARENT_ALPHA_THRESHOLD,
         )
         .unwrap();
         let metadata = parse_metadata(&encoded).unwrap();
@@ -2623,7 +2893,18 @@ mod tests {
             rgba.push(255);
         }
 
-        let encoded = encode_rgba_gif_inner(&rgba, 257, 1, 1, &[], 0, -1, false).unwrap();
+        let encoded = encode_rgba_gif_inner(
+            &rgba,
+            257,
+            1,
+            1,
+            &[],
+            DelaySource::Constant(0),
+            -1,
+            false,
+            TRANSPARENT_ALPHA_THRESHOLD,
+        )
+        .unwrap();
         let metadata = parse_metadata(&encoded).unwrap();
 
         assert_eq!(metadata.global_palette_size, 256);

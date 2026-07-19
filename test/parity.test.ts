@@ -1,26 +1,19 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { beforeAll, describe, expect, test } from 'vitest';
+import { describe, expect, test } from 'vitest';
 import { GifReader as OmgGifReader } from 'omggif';
-import { GifReader as WtfGifReader, initializeWasmGlobally } from '../src/index';
+import { GifReader as WtfGifReader } from '../src/index';
 
 const gifsDir = join(__dirname, 'gifs');
 const gifFiles = readdirSync(gifsDir).filter(f => f.endsWith('.gif'));
 
-beforeAll(async () => {
-  try {
-    await initializeWasmGlobally();
-  } catch (err) {
-    console.warn('Wasm initialization failed, continuing with JS fallback:', err);
-  }
-});
-
 describe('Optimized path parity', () => {
   for (const file of gifFiles) {
-    test(`${file} optimized vs baseline`, async () => {
+    test(`${file} prepared frames vs baseline`, () => {
       const gif = readFileSync(join(gifsDir, file));
       const omg = new OmgGifReader(gif);
       const wtf = new WtfGifReader(gif);
+      const prepared = wtf.prepareFrames();
 
       const pixelCount = wtf.width * wtf.height * 4;
       const frameCount = Math.min(wtf.numFrames(), 2);
@@ -32,18 +25,14 @@ describe('Optimized path parity', () => {
         const baseline = new Uint8Array(pixelCount);
         wtf.decodeAndBlitFrameRGBA(frameIdx, baseline);
 
-        const wasm32 = await wtf.framePixelsWasm(frameIdx);
-        const wasmBytes = new Uint8Array(wasm32.buffer, wasm32.byteOffset, wasm32.byteLength);
+        const preparedPixels = new Uint8Array(pixelCount);
+        prepared.copyFrame(frameIdx, preparedPixels);
 
-        const mismatch = wasmBytes.findIndex((v, i) => v !== baseline[i]);
-        if (mismatch !== -1) {
-          console.error(`Divergence in ${file} frame ${frameIdx} at byte ${mismatch}`);
-        }
-
-        expect(wasmBytes).toStrictEqual(baseline);
-        expect(wasmBytes).toStrictEqual(omgPixels);
+        expect(preparedPixels).toStrictEqual(baseline);
+        expect(preparedPixels).toStrictEqual(omgPixels);
       }
 
+      prepared.dispose();
       wtf.returnToPool();
     }, 30000);
   }

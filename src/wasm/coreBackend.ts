@@ -33,7 +33,7 @@ type NativeCompositedFrame = {
 	index: number;
 	pixels: Uint32Array;
 	changedRect: ChangedRect | null;
-	changedPixels?: Uint32Array;
+	changedPixels?: Uint32Array | undefined;
 };
 
 type NormalizedBackendOptions = Required<
@@ -370,13 +370,19 @@ function createPreparedFramesResult(
 	transparentByIndex: Map<number, number | null>,
 	core: WasmCoreInstance,
 ): PreparedGifFrames {
-	const byIndex = new Map<number, PreparedGifFrame>();
+	let maxIndex = -1;
 	for (const frame of frames) {
-		byIndex.set(frame.index, frame);
+		if (frame.index > maxIndex) {
+			maxIndex = frame.index;
+		}
+	}
+	const byIndex = new Array<PreparedGifFrame | undefined>(maxIndex + 1);
+	for (const frame of frames) {
+		byIndex[frame.index] = frame;
 	}
 
 	const copyFrame = (index: number, target: Uint8Array | Uint32Array): void => {
-		const frame = byIndex.get(index);
+		const frame = byIndex[index];
 		if (!frame) {
 			throw new Error("Frame index out of range.");
 		}
@@ -388,6 +394,7 @@ function createPreparedFramesResult(
 			target,
 		);
 	};
+	let disposed = false;
 
 	return {
 		width,
@@ -397,10 +404,10 @@ function createPreparedFramesResult(
 		frames,
 		byteLength,
 		maxBytes,
-		getFrame: (index) => byIndex.get(index),
-		getFramePixels: (index) => byIndex.get(index)?.pixels,
+		getFrame: (index) => byIndex[index],
+		getFramePixels: (index) => byIndex[index]?.pixels,
 		getFrameBytes: (index) => {
-			const pixels = byIndex.get(index)?.pixels;
+			const pixels = byIndex[index]?.pixels;
 			return pixels
 				? new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.byteLength)
 				: undefined;
@@ -408,14 +415,22 @@ function createPreparedFramesResult(
 		copyFrame,
 		createPlayer: (target?: Uint8Array | Uint32Array) =>
 			createPreparedPlayer(width, height, byIndex, transparentByIndex, target),
-		dispose: () => core.free(),
+		dispose: () => {
+			if (disposed) {
+				return;
+			}
+			disposed = true;
+			byIndex.length = 0;
+			frames.length = 0;
+			core.free();
+		},
 	};
 }
 
 function createPreparedPlayer(
 	width: number,
 	height: number,
-	byIndex: Map<number, PreparedGifFrame>,
+	byIndex: readonly (PreparedGifFrame | undefined)[],
 	transparentByIndex: Map<number, number | null>,
 	target?: Uint8Array | Uint32Array,
 ): PreparedGifPlayer {
@@ -424,12 +439,12 @@ function createPreparedPlayer(
 		: new Uint32Array(width * height);
 	let currentIndex = -1;
 	const drawFrame = (index: number): Uint32Array => {
-		const frame = byIndex.get(index);
+		const frame = byIndex[index];
 		if (!frame) {
 			throw new Error("Frame index out of range.");
 		}
 
-		const previousFrame = byIndex.get(currentIndex);
+		const previousFrame = byIndex[currentIndex];
 		if (currentIndex === index - 1 && previousFrame?.pixels === frame.pixels) {
 			currentIndex = index;
 			return target32;
@@ -456,9 +471,8 @@ function createPreparedPlayer(
 				frame.changedHeight,
 			);
 		} else {
-			copyPreparedFrame(
+			copyPreparedFrame32(
 				width,
-				height,
 				frame,
 				transparentByIndex.get(index),
 				target32,
@@ -476,7 +490,7 @@ function createPreparedPlayer(
 		drawFrame,
 		next: () => {
 			const nextIndex = currentIndex + 1;
-			return byIndex.has(nextIndex) ? drawFrame(nextIndex) : target32;
+			return byIndex[nextIndex] ? drawFrame(nextIndex) : target32;
 		},
 		reset: () => {
 			currentIndex = -1;
@@ -493,6 +507,15 @@ function copyPreparedFrame(
 	target: Uint8Array | Uint32Array,
 ): void {
 	const target32 = getTarget32(target, width, height);
+	copyPreparedFrame32(width, frame, transparentIndex, target32);
+}
+
+function copyPreparedFrame32(
+	width: number,
+	frame: PreparedGifFrame,
+	transparentIndex: number | null | undefined,
+	target32: Uint32Array,
+): void {
 	if (frame.pixels) {
 		target32.set(frame.pixels);
 		return;
