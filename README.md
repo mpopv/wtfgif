@@ -3,6 +3,8 @@
 A faster, TypeScript-ready replacement for
 [`omggif`](https://github.com/deanm/omggif).
 
+[Race wtfgif against omggif in your browser →](https://mpopv.github.io/wtfgif/)
+
 ```bash
 npm install wtfgif
 ```
