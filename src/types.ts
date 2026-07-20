@@ -6,6 +6,8 @@ export interface WasmCoreInstance {
 	decode_frame_indices: (frameIndex: number) => Uint8Array;
 	decode_frame_rgba: (frameIndex: number) => Uint8Array;
 	decode_frame_bgra: (frameIndex: number) => Uint8Array;
+	decode_all_rgba?: () => Uint32Array;
+	reencode_gif_pixel_perfect?: () => Uint8Array;
 	prepare_composited_rgba: (requestedFrames: Uint8Array) => Uint32Array;
 	prepare_composited_bgra: (requestedFrames: Uint8Array) => Uint32Array;
 	prepare_composited_delta_rgba: (requestedFrames: Uint8Array) => Uint32Array;
@@ -20,6 +22,15 @@ export interface WasmCoreModule {
 	decode_frame_indices?: (data: Uint8Array, frameIndex: number) => Uint8Array;
 	decode_frame_rgba?: (data: Uint8Array, frameIndex: number) => Uint8Array;
 	decode_frame_bgra?: (data: Uint8Array, frameIndex: number) => Uint8Array;
+	decode_all_rgba?: (data: Uint8Array) => Uint32Array;
+	reencode_gif_pixel_perfect?: (data: Uint8Array) => Uint8Array;
+	remux_gif_pixel_perfect?: (data: Uint8Array) => Uint8Array;
+	prepare_reencode_hot_path?: () => void;
+	reencode_hot_path_primer?: (
+		side: number,
+		frameCount: number,
+	) => Uint8Array;
+	remux_hot_path_primer?: () => Uint8Array;
 	prepare_composited_rgba?: (
 		data: Uint8Array,
 		requestedFrames: Uint8Array,

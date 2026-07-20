@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import type { WasmCoreModule } from "../src/types";
 import {
 	cleanupWasm,
 	getWasmFeatures,
 	getWasmStatus,
 	initializeGlobalWasm,
+	initializeWasmModule,
 	isWasmReady,
 	setWasmCoreModule,
 } from "../src/wasm/runtime";
@@ -41,6 +42,17 @@ describe("WebAssembly runtime integration", () => {
 			initialized: true,
 			workerPoolAvailable: false,
 		});
+	});
+
+	test("initializes statically imported bindings for edge runtimes", async () => {
+		const init = vi.fn(async () => undefined);
+		const module = { ...fakeCoreModule, default: init };
+		const compiledModule = {} as WebAssembly.Module;
+
+		await initializeWasmModule(module, compiledModule);
+
+		expect(init).toHaveBeenCalledWith({ module_or_path: compiledModule });
+		expect(isWasmReady()).toBe(true);
 	});
 
 	test("cleanup disables the configured core", () => {

@@ -11,6 +11,9 @@ const fixtureFilter = process.env.BENCH_FILTER ?? "";
 const decodeOnly = process.env.BENCH_DECODE_ONLY === "1";
 const reencodeOnly = process.env.BENCH_REENCODE_ONLY === "1";
 const encodeOnly = process.env.BENCH_ENCODE_ONLY === "1";
+const pageLoadPrepared =
+	process.env.WTFGIF_PREPARE_WASM_AT_PAGE_LOAD === "1";
+const losslessRemux = process.env.WTFGIF_REENCODE_MODE === "remux";
 
 if (!Number.isInteger(iterations) || iterations < 1) {
 	throw new Error("BENCH_ITERATIONS must be a positive integer");
@@ -142,9 +145,13 @@ function printRows(title, rows, includeBytes = false) {
 
 console.log(
 	[
-		"True cold one-off benchmark",
+		pageLoadPrepared
+			? "Page-load-prepared one-off benchmark"
+			: "True cold one-off benchmark",
 		`${iterations} fresh Node processes per implementation and fixture`,
-		"zero warmups",
+		pageLoadPrepared
+			? "Wasm engine prepared with unrelated generated GIFs before the clock"
+			: "zero warmups",
 		"exactly one timed operation per process",
 		"imports and input reads occur before the clock",
 	].join(" | "),
@@ -177,7 +184,9 @@ if (!decodeOnly && !encodeOnly) {
 		...measurePair("reencode", fixture),
 	}));
 	printRows(
-		"GIF -> freshly LZW-reencoded GIF (decoded pixels are identical)",
+		losslessRemux
+			? "GIF -> losslessly remuxed GIF (original LZW payloads; decoded pixels are identical)"
+			: "GIF -> freshly LZW-reencoded GIF (decoded pixels are identical)",
 		rows,
 		true,
 	);

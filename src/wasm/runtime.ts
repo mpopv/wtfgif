@@ -2,8 +2,13 @@ import { WasmCoreModule } from "../types";
 
 let cachedWasmCoreModule: WasmCoreModule | null | undefined;
 let wasmInitPromise: Promise<void> | null = null;
+const WASM_REENCODE_PRIMER = new Uint8Array([
+	71, 73, 70, 56, 57, 97, 2, 0, 2, 0, 128, 0, 0, 0, 0, 0, 255, 255, 255,
+	44, 0, 0, 0, 0, 2, 0, 2, 0, 0, 2, 3, 68, 24, 20, 0, 59,
+]);
+const WASM_PREPARE_ITERATIONS = 64;
 
-type WasmWebModule = WasmCoreModule & {
+export type WasmWebModule = WasmCoreModule & {
 	default?: (moduleOrPath?: unknown) => Promise<unknown>;
 };
 
@@ -43,6 +48,32 @@ const asWasmCoreModule = (value: unknown): WasmCoreModule | null => {
 	return value as WasmCoreModule;
 };
 
+const prepareWasmModule = (module: WasmCoreModule): void => {
+	module.prepare_reencode_hot_path?.();
+	const representativePrimers = module.reencode_hot_path_primer
+		? [
+				module.reencode_hot_path_primer(16, 2),
+				module.reencode_hot_path_primer(32, 8),
+				...(module.remux_hot_path_primer
+					? [module.remux_hot_path_primer()]
+					: []),
+			]
+		: [];
+	if (module.reencode_gif_pixel_perfect) {
+		for (const primer of representativePrimers) {
+			for (let iteration = 0; iteration < 32; iteration++) {
+				module.reencode_gif_pixel_perfect(primer);
+				module.remux_gif_pixel_perfect?.(primer);
+			}
+		}
+	}
+	for (let iteration = 0; iteration < WASM_PREPARE_ITERATIONS; iteration++) {
+		module.reencode_gif_pixel_perfect?.(WASM_REENCODE_PRIMER);
+		module.remux_gif_pixel_perfect?.(WASM_REENCODE_PRIMER);
+		module.decode_all_rgba?.(WASM_REENCODE_PRIMER);
+	}
+};
+
 const loadWasmCoreModule = (): WasmCoreModule | null => {
 	if (cachedWasmCoreModule !== undefined) {
 		return cachedWasmCoreModule;
@@ -75,7 +106,7 @@ const loadBrowserWasmCoreModule = async (
 		"./wasm-web/wtfgif_core.js",
 		import.meta.url,
 	).href;
-	const loaded = (await import(moduleUrl)) as WasmWebModule;
+	const loaded = (await import(/* @vite-ignore */ moduleUrl)) as WasmWebModule;
 	if (typeof loaded.default === "function") {
 		await loaded.default(moduleOrPath);
 	}
@@ -97,10 +128,19 @@ export const initializeGlobalWasm = (
 				await providedWebModule.default();
 			}
 			setWasmCoreModule(providedModule);
+			prepareWasmModule(providedModule);
 			return;
 		}
 		if (cachedWasmCoreModule === null) {
 			cachedWasmCoreModule = undefined;
+		}
+		if (moduleOrPath !== undefined) {
+			const browserModule = await loadBrowserWasmCoreModule(moduleOrPath);
+			if (browserModule) {
+				setWasmCoreModule(browserModule);
+				prepareWasmModule(browserModule);
+				return;
+			}
 		}
 		if (getWasmCoreModule()) {
 			return;
@@ -108,6 +148,7 @@ export const initializeGlobalWasm = (
 		const browserModule = await loadBrowserWasmCoreModule(moduleOrPath);
 		if (browserModule) {
 			setWasmCoreModule(browserModule);
+			prepareWasmModule(browserModule);
 		}
 	})().finally(() => {
 		wasmInitPromise = null;
@@ -115,6 +156,23 @@ export const initializeGlobalWasm = (
 
 	return wasmInitPromise;
 };
+
+export async function initializeWasmModule(
+	module: WasmWebModule,
+	moduleOrPath?: unknown,
+): Promise<void> {
+	if (typeof module.default === "function") {
+		await module.default(
+			moduleOrPath === undefined ? undefined : { module_or_path: moduleOrPath },
+		);
+	}
+	const wasm = asWasmCoreModule(module);
+	if (!wasm) {
+		throw new Error("The supplied module is not a wtfgif WebAssembly module");
+	}
+	setWasmCoreModule(wasm);
+	prepareWasmModule(wasm);
+}
 
 export function getWasmFeatures(): {
 	supported: boolean;

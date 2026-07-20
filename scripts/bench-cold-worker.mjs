@@ -7,6 +7,8 @@ import {
 	decodeGifFramesRgba,
 	encodeIndexedGifFrames,
 	encodeRgbaGifFrames,
+	initializeWasmGlobally,
+	remuxGifPixelPerfect,
 	reencodeGifPixelPerfect,
 	setNativeAddonModule,
 	setWasmCoreModule,
@@ -18,17 +20,31 @@ if (process.env.WTFGIF_BENCH_FRESH_PROCESS !== "1") {
 
 const require = createRequire(import.meta.url);
 const { GifReader, GifWriter } = require("omggif");
-setNativeAddonModule(
-	require(
-		process.env.WTFGIF_NATIVE_ADDON ??
-			fileURLToPath(
-				new URL("../native/build/wtfgif_native.node", import.meta.url),
-			),
-	),
-);
-setWasmCoreModule(require("../crates/wtfgif-core/pkg/wtfgif_core.js"));
+if (process.env.WTFGIF_BENCH_BACKEND !== "wasm") {
+	setNativeAddonModule(
+		require(
+			process.env.WTFGIF_NATIVE_ADDON ??
+				fileURLToPath(
+					new URL("../native/build/wtfgif_native.node", import.meta.url),
+				),
+		),
+	);
+}
+const wasmCore = require("../crates/wtfgif-core/pkg/wtfgif_core.js");
+if (process.env.WTFGIF_PREPARE_WASM_AT_PAGE_LOAD === "1") {
+	await initializeWasmGlobally(wasmCore);
+} else {
+	setWasmCoreModule(wasmCore);
+}
 
 const [operation, implementation, fixtureArgument] = process.argv.slice(2);
+
+function readGifFixture(path) {
+	const bytes = readFileSync(path);
+	return process.env.WTFGIF_BENCH_BACKEND === "wasm"
+		? new Uint8Array(bytes)
+		: bytes;
+}
 
 function clearFrameRect(canvas, canvasWidth, info) {
 	for (let y = info.y; y < info.y + info.height; y++) {
@@ -282,7 +298,7 @@ let started;
 let elapsedMs;
 
 if (operation === "decode") {
-	const data = readFileSync(fixtureArgument);
+	const data = readGifFixture(fixtureArgument);
 	started = performance.now();
 	operationResult =
 		implementation === "omggif" ? decodeAllOmggif(data) : decodeNative(data);
@@ -295,12 +311,14 @@ if (operation === "decode") {
 		}),
 	);
 } else if (operation === "reencode") {
-	const data = readFileSync(fixtureArgument);
+	const data = readGifFixture(fixtureArgument);
 	started = performance.now();
 	operationResult =
 		implementation === "omggif"
 			? reencodeOmggif(data)
-			: reencodeGifPixelPerfect(data);
+			: process.env.WTFGIF_REENCODE_MODE === "remux"
+				? remuxGifPixelPerfect(data)
+				: reencodeGifPixelPerfect(data);
 	elapsedMs = performance.now() - started;
 	const sourceSignature = signature(decodeAllOmggif(data));
 	process.stdout.write(

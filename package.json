@@ -1,6 +1,6 @@
 {
   "name": "wtfgif",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "main": "dist/index.cjs",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -52,7 +52,8 @@
     "./wasm-web/wasm": "./dist/wasm-web/wtfgif_core_bg.wasm"
   },
   "scripts": {
-    "build": "tsup && tsc -p tsconfig.build.json --emitDeclarationOnly && node scripts/copy-wasm-core.mjs",
+		"build": "tsup && tsc -p tsconfig.build.json --emitDeclarationOnly && node scripts/copy-wasm-core.mjs",
+		"build:site": "npm run build && node scripts/build-site.mjs",
     "build:wasm": "npm run build:wasm:node && npm run build:wasm:web",
     "build:wasm:node": "wasm-pack build crates/wtfgif-core --target nodejs --out-dir pkg --release",
     "build:wasm:web": "wasm-pack build crates/wtfgif-core --target web --out-dir pkg-web --release",
@@ -60,6 +61,8 @@
     "test": "vitest run --coverage",
     "test:wasm-core": "cargo test --manifest-path crates/wtfgif-core/Cargo.toml && npm run validate:wasm-core && vitest run test/wasm-core-backend.test.ts",
     "test:package": "node scripts/validate-package.mjs",
+    "validate:edge": "node scripts/validate-edge-runtime.mjs",
+    "test:edge": "npm run build:wasm && npm run build && npm run validate:edge",
     "audit": "npm audit --audit-level=moderate",
     "lint": "biome lint .",
     "validate:wasm-core": "npm run build:wasm && node scripts/validate-wasm-core.mjs",
@@ -67,7 +70,7 @@
     "bench:in-process": "npm run build && npm run build:native:prototype && node scripts/bench.mjs",
     "build:native:prototype": "node scripts/build-native-prototype.mjs",
     "bench:native:prototype": "npm run build && npm run build:native:prototype && node scripts/bench-native-prototype.mjs",
-    "check": "npm run lint && npm run typecheck && npm run audit && npm run build:wasm && npm test && npm run build && npm run test:package && npm pack --dry-run",
+    "check": "npm run lint && npm run typecheck && npm run audit && npm run build:wasm && npm test && npm run build && npm run validate:edge && npm run test:package && npm pack --dry-run",
     "prepublishOnly": "npm run check",
     "prepack": "npm run build:wasm",
     "prepare": "npm run build"
@@ -106,9 +109,11 @@
   "description": "A fast, TypeScript-ready drop-in replacement for omggif with portable JavaScript and WebAssembly backends.",
   "devDependencies": {
     "@biomejs/biome": "^2.2.0",
+    "@edge-runtime/vm": "^5.0.0",
     "@types/node": "^24.2.1",
     "@types/omggif": "^1.0.5",
     "@vitest/coverage-v8": "^3.2.7",
+    "esbuild": "0.27.2",
     "omggif": "^1.0.10",
     "tsup": "^8.5.0",
     "typescript": "^5.9.2",

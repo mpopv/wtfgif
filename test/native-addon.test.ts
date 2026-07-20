@@ -3,6 +3,7 @@ import {
 	decodeGifFramesRgba,
 	encodeIndexedGifFrames,
 	encodeRgbaGifFrames,
+	getFastBackendStatus,
 	getNativeAddonStatus,
 	NativeAddonModule,
 	reencodeGifPixelPerfect,
@@ -31,16 +32,21 @@ afterEach(() => {
 });
 
 describe("one-off native addon API", () => {
-	test("reports availability and exposes decoded native frames", () => {
+	test("reports native availability and prefers installed native decoding", () => {
 		expect(getNativeAddonStatus()).toStrictEqual({
 			name: "wtfgif-rust-native",
 			available: false,
 		});
-		expect(() => decodeGifFramesRgba(new Uint8Array())).toThrow(
-			"Native addon unavailable",
-		);
+		expect(getFastBackendStatus()).toMatchObject({
+			name: "wtfgif-rust-wasm",
+			available: true,
+		});
 
 		setNativeAddonModule(makeNativeAddon());
+		expect(getFastBackendStatus()).toStrictEqual({
+			name: "wtfgif-rust-native",
+			available: true,
+		});
 		expect(getNativeAddonStatus().available).toBe(true);
 		expect(decodeGifFramesRgba(new Uint8Array([1])).pixels).toStrictEqual(
 			new Uint8Array([1, 2, 3, 255]),

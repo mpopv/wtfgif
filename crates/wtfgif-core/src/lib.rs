@@ -574,6 +574,122 @@ pub fn decode_frame_bgra(data: &[u8], frame_index: usize) -> Result<Vec<u8>, JsV
 }
 
 #[wasm_bindgen]
+pub fn decode_all_rgba(data: &[u8]) -> Result<Vec<u32>, JsValue> {
+    let metadata = parse_metadata(data).map_err(|message| JsValue::from_str(&message))?;
+    prepare_all_composited_frames_inner(data, &metadata, PixelFormat::Rgba)
+        .map_err(|message| JsValue::from_str(&message))
+}
+
+#[wasm_bindgen]
+pub fn reencode_gif_pixel_perfect(data: &[u8]) -> Result<Vec<u8>, JsValue> {
+    let metadata = parse_metadata(data).map_err(|message| JsValue::from_str(&message))?;
+    let loop_count = metadata.loop_count.map(i32::from).unwrap_or(-1);
+    let total_frame_pixels = metadata.frames.iter().try_fold(0usize, |total, frame| {
+        usize::from(frame.width)
+            .checked_mul(usize::from(frame.height))
+            .and_then(|pixels| total.checked_add(pixels))
+            .ok_or_else(|| "Decoded frame size overflow".to_string())
+    });
+    let total_frame_pixels = total_frame_pixels.map_err(|message| JsValue::from_str(&message))?;
+    reencode_gif_literal_sequential(data, &metadata, loop_count, total_frame_pixels)
+        .map_err(|message| JsValue::from_str(&message))
+}
+
+#[wasm_bindgen]
+pub fn remux_gif_pixel_perfect(data: &[u8]) -> Result<Vec<u8>, JsValue> {
+    if data.len() <= 4_096 {
+        validate_gif_structure_no_alloc(data)
+            .map_err(|message| JsValue::from_str(&message))?;
+        return Ok(data.to_vec());
+    }
+    let metadata = parse_metadata(data).map_err(|message| JsValue::from_str(&message))?;
+    let loop_count = metadata.loop_count.map(i32::from).unwrap_or(-1);
+    remux_gif_pixel_perfect_inner(data, &metadata, loop_count)
+        .map_err(|message| JsValue::from_str(&message))
+}
+
+#[wasm_bindgen]
+pub fn prepare_reencode_hot_path() -> Result<(), JsValue> {
+    const PREPARE_ITERATIONS: usize = 32;
+    let palette = vec![0u32; 256];
+
+    for side in [32u16, 128u16] {
+        let frame_pixels = usize::from(side) * usize::from(side);
+        let indices = vec![0u8; frame_pixels];
+        let primer = encode_indexed_literal_gif_inner(
+            &indices,
+            side,
+            side,
+            1,
+            &palette,
+            DelaySource::Constant(0),
+            -1,
+            None,
+        )
+        .map_err(|message| JsValue::from_str(&message))?;
+        let metadata =
+            parse_metadata(&primer).map_err(|message| JsValue::from_str(&message))?;
+
+        for _ in 0..PREPARE_ITERATIONS {
+            let output =
+                reencode_gif_literal_sequential(&primer, &metadata, -1, frame_pixels)
+                    .map_err(|message| JsValue::from_str(&message))?;
+            std::hint::black_box(output.len());
+        }
+    }
+    Ok(())
+}
+
+#[wasm_bindgen]
+pub fn reencode_hot_path_primer(side: u16, frame_count: usize) -> Result<Vec<u8>, JsValue> {
+    if side == 0 || frame_count == 0 {
+        return Err(JsValue::from_str("Primer dimensions must be non-zero"));
+    }
+    let frame_pixels = usize::from(side)
+        .checked_mul(usize::from(side))
+        .ok_or_else(|| JsValue::from_str("Primer frame size overflow"))?;
+    let total_pixels = frame_pixels
+        .checked_mul(frame_count)
+        .ok_or_else(|| JsValue::from_str("Primer frame stream overflow"))?;
+    let indices = vec![0u8; total_pixels];
+    let palette = vec![0u32; 256];
+    encode_indexed_literal_gif_inner(
+        &indices,
+        side,
+        side,
+        frame_count,
+        &palette,
+        DelaySource::Constant(1),
+        -1,
+        None,
+    )
+    .map_err(|message| JsValue::from_str(&message))
+}
+
+#[wasm_bindgen]
+pub fn remux_hot_path_primer() -> Result<Vec<u8>, JsValue> {
+    let palette = vec![0u32; 256];
+    let mut output = Vec::with_capacity(1_500);
+    let mut compressed = Vec::new();
+    write_indexed_gif_header(&mut output, 16, 16, &palette, 256);
+
+    for (x, y, width, height) in [(0u16, 0u16, 16u16, 16u16), (1, 1, 15, 15)] {
+        output.extend_from_slice(&[0x21, 0xf9, 0x04, 0x09, 0x01, 0x00, 0x00, 0x00]);
+        output.push(0x2c);
+        push_u16_le(&mut output, x);
+        push_u16_le(&mut output, y);
+        push_u16_le(&mut output, width);
+        push_u16_le(&mut output, height);
+        output.push(0);
+        let indices = vec![0u8; usize::from(width) * usize::from(height)];
+        encode_indexed_literal_lzw_to(&mut output, &indices, 8, 256, &mut compressed)
+            .map_err(|message| JsValue::from_str(&message))?;
+    }
+    output.push(0x3b);
+    Ok(output)
+}
+
+#[wasm_bindgen]
 pub fn prepare_composited_rgba(data: &[u8], requested_frames: &[u8]) -> Result<Vec<u32>, JsValue> {
     let metadata = parse_metadata(data).map_err(|message| JsValue::from_str(&message))?;
     prepare_composited_frames_inner(data, &metadata, requested_frames, PixelFormat::Rgba)
@@ -998,6 +1114,29 @@ impl WtfGifCore {
             .map_err(|message| JsValue::from_str(&message))
     }
 
+    pub fn decode_all_rgba(&self) -> Result<Vec<u32>, JsValue> {
+        prepare_all_composited_frames_inner(&self.data, &self.metadata, PixelFormat::Rgba)
+            .map_err(|message| JsValue::from_str(&message))
+    }
+
+    pub fn reencode_gif_pixel_perfect(&self) -> Result<Vec<u8>, JsValue> {
+        let loop_count = self.metadata.loop_count.map(i32::from).unwrap_or(-1);
+        let total_frame_pixels = self
+            .metadata
+            .frames
+            .iter()
+            .try_fold(0usize, |total, frame| {
+                usize::from(frame.width)
+                    .checked_mul(usize::from(frame.height))
+                    .and_then(|pixels| total.checked_add(pixels))
+                    .ok_or_else(|| "Decoded frame size overflow".to_string())
+            });
+        let total_frame_pixels =
+            total_frame_pixels.map_err(|message| JsValue::from_str(&message))?;
+        reencode_gif_literal_sequential(&self.data, &self.metadata, loop_count, total_frame_pixels)
+            .map_err(|message| JsValue::from_str(&message))
+    }
+
     pub fn prepare_composited_rgba(&self, requested_frames: &[u8]) -> Result<Vec<u32>, JsValue> {
         prepare_composited_frames_inner(
             &self.data,
@@ -1135,6 +1274,74 @@ fn parse_metadata(data: &[u8]) -> Result<GifMetadata, String> {
         loop_count,
         frames,
     })
+}
+
+fn validate_gif_structure_no_alloc(data: &[u8]) -> Result<(), String> {
+    if data.len() < 13 {
+        return Err("GIF data is too short for a header".to_string());
+    }
+    if !matches!(&data[0..6], b"GIF87a" | b"GIF89a") {
+        return Err("Invalid GIF signature".to_string());
+    }
+
+    let packed = data[10];
+    let has_global_palette = (packed & 0x80) != 0;
+    let global_palette_size = if has_global_palette {
+        2usize << usize::from(packed & 0x07)
+    } else {
+        0
+    };
+    let global_palette_offset = has_global_palette.then_some(13);
+    let mut offset = 13usize;
+    if has_global_palette {
+        offset = checked_add(
+            offset,
+            global_palette_size * 3,
+            data.len(),
+            "global color table",
+        )?;
+    }
+
+    let mut graphic_control = GraphicControl::default();
+    while offset < data.len() {
+        let byte = data[offset];
+        offset += 1;
+        match byte {
+            0x2c => {
+                let (_, next_offset) = parse_image_descriptor(
+                    data,
+                    offset,
+                    global_palette_offset,
+                    global_palette_size,
+                    graphic_control,
+                )?;
+                offset = next_offset;
+                graphic_control = GraphicControl::default();
+            }
+            0x21 => {
+                if offset >= data.len() {
+                    return Err("Truncated extension block".to_string());
+                }
+                let label = data[offset];
+                offset += 1;
+                if label == 0xf9 {
+                    let (gce, next_offset) = parse_graphic_control(data, offset)?;
+                    graphic_control = gce;
+                    offset = next_offset;
+                } else {
+                    offset = skip_sub_blocks(data, offset, "extension data")?;
+                }
+            }
+            0x3b => return Ok(()),
+            _ => {
+                return Err(format!(
+                    "Unexpected GIF block byte 0x{byte:02x} at offset {}",
+                    offset - 1
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn read_loop_count_extension(data: &[u8], offset: usize) -> Option<u16> {
@@ -1305,7 +1512,6 @@ fn decode_frame_indices_with_scratches(
     deinterlace_frame_indices(linear, frame)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn decode_frame_indices_reusing_output(
     data: &[u8],
     frame: &FrameMetadata,
@@ -1426,7 +1632,6 @@ fn prepare_composited_frames_inner(
     prepare_composited_frames_selected(data, metadata, Some(requested_frames), format)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn prepare_all_composited_frames_inner(
     data: &[u8],
     metadata: &GifMetadata,
@@ -1462,7 +1667,6 @@ fn prepare_composited_frames_selected(
     let mut canvas = vec![0u32; canvas_pixels];
     let mut image_data = Vec::new();
     let mut lzw_scratch = LzwStackScratch::default();
-    #[cfg(not(target_arch = "wasm32"))]
     let mut indices_scratch = Vec::new();
     let palettes_share_table = metadata.frames.first().is_some_and(|first| {
         metadata.frames.iter().all(|frame| {
@@ -1493,7 +1697,6 @@ fn prepare_composited_frames_selected(
             palette_storage = build_palette_u32(data, frame, format)?;
             &palette_storage
         };
-        #[cfg(not(target_arch = "wasm32"))]
         let indices = {
             decode_frame_indices_reusing_output(
                 data,
@@ -1504,11 +1707,6 @@ fn prepare_composited_frames_selected(
             )?;
             &indices_scratch
         };
-        #[cfg(target_arch = "wasm32")]
-        let indices_storage =
-            decode_frame_indices_with_scratches(data, frame, &mut image_data, &mut lzw_scratch)?;
-        #[cfg(target_arch = "wasm32")]
-        let indices = &indices_storage;
 
         blit_indices_to_canvas_u32(palette, metadata.width, frame, indices, &mut canvas)?;
 
@@ -5004,8 +5202,7 @@ unsafe fn try_reencode_small_gif_into_host(
     Ok(Some((output_pointer, output_length)))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn reencode_gif_literal_sequential_native(
+fn reencode_gif_literal_sequential(
     data: &[u8],
     metadata: &GifMetadata,
     loop_count: i32,
@@ -5074,12 +5271,7 @@ fn reencode_gif_literal_parallel_native(
     };
     let thread_count = available_threads.min(metadata.frames.len()).min(thread_cap);
     if thread_count <= 1 || metadata.frames.len() < 8 || total_frame_pixels < 30_000 {
-        return reencode_gif_literal_sequential_native(
-            data,
-            metadata,
-            loop_count,
-            total_frame_pixels,
-        );
+        return reencode_gif_literal_sequential(data, metadata, loop_count, total_frame_pixels);
     }
 
     let mut output = write_reencoded_gif_header(data, metadata, loop_count, 0)?;
@@ -5466,7 +5658,6 @@ fn literal_lzw_block_size(pixel_count: usize, min_code_size: u8) -> Result<usize
     Ok(lzw_length)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn write_reencoded_gif_header(
     data: &[u8],
     metadata: &GifMetadata,
@@ -5481,7 +5672,6 @@ fn write_reencoded_gif_header(
     Ok(output)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn write_reencoded_gif_header_to(
     output: &mut Vec<u8>,
     data: &[u8],
@@ -5512,7 +5702,6 @@ fn write_reencoded_gif_header_to(
     Ok(())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn write_reencoded_frame_literal_to(
     output: &mut Vec<u8>,
     data: &[u8],
@@ -5562,7 +5751,51 @@ fn write_reencoded_frame_literal_to(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+fn remux_gif_pixel_perfect_inner(
+    data: &[u8],
+    metadata: &GifMetadata,
+    loop_count: i32,
+) -> Result<Vec<u8>, String> {
+    let mut output = write_reencoded_gif_header(data, metadata, loop_count, data.len())?;
+    for frame in &metadata.frames {
+        if frame.palette_size == 0 {
+            return Err("GIF frame has no color table".to_string());
+        }
+        let color_count = checked_palette_color_count(frame.palette_size)?;
+        let uses_global_palette = metadata.global_palette_offset == Some(frame.palette_offset)
+            && metadata.global_palette_size == frame.palette_size;
+        write_reencoded_frame_header(&mut output, frame, color_count, !uses_global_palette);
+        if frame.interlaced {
+            let packed_offset = output
+                .len()
+                .checked_sub(1)
+                .ok_or_else(|| "Missing image descriptor".to_string())?;
+            output[packed_offset] |= 0x40;
+        }
+        if !uses_global_palette {
+            let palette_length = color_count
+                .checked_mul(3)
+                .ok_or_else(|| "Palette size overflow".to_string())?;
+            let palette_end = checked_add(
+                frame.palette_offset,
+                palette_length,
+                data.len(),
+                "frame color table",
+            )?;
+            output.extend_from_slice(&data[frame.palette_offset..palette_end]);
+        }
+        let data_end = checked_add(
+            frame.data_offset,
+            frame.data_length,
+            data.len(),
+            "frame image data",
+        )?;
+        output.extend_from_slice(&data[frame.data_offset..data_end]);
+    }
+    output.push(0x3b);
+    Ok(output)
+}
+
 fn write_reencoded_frame_header(
     output: &mut Vec<u8>,
     frame: &FrameMetadata,
@@ -5976,7 +6209,6 @@ fn encode_indexed_literal_lzw_to(
     Ok(())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn encode_indexed_literal_lzw_direct_to(
     output: &mut Vec<u8>,
     index_stream: &[u8],
@@ -7533,6 +7765,19 @@ mod tests {
     fn rejects_invalid_signatures() {
         let error = parse_metadata(b"not a gif.....").unwrap_err();
         assert!(error.contains("Invalid GIF signature"));
+    }
+
+    #[test]
+    fn validates_small_gifs_without_allocating_metadata() {
+        validate_gif_structure_no_alloc(ONE_PIXEL_TRANSPARENT_GIF).unwrap();
+        let error = validate_gif_structure_no_alloc(b"not a gif.....").unwrap_err();
+        assert!(error.contains("Invalid GIF signature"));
+    }
+
+    #[test]
+    fn lossless_remux_can_return_a_valid_small_gif_unchanged() {
+        let remuxed = remux_gif_pixel_perfect(ONE_PIXEL_TRANSPARENT_GIF).unwrap();
+        assert_eq!(remuxed, ONE_PIXEL_TRANSPARENT_GIF);
     }
 
     #[test]

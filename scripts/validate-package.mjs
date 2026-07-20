@@ -149,7 +149,7 @@ try {
 					height: 2,
 					frames: new Uint8Array([0, 1, 1, 0]),
 					palette: [0, 0xffffff],
-					backend: "native",
+					backend: "rust",
 				});
 				const reader = new wtfgif.GifReader(gif);
 				const result = {
@@ -266,14 +266,36 @@ try {
 				const wasmBytes = readFileSync(fileURLToPath(wasmUrl));
 				await wtfgif.initializeWasmGlobally(wasmBytes);
 				const status = wtfgif.installWasmCoreBackend();
+				const source = wtfgif.encodeIndexedGifFrames({
+					width: 2,
+					height: 2,
+					frames: new Uint8Array([0, 1, 1, 0]),
+					palette: [0, 0xffffff],
+					backend: "rust",
+					compression: "fast",
+				});
+				const remuxed = wtfgif.remuxGifPixelPerfect(source);
+				const before = wtfgif.decodeGifFramesRgba(source);
+				const after = wtfgif.decodeGifFramesRgba(remuxed);
 				process.stdout.write(JSON.stringify({
 					available: status.available,
 					initialized: wtfgif.getWasmStatus().initialized,
+					pixelPerfect:
+						before.width === after.width &&
+						before.height === after.height &&
+						before.frameCount === after.frameCount &&
+						before.pixels.every(
+							(value, index) => value === after.pixels[index],
+						),
 				}));
 			`,
 		]),
 	);
-	if (!browserWasmResult.available || !browserWasmResult.initialized) {
+	if (
+		!browserWasmResult.available ||
+		!browserWasmResult.initialized ||
+		!browserWasmResult.pixelPerfect
+	) {
 		throw new Error(
 			`Browser Wasm package validation failed: ${JSON.stringify(browserWasmResult)}`,
 		);

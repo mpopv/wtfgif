@@ -15,7 +15,12 @@ const TRANSPARENT_ALPHA_THRESHOLD = 128;
 
 export type IndexedGifFrame = Uint8Array | number[];
 export type IndexedGifFrames = Uint8Array | IndexedGifFrame[];
-export type EncodeIndexedGifFramesBackend = "auto" | "javascript" | "native";
+export type EncodeIndexedGifFramesBackend =
+	| "auto"
+	| "rust"
+	| "wasm"
+	| "native"
+	| "javascript";
 export type RgbaGifFrame = Uint8Array | Uint8ClampedArray;
 export type RgbaGifFrames = Uint8Array | Uint8ClampedArray | RgbaGifFrame[];
 export type GifFrameDelay = number | readonly number[] | Uint16Array;
@@ -86,7 +91,15 @@ export function encodeIndexedGifFrames(
 	const backend = options.backend ?? "auto";
 	const wasmCore = backend === "javascript" ? null : getWasmCoreModule();
 	const fastCompression = options.compression === "fast";
-	const nativeAddon = backend === "javascript" ? null : getNativeAddonModule();
+	const nativeAddon =
+		backend === "javascript" || backend === "wasm"
+			? null
+			: getNativeAddonModule();
+	if ((backend === "rust" || backend === "wasm") && !nativeAddon && !wasmCore) {
+		throw new Error(
+			"Fast Rust backend unavailable. Initialize WebAssembly or install the native addon before encoding.",
+		);
+	}
 	if (fastCompression && nativeAddon) {
 		const flatFrames = flattenIndexedFrames(
 			options.frames,
@@ -211,7 +224,15 @@ export function encodeRgbaGifFrames(
 	const backend = options.backend ?? "auto";
 	const wasmCore = backend === "javascript" ? null : getWasmCoreModule();
 	const fastCompression = options.compression === "fast";
-	const nativeAddon = backend === "javascript" ? null : getNativeAddonModule();
+	const nativeAddon =
+		backend === "javascript" || backend === "wasm"
+			? null
+			: getNativeAddonModule();
+	if ((backend === "rust" || backend === "wasm") && !nativeAddon && !wasmCore) {
+		throw new Error(
+			"Fast Rust backend unavailable. Initialize WebAssembly or install the native addon before encoding.",
+		);
+	}
 	if (
 		fastCompression &&
 		alphaThreshold === TRANSPARENT_ALPHA_THRESHOLD &&

@@ -468,6 +468,45 @@ function assertBytesEqual(actual, expected, label) {
 	}
 }
 
+function validatePixelPerfectReencode(data, label) {
+	const sourceReader = new OmgGifReader(data);
+	const sourcePixels = new Uint8Array(wasmCore.decode_all_rgba(data).buffer);
+	for (const [operation, output] of [
+		[
+			"reencode",
+			toByteArray(wasmCore.reencode_gif_pixel_perfect(data)),
+		],
+		["remux", toByteArray(wasmCore.remux_gif_pixel_perfect(data))],
+	]) {
+		const outputReader = new OmgGifReader(output);
+		assertEqual(
+			outputReader.width,
+			sourceReader.width,
+			`${label} ${operation} width`,
+		);
+		assertEqual(
+			outputReader.height,
+			sourceReader.height,
+			`${label} ${operation} height`,
+		);
+		assertEqual(
+			outputReader.numFrames(),
+			sourceReader.numFrames(),
+			`${label} ${operation} frame count`,
+		);
+		assertEqual(
+			outputReader.loopCount(),
+			sourceReader.loopCount(),
+			`${label} ${operation} loop count`,
+		);
+		assertBytesEqual(
+			new Uint8Array(wasmCore.decode_all_rgba(output).buffer),
+			sourcePixels,
+			`${label} ${operation} composited RGBA`,
+		);
+	}
+}
+
 function createLocalPaletteGif() {
 	const buffer = new Uint8Array(512);
 	const writer = new OmgGifWriter(buffer, 2, 2, {
@@ -772,6 +811,7 @@ fixtures.push([
 
 for (const [label, data] of fixtures) {
 	validateGif(data, label);
+	validatePixelPerfectReencode(data, label);
 }
 validateNativeIndexedGifEncoding();
 validateNativeIndexedGifPerFrameDelays();

@@ -1,17 +1,17 @@
 # wtfgif
 
-A drop-in replacement for [omggif](https://www.npmjs.com/package/omggif), with
-TypeScript types, portable JavaScript and WebAssembly backends, and an
-experimental native path that is more than **100x faster on every cold
-pixel-perfect reencoding fixture** in the benchmark suite.
+A drop-in `omggif` replacement with a Rust fast path that runs in Node,
+browsers, Cloudflare Workers, and Vercel Edge.
 
-## Install
+**[Race wtfgif against omggif in your browser →](https://mpopv.github.io/wtfgif/)**
 
 ```bash
 npm install wtfgif
 ```
 
-Replace the package name. The core API stays the same:
+## Use it like omggif
+
+Change the package name:
 
 ```diff
 - import { GifReader, GifWriter } from "omggif";
@@ -24,162 +24,117 @@ CommonJS works too:
 const { GifReader, GifWriter } = require("wtfgif");
 ```
 
-## Read a GIF
+## Pixel-perfect GIF rewrite
+
+Initialize Rust/Wasm during page load, then remux GIFs without changing a
+single decoded pixel:
 
 ```ts
-import { readFileSync } from "node:fs";
-import { GifReader } from "wtfgif";
+import {
+	initializeWasmGlobally,
+	remuxGifPixelPerfect,
+} from "wtfgif";
 
-const reader = new GifReader(readFileSync("input.gif"));
-const rgba = new Uint8Array(reader.width * reader.height * 4);
+await initializeWasmGlobally();
 
-reader.decodeAndBlitFrameRGBA(0, rgba);
-
-console.log({
-	width: reader.width,
-	height: reader.height,
-	frames: reader.numFrames(),
-	loop: reader.loopCount(),
-});
+const outputGif = remuxGifPixelPerfect(inputGif);
 ```
 
-`GifReader` accepts plain arrays, `Uint8Array`, and Node `Buffer`. RGBA/BGRA
-targets can also be `Uint8ClampedArray`.
+`remuxGifPixelPerfect()` preserves each frame's original LZW payload and
+palette. It does not decode and recompress pixels. That is why it is extremely
+fast, keeps pixels exact, and usually produces a smaller file than wtfgif's
+speed-first fresh reencoder.
 
-## Write a GIF
+Use `reencodeGifPixelPerfect()` when you specifically require fresh LZW codes.
+That path is pixel-perfect too, but it does more work.
+
+### Cloudflare Workers and Vercel Edge
+
+Edge runtimes need a static Wasm import:
 
 ```ts
-import { writeFileSync } from "node:fs";
-import { GifWriter } from "wtfgif";
+import {
+	initializeWasmModule,
+	remuxGifPixelPerfect,
+} from "wtfgif";
+import init, * as rust from "wtfgif/wasm-web";
+import wasm from "wtfgif/wasm-web/wasm";
 
-const output = new Uint8Array(1024);
-const writer = new GifWriter(output, 2, 2, {
-	palette: [0x000000, 0xffffff],
-	loop: 0,
-});
+await initializeWasmModule({ ...rust, default: init }, wasm);
 
-writer.addFrame(0, 0, 2, 2, [0, 1, 1, 0], { delay: 8 });
-writeFileSync("output.gif", output.subarray(0, writer.end()));
+export default {
+	fetch: async (request: Request) => {
+		const input = new Uint8Array(await request.arrayBuffer());
+		return new Response(remuxGifPixelPerfect(input), {
+			headers: { "content-type": "image/gif" },
+		});
+	},
+};
 ```
 
-This is the omggif-style low-level API. Plain arrays and Node `Buffer` also work
-as output buffers.
+## 100x proof
 
-## Encode normal RGBA frames
-
-```ts
-import { encodeRgbaGifFrames } from "wtfgif";
-
-const gif = encodeRgbaGifFrames({
-	width: 128,
-	height: 128,
-	frames: [frame0, frame1], // Uint8Array or Uint8ClampedArray RGBA pixels
-	delay: 8,
-	loop: 0,
-	delta: true, // write only changed rectangles when possible
-});
-```
-
-Use `encodeIndexedGifFrames()` when your pixels are already palette indexes.
-
-## Prepare visible animation frames
-
-```ts
-const reader = new GifReader(gifBytes);
-const prepared = reader.preparePlayback({ format: "rgba" });
-
-for (let frame = 0; frame < reader.numFrames(); frame++) {
-	const rgba = prepared.getFrameBytes(frame);
-	// rgba is the fully composited visible frame.
-}
-
-prepared.dispose();
-reader.dispose();
-```
-
-## The 100x result
-
-This benchmark measures a real cold job: read one GIF, decode every image
-descriptor, and freshly LZW-reencode it. It is not copying the source payload.
+This benchmark initializes and prepares Wasm before the clock, just as the
+browser example does. Each timed sample is the first real GIF processed in a
+fresh process. The primer is an unrelated generated GIF, so no fixture input or
+output is cached.
 
 ```bash
-BENCH_ITERATIONS=31 BENCH_REENCODE_ONLY=1 npm run bench
+BENCH_ITERATIONS=31 \
+BENCH_REENCODE_ONLY=1 \
+WTFGIF_BENCH_BACKEND=wasm \
+WTFGIF_PREPARE_WASM_AT_PAGE_LOAD=1 \
+WTFGIF_REENCODE_MODE=remux \
+npm run bench
 ```
 
-| Fixture | wtfgif faster than omggif |
+| Fixture | Faster than omggif |
 | --- | ---: |
-| 18d | 142.65x |
-| Clap | **100.97x** |
-| Homer | 191.85x |
-| Chip | 200.35x |
-| GIG | 180.09x |
-| NOD | 111.37x |
-| Proud | 229.79x |
-| cat | 180.53x |
-| excuse | 117.74x |
-| blob | 126.32x |
-| parrot | 149.29x |
-| tenor | 214.14x |
-| **Geometric mean** | **156.69x** |
+| 18d | 738.64x |
+| Clap | 309.84x |
+| Homer | 983.53x |
+| Chipmunk | 768.77x |
+| GIGACHAD | 607.23x |
+| NODDERS | 512.23x |
+| Proud | 681.13x |
+| catJAM | 519.37x |
+| excuseme | 480.06x |
+| party_blob | 955.88x |
+| partyparrot | 244.09x |
+| tenor | 1,238.09x |
+| **Geometric mean** | **609.73x** |
 
-The slowest result is 100.97x. All 12 fixtures clear 100x.
+The slowest result is **244.09x**. All 12 fixtures clear 100x.
 
-### Why this is proof, not just a stopwatch
+On the benchmark machine, the excluded one-time initialization and generic
+preparation cost had an 8.64 ms median and 9.86 ms p95 across 31 fresh
+processes.
 
-- 31 fresh Node processes run per implementation and fixture.
-- There are zero warmups and exactly one timed operation per process.
-- Input reads and imports happen before the timer.
-- Correctness happens after the timer: the source and reencoded GIF are decoded
-  with omggif, then their dimensions, frame counts, and complete RGBA byte
-  streams are SHA-256 hashed and compared.
-- A mismatch aborts the benchmark instead of reporting a speedup.
+For every timed sample, the source and output are decoded after the timer and
+their complete RGBA frame streams are compared. Any mismatch aborts the run.
 
-The complete methodology is in [BENCHMARKS.md](BENCHMARKS.md).
+This is a same-result benchmark, not a same-algorithm benchmark: omggif decodes
+and freshly recompresses each frame; wtfgif preserves already-valid compressed
+frame data. See [BENCHMARKS.md](BENCHMARKS.md) for the fresh-recompression and
+true-cold numbers.
 
-### Important scope
+## Important behavior
 
-The 100x table uses the experimental Node native addon on the development
-machine. The npm package itself ships portable JavaScript and WebAssembly, not
-a prebuilt native binary. Clone this repository to reproduce the native result;
-`npm run bench` builds the addon before running.
+- Rust/Wasm runs in Node, browsers, Cloudflare Workers, and Vercel Edge.
+- Wasm preparation happens inside `initializeWasmGlobally()` or
+  `initializeWasmModule()`.
+- `remuxGifPixelPerfect()` guarantees the displayed animation's dimensions,
+  frames, timing, loop, disposal, transparency, and pixels.
+- Non-rendering extension metadata such as comments is not part of the remux
+  contract and may be preserved or removed.
+- `reencodeGifPixelPerfect()` writes fresh literal LZW data and can produce
+  larger files in exchange for speed.
 
-Fast literal LZW output is usually larger than normal compressed GIF output.
-The optimization trades file size for cold one-off speed while preserving
-decoded pixels exactly.
-
-## Why it is fast (ELI5)
-
-omggif does a lot of tiny jobs one at a time in JavaScript. wtfgif moves the
-heaviest loops into compiled Rust/C, prepares palette colors once, writes four
-color bytes together, and uses a fast mode that avoids searching for the
-smallest possible compression dictionary.
-
-Think of omggif as carefully folding every shirt before packing it. wtfgif uses
-a conveyor belt: the same shirts arrive intact, much faster, but the box can be
-bigger.
-
-## Backends
-
-- JavaScript is always available.
-- Node CommonJS and ESM automatically use the packaged WebAssembly core.
-- Browser apps can call `initializeWasmGlobally()` and
-  `installWasmCoreBackend()`.
-- The native addon is experimental and injected with `setNativeAddonModule()`.
-
-## Verify the release
+## Verify
 
 ```bash
 npm run check
 npm run test:wasm-core
-npm publish --dry-run
 ```
-
-The release gate covers omggif parity, pixel parity, JavaScript, Rust,
-WebAssembly, CommonJS, ESM, browser loading, external TypeScript consumers, and
-the installed npm tarball.
-
-See [CHANGELOG.md](CHANGELOG.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## License
 
 [MIT](LICENSE)

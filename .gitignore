@@ -25,6 +25,7 @@ lib-cov
 # Coverage directory used by tools like istanbul
 coverage
 *.lcov
+output/
 
 # nyc test coverage
 .nyc_output
@@ -58,6 +59,7 @@ web_modules/
 # Optional eslint cache
 .eslintcache
 .playwright-cli/
+.wrangler/
 
 # Optional stylelint cache
 .stylelintcache
@@ -92,6 +94,7 @@ out
 # Nuxt.js build / generate output
 .nuxt
 dist
+site-dist
 
 # Gatsby files
 .cache/
