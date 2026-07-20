@@ -1,166 +1,92 @@
 # wtfgif
 
-An `omggif`-compatible GIF reader and writer, plus pixel-perfect fast paths
-that avoid rebuilding pixels when the requested edit does not require it.
-
-**[Run the browser benchmark →](https://mpopv.github.io/wtfgif/)**
+A faster, TypeScript-ready replacement for
+[`omggif`](https://github.com/deanm/omggif).
 
 ```bash
 npm install wtfgif
 ```
 
-## Replace omggif
+## Initialize once
 
-For the core `GifReader` and `GifWriter` API, change the import:
-
-```diff
-- import { GifReader, GifWriter } from "omggif";
-+ import { GifReader, GifWriter } from "wtfgif";
-```
-
-CommonJS and TypeScript are supported:
-
-```js
-const { GifReader, GifWriter } = require("wtfgif");
-```
-
-This is the compatibility path. It accepts the same indexed pixels, palettes,
-frame rectangles, delays, transparency, and disposal options used by omggif.
-It does not promise a 100x speedup for arbitrary new pixels.
-
-## The 100x fast paths
-
-wtfgif is fastest when pixels are already valid GIF data and the edit can be
-expressed as a container change:
-
-| Operation | Fixtures | Slowest speedup | Correctness |
-| --- | ---: | ---: | --- |
-| Compiled timing edit | 12/12 | **951.5x** | Exact pixels, delays, and original LZW payloads |
-| Prepared Wasm remux | 12/12 | **244.09x** | Exact decoded animation |
-| Strict frame reverse | 2/12 eligible | **5,329.5x** | Exact mapped pixels and delays |
-| Strict boomerang | 2/12 eligible | **6,866.7x** | Exact mapped pixels and delays |
-
-These are not claims that every wtfgif call is 100x faster. They are results
-for the named operations across the accepted benchmark fixtures. Timing,
-reverse, and boomerang are compared with MakeEmoji's `image-q` + `omggif`
-export; remux is compared with `omggif` decode + fresh encode. See
-[BENCHMARKS.md](BENCHMARKS.md) for commands, fixtures, sample counts, cold
-results, and correctness gates.
-
-## Edit timing without touching pixels
-
-Compile once when a GIF is loaded:
+Load WebAssembly during page startup, before encoding or decoding:
 
 ```ts
-import { compileGif } from "wtfgif";
+import { initializeWasmGlobally } from "wtfgif";
 
-const gif = compileGif(inputGif);
+await initializeWasmGlobally();
 ```
 
-Export new frame delays later. GIF delays are measured in centiseconds:
+Node.js loads the bundled WebAssembly automatically. Browsers, Web Workers,
+Cloudflare Workers, and Vercel Edge should call the initializer once.
+
+## Decode
+
+Use the same API as `omggif`:
 
 ```ts
-const outputGif = gif
-	.withDelays(Uint16Array.of(4, 8, 12, 8))
-	.toUint8Array();
-```
+import { GifReader } from "wtfgif";
 
-`compileGif()` retains the original GIF structure and compressed image data.
-`withDelays()` changes only timing metadata, inserting a graphics control
-extension when one is missing. It never decodes, quantizes, or recompresses a
-frame.
+const reader = new GifReader(gifBytes);
+const rgba = new Uint8ClampedArray(reader.width * reader.height * 4);
 
-For a one-shot timing edit:
-
-```ts
-import { retimeGifPixelPerfect } from "wtfgif";
-
-const outputGif = retimeGifPixelPerfect(inputGif, delaysInCentiseconds);
-```
-
-These timing APIs are synchronous JavaScript. They need no Wasm initialization
-and run in Node, browsers, Web Workers, Cloudflare Workers, and Vercel Edge.
-
-## Reverse or boomerang proven-independent frames
-
-```ts
-const gif = compileGif(inputGif);
-
-if (gif.canReorderFrames) {
-	const reversed = gif.reverseFrames();
-	const boomerang = gif.boomerangFrames();
-	// A, B, C becomes A, B, C, C, B, A
+for (let frame = 0; frame < reader.numFrames(); frame += 1) {
+	reader.decodeAndBlitFrameRGBA(frame, rgba);
 }
 ```
 
-This path reorders complete compressed frame records. It deliberately rejects
-GIFs whose appearance can depend on the preceding frame, including unsafe
-partial-frame composition or metadata anchored between frames. A rejection is
-a request to use a real decode-and-render pipeline, not a malformed output.
+`frameInfo()`, `loopCount()`, `decodeAndBlitFrameRGBA()`, and
+`decodeAndBlitFrameBGRA()` are drop-in compatible.
 
-## Remux with Wasm
+## Encode
 
-Initialize Wasm once per JavaScript realm during page or worker startup:
-
-```ts
-import {
-	initializeWasmGlobally,
-	remuxGifPixelPerfect,
-} from "wtfgif";
-
-await initializeWasmGlobally();
-
-const outputGif = remuxGifPixelPerfect(inputGif);
-```
-
-`remuxGifPixelPerfect()` validates and rewrites the GIF container while
-preserving palettes and compressed frame payloads. It guarantees the displayed
-animation: dimensions, frames, timing, loop behavior, disposal, transparency,
-and decoded pixels. Non-rendering extension metadata such as comments is not
-part of its contract.
-
-Cloudflare Workers and Vercel Edge require static Wasm imports:
+For the fastest path, use a preallocated `Uint8Array`, a normal 256-color
+palette, and `compression: "fast"`:
 
 ```ts
-import {
-	initializeWasmModule,
-	remuxGifPixelPerfect,
-} from "wtfgif";
-import init, * as rust from "wtfgif/wasm-web";
-import wasm from "wtfgif/wasm-web/wasm";
+import { GifWriter } from "wtfgif";
 
-await initializeWasmModule({ ...rust, default: init }, wasm);
+const output = new Uint8Array(width * height * frameCount * 2 + 4096);
+const writer = new GifWriter(output, width, height, {
+	palette, // 256 RGB integers, just like omggif
+	loop: 0,
+	compression: "fast",
+});
+
+for (const indexedPixels of frames) {
+	writer.addFrame(0, 0, width, height, indexedPixels, {
+		delay: 10,
+		disposal: 2,
+	});
+}
+
+const gifBytes = output.subarray(0, writer.end());
 ```
 
-Initialization is not global across a website: the window and each Worker,
-Node process, or edge isolate are separate realms and must initialize their
-own module.
+Everything except `compression` is ordinary `omggif` usage. Omit
+`compression: "fast"` for balanced LZW compression and omggif-sized output.
+Fast compression is pixel-perfect and standards-valid, but the benchmark GIF
+is 1.37x larger.
 
-## What is not 100x
+## Speed
 
-- `GifReader` and `GifWriter` are drop-in compatibility APIs, not universal
-  100x APIs.
-- Encoding arbitrary new pixels still requires palette selection and LZW
-  compression. Wasm initialization cannot make that work disappear.
-- `reencodeGifPixelPerfect()` performs fresh LZW encoding and is substantially
-  slower than remuxing.
-- Cold startup is excluded from the prepared-Wasm and compiled-edit results.
-  The measured Wasm initialization and preparation cost was 8.64 ms median;
-  one tiny-GIF timing run also produced a 59.3x cold one-shot outlier.
-- Reverse and boomerang are fast only when wtfgif can prove that raw frame
-  reordering preserves the rendered animation.
+After initialization, on the included normal 256-color benchmark:
 
-The speedup comes from recognizing when an edit does not need a pixel pipeline.
-Instead of decode → quantize → recompress, wtfgif validates the structure and
-copies already-correct compressed bytes.
+| Operation | omggif | wtfgif | Speedup |
+| --- | ---: | ---: | ---: |
+| Encode 12 × 128×128 frames | 15.187 ms | 0.149 ms | **102.18x** |
+| Decode 198 × 128×128 frames | 28.977 ms | 16.802 ms | **1.72x** |
+| Decode 16 × 498×498 frames | 33.967 ms | 7.642 ms | **4.44x** |
 
-## Verify
+Every result is checked against omggif for exact RGBA pixel equality before it
+is timed. Decode and encode are measured separately.
 
 ```bash
-npm run check
-
-BENCH_ITERATIONS=5 BENCH_WARMUP_ITERATIONS=2 \
-npm run bench:makeemoji-retime
+npm run bench:encode
+BENCH_GIF_FILTER=GIGACHAD npm run bench:decode
+BENCH_GIF_FILTER=tenor npm run bench:decode
 ```
+
+See [BENCHMARKS.md](BENCHMARKS.md) for the benchmark contract and caveats.
 
 [MIT](LICENSE)

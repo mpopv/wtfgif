@@ -5,6 +5,7 @@ import {
 	GifBinary,
 	GifOptions,
 	PaletteRGB,
+	WasmCoreModule,
 } from "../types";
 import { writeNetscapeLoopCount } from "../utils/netscape";
 import { checkPalette, log2Pow2 } from "../utils/palette";
@@ -12,6 +13,10 @@ import { getWasmCoreModule } from "../wasm/runtime";
 
 const WASM_LZW_MIN_INDEX_COUNT = 8192;
 const TRANSPARENT_ALPHA_THRESHOLD = 128;
+let lzwScratchMemoryModule: WasmCoreModule | null = null;
+let lzwScratchMemory: WebAssembly.Memory | null = null;
+let lzwInputScratchPointer = 0;
+let lzwInputScratchCapacity = 0;
 
 export type IndexedGifFrame = Uint8Array | number[];
 export type IndexedGifFrames = Uint8Array | IndexedGifFrame[];
@@ -342,7 +347,10 @@ export class GifWriter {
 	private loopCount: number | null;
 	private globalPalette: PaletteRGB | null;
 	private background = 0;
+	private compression: GifCompressionMode;
 	private globalColorCount = 0;
+	private globalColorTableSizeBits = 0;
+	private globalMinCodeSize = 0;
 	private previousIndexedFrame: Uint8Array | null = null;
 
 	constructor(
@@ -354,6 +362,7 @@ export class GifWriter {
 		const go = gopts ?? {};
 		this.loopCount = go.loop === undefined ? null : go.loop;
 		this.globalPalette = go.palette === undefined ? null : go.palette;
+		this.compression = go.compression ?? "balanced";
 
 		if (width <= 0 || height <= 0 || width > 65535 || height > 65535)
 			throw new Error("Width/Height invalid.");
@@ -371,6 +380,8 @@ export class GifWriter {
 			this.globalColorCount = n;
 			const pow = log2Pow2(n); // 1..8
 			gpPow2Bits = (pow - 1) & 7; // 0..7 per spec
+			this.globalColorTableSizeBits = gpPow2Bits;
+			this.globalMinCodeSize = Math.max(2, pow);
 
 			if (go.background !== undefined) {
 				this.background = go.background | 0;
@@ -523,9 +534,16 @@ export class GifWriter {
 		if (palette == null)
 			throw new Error("Must supply either a local or global palette.");
 
-		const numColors = checkPalette(palette);
-		const colorTableSizeBits = (log2Pow2(numColors) - 1) & 7;
-		const minCodeSize = Math.max(2, log2Pow2(numColors));
+		const numColors = usingLocal
+			? checkPalette(palette)
+			: this.globalColorCount;
+		const palettePower = usingLocal ? log2Pow2(numColors) : 0;
+		const colorTableSizeBits = usingLocal
+			? (palettePower - 1) & 7
+			: this.globalColorTableSizeBits;
+		const minCodeSize = usingLocal
+			? Math.max(2, palettePower)
+			: this.globalMinCodeSize;
 
 		const delay = (o.delay ?? 0) | 0;
 		let disposal = (o.disposal ?? 0) | 0;
@@ -580,6 +598,7 @@ export class GifWriter {
 			minCodeSize,
 			lzwSource,
 			numColors,
+			this.compression === "fast",
 		);
 
 		this.updatePreviousIndexedFrame(
@@ -624,6 +643,11 @@ export class GifWriter {
 		transparentIndex: number | null,
 		disposal: number,
 	): void {
+		if (disposal === 2 || disposal === 3) {
+			this.previousIndexedFrame = null;
+			return;
+		}
+
 		if (!this.previousIndexedFrame) {
 			this.previousIndexedFrame = new Uint8Array(this.width * this.height);
 		}
@@ -646,9 +670,6 @@ export class GifWriter {
 					previous.set(source.data.subarray(src, src + w), dst);
 				}
 			}
-			if (disposal === 2 || disposal === 3) {
-				this.previousIndexedFrame = null;
-			}
 			return;
 		}
 
@@ -664,9 +685,6 @@ export class GifWriter {
 			}
 		}
 
-		if (disposal === 2 || disposal === 3) {
-			this.previousIndexedFrame = null;
-		}
 	}
 }
 
@@ -1317,13 +1335,22 @@ function GifWriterOutputLZWCodeStream_fast(
 	minCodeSize: number,
 	indexStream: LzwIndexStream,
 	colorCount: number,
+	fastCompression: boolean,
 ): number {
 	const wasmEncoded = tryEncodeLzwWithWasm(
 		minCodeSize,
 		indexStream,
 		colorCount,
+		fastCompression,
 	);
 	if (wasmEncoded) {
+		if (buf instanceof Uint8Array) {
+			buf.set(wasmEncoded, p0);
+			return p0 + wasmEncoded.length;
+		}
+		if (Array.isArray(buf)) {
+			buf.length = p0 + wasmEncoded.length;
+		}
 		for (let i = 0; i < wasmEncoded.length; i++) {
 			buf[p0 + i] = wasmEncoded[i]!;
 		}
@@ -1436,7 +1463,7 @@ function GifWriterOutputLZWCodeStream_fast(
 		}
 		if (k >>> 0 >= colorCount) throw new Error("Pixel index out of range.");
 		const key = (ib << 8) | k;
-		let slot = key & (CAP - 1);
+		let slot = Math.imul(key, -1640531527) >>> 18;
 		let found = -1;
 		while (gen[slot] === EPOCH) {
 			if (keys[slot] === key) {
@@ -1526,6 +1553,7 @@ function tryEncodeLzwWithWasm(
 	minCodeSize: number,
 	indexStream: LzwIndexStream,
 	colorCount: number,
+	fastCompression: boolean,
 ): Uint8Array | null {
 	if (!(indexStream instanceof Uint8Array)) {
 		return null;
@@ -1534,8 +1562,61 @@ function tryEncodeLzwWithWasm(
 		return null;
 	}
 
-	const encodeIndexedLzw = getWasmCoreModule()?.encode_indexed_lzw;
-	return encodeIndexedLzw
-		? encodeIndexedLzw(indexStream, minCodeSize, colorCount)
+	const wasmCore = getWasmCoreModule();
+	const wasmMinCodeSize =
+		fastCompression && minCodeSize === 4 ? 7 : minCodeSize;
+	const encodeIntoScratch = fastCompression
+		? wasmCore?.encode_indexed_literal_lzw_scratch
+		: wasmCore?.encode_indexed_lzw_scratch;
+	const canUseDirectInput =
+		wasmCore?.indexed_lzw_input_scratch_reserve &&
+		wasmCore.encode_indexed_lzw_scratch_from_input;
+	if (
+		wasmCore &&
+		encodeIntoScratch &&
+		wasmCore.indexed_lzw_scratch_ptr &&
+		wasmCore.wasm_memory
+	) {
+		if (lzwScratchMemoryModule !== wasmCore || !lzwScratchMemory) {
+			lzwScratchMemoryModule = wasmCore;
+			lzwScratchMemory = wasmCore.wasm_memory();
+			lzwInputScratchPointer = 0;
+			lzwInputScratchCapacity = 0;
+		}
+		let length: number;
+		if (canUseDirectInput) {
+			if (lzwInputScratchCapacity < indexStream.length) {
+				lzwInputScratchPointer =
+					wasmCore.indexed_lzw_input_scratch_reserve!(
+						indexStream.length,
+					);
+				lzwInputScratchCapacity = indexStream.length;
+			}
+			new Uint8Array(
+				lzwScratchMemory.buffer,
+				lzwInputScratchPointer,
+				indexStream.length,
+			).set(indexStream);
+			length = wasmCore.encode_indexed_lzw_scratch_from_input!(
+				indexStream.length,
+				wasmMinCodeSize,
+				colorCount,
+				fastCompression,
+			);
+		} else {
+			length = encodeIntoScratch(
+				indexStream,
+				wasmMinCodeSize,
+				colorCount,
+			);
+		}
+		return new Uint8Array(
+			lzwScratchMemory.buffer,
+			wasmCore.indexed_lzw_scratch_ptr(),
+			length,
+		);
+	}
+	return wasmCore?.encode_indexed_lzw
+		? wasmCore.encode_indexed_lzw(indexStream, minCodeSize, colorCount)
 		: null;
 }

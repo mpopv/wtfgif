@@ -13,6 +13,7 @@ import {
   PreparedGifFrames,
   PreparedGifPlayer,
   PrepareFramesOptions,
+  WasmCoreInstance,
 } from "../types";
 import { GIF } from "../constants/gif";
 import { buildPal32 } from "../utils/palette";
@@ -21,6 +22,7 @@ import { readNetscapeLoopCount } from "../utils/netscape";
 import {
   createDecoderTables,
 } from "./pool";
+import { getWasmCoreModule } from "../wasm/runtime";
 
 type NormalizedPrepareFramesOptions = PrepareFramesOptions & {
   format: PreparedFrameFormat;
@@ -60,6 +62,7 @@ export class GifReader {
   private stack!: Uint8Array;
   private firstByte!: Int16Array;
   private activePreparedFrames!: Set<PreparedGifFrames>;
+  private wasmCore!: WasmCoreInstance | null;
   private static decodeBackend: GifDecodeBackend | null = null;
 
   static createPooled(buf: GifBinary): GifReader {
@@ -101,6 +104,7 @@ export class GifReader {
     this.stack = new Uint8Array(0);
     this.firstByte = new Int16Array(0);
     this.activePreparedFrames = new Set();
+    this.wasmCore = null;
 
     let p = 0;
     const readByte = (): number => {
@@ -1264,6 +1268,8 @@ export class GifReader {
     }
     this.activePreparedFrames.clear();
     this.clearFrameCaches();
+    this.wasmCore?.free();
+    this.wasmCore = null;
 
     this.pooledTables = null;
     this.decTable = new Int32Array(0);
@@ -1314,31 +1320,45 @@ export class GifReader {
     if (frameNum < 0 || frameNum >= this.frames.length)
       throw new Error("Frame index out of range.");
 
-    this.clearFrameCaches();
-    try {
-      this.ensureDecoderTables();
+    const out32 = new Uint32Array(
+      pixels.buffer,
+      pixels.byteOffset,
+      pixels.byteLength >>> 2
+    );
 
-      const out32 = new Uint32Array(
-        pixels.buffer,
-        pixels.byteOffset,
-        pixels.byteLength >>> 2
-      );
-
-      const frame = this.frames[frameNum]!;
-      const pal32 = this.getFramePalette(frame, order);
-      const trans = frame.transparent_index ?? 256;
-      this.lzwDecodeToPixels(
-        this.buf,
-        frame.data_offset,
-        out32,
-        this.width_,
-        frame,
-        pal32,
-        trans
-      );
-    } finally {
-      this.clearFrameCaches();
+    const frame = this.frames[frameNum]!;
+    const framePixels = frame.width * frame.height;
+    const canvasPixels = this.width_ * this.height_;
+    if (framePixels >= 16384 && framePixels * 2 >= canvasPixels) {
+      const wasmModule = getWasmCoreModule();
+      if (wasmModule) {
+        this.wasmCore ??= new wasmModule.WtfGifCore(this.buf);
+        const decodeAndBlit =
+          order === "rgba"
+            ? this.wasmCore.decode_and_blit_frame_rgba
+            : this.wasmCore.decode_and_blit_frame_bgra;
+        if (decodeAndBlit) {
+          decodeAndBlit.call(
+            this.wasmCore,
+            frameNum,
+            pixels.subarray(0, canvasPixels * 4)
+          );
+          return;
+        }
+      }
     }
+    this.ensureDecoderTables();
+    const pal32 = this.getFramePalette(frame, order);
+    const trans = frame.transparent_index ?? 256;
+    this.lzwDecodeToPixels(
+      this.buf,
+      frame.data_offset,
+      out32,
+      this.width_,
+      frame,
+      pal32,
+      trans
+    );
   }
 
   private decodeAndBlitCompatibleFrame(

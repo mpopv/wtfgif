@@ -6,6 +6,14 @@ export interface WasmCoreInstance {
 	decode_frame_indices: (frameIndex: number) => Uint8Array;
 	decode_frame_rgba: (frameIndex: number) => Uint8Array;
 	decode_frame_bgra: (frameIndex: number) => Uint8Array;
+	decode_and_blit_frame_rgba?: (
+		frameIndex: number,
+		pixels: Uint8Array,
+	) => void;
+	decode_and_blit_frame_bgra?: (
+		frameIndex: number,
+		pixels: Uint8Array,
+	) => void;
 	decode_all_rgba?: () => Uint32Array;
 	reencode_gif_pixel_perfect?: () => Uint8Array;
 	prepare_composited_rgba: (requestedFrames: Uint8Array) => Uint32Array;
@@ -52,6 +60,25 @@ export interface WasmCoreModule {
 		minCodeSize: number,
 		colorCount: number,
 	) => Uint8Array;
+	encode_indexed_lzw_scratch?: (
+		indexStream: Uint8Array,
+		minCodeSize: number,
+		colorCount: number,
+	) => number;
+	encode_indexed_literal_lzw_scratch?: (
+		indexStream: Uint8Array,
+		minCodeSize: number,
+		colorCount: number,
+	) => number;
+	indexed_lzw_input_scratch_reserve?: (length: number) => number;
+	encode_indexed_lzw_scratch_from_input?: (
+		length: number,
+		minCodeSize: number,
+		colorCount: number,
+		literal: boolean,
+	) => number;
+	indexed_lzw_scratch_ptr?: () => number;
+	wasm_memory?: () => WebAssembly.Memory;
 	encode_indexed_gif?: (
 		indexStream: Uint8Array,
 		width: number,
@@ -207,6 +234,7 @@ export type PaletteRGB = number[]; // array of 24-bit 0xRRGGBB
 
 export interface GifOptions {
 	background?: number;
+	compression?: "balanced" | "fast";
 	loop?: number | null;
 	palette?: PaletteRGB | null;
 }

@@ -2,6 +2,21 @@
 
 All notable changes to wtfgif are documented here.
 
+## 1.3.0 - 2026-07-19
+
+- Add separately optimized, pixel-perfect `GifWriter` encode and `GifReader`
+  decode paths for normal typed-buffer usage.
+- Add opt-in `compression: "fast"` encoding. The included 256-color,
+  12-frame benchmark measures 102.18x faster than omggif with exact RGBA
+  parity; its output is 1.37x larger.
+- Route substantial ordinary `decodeAndBlitFrameRGBA()` and
+  `decodeAndBlitFrameBGRA()` calls through reusable Rust/WebAssembly scratch
+  memory while preserving omggif's caller-buffer and transparency behavior.
+- Measure encode and decode independently with public drop-in APIs and
+  mandatory pixel-parity checks.
+- Simplify the README and benchmark documentation around initialization,
+  encoding, decoding, measured speedups, and the fast encoder's size tradeoff.
+
 ## 1.2.0 - 2026-07-19
 
 - Add `compileGif()`, an immutable compiled-GIF representation that retains

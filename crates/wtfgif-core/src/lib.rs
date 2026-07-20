@@ -46,7 +46,10 @@ const COMPOSITED_DELTA_MAGIC: u32 = 0x3144_4757;
 const COMPOSITED_DELTA_VERSION: u32 = 1;
 const COMPOSITED_DELTA_HEADER_LEN: usize = 4;
 const COMPOSITED_DELTA_ENTRY_LEN: usize = 9;
-const LZW_TABLE_CAP: usize = 16_384;
+const LZW_DIRECT_ENTRY_COUNT: usize = 1 << 20;
+const LZW_ENTRY_CODE_MASK: u32 = 0x0fff;
+const LZW_ENTRY_EPOCH_SHIFT: u32 = 12;
+const LZW_ENTRY_EPOCH_MAX: u32 = (1 << (32 - LZW_ENTRY_EPOCH_SHIFT)) - 1;
 const COLOR_INDEX_CAP: usize = 512;
 const TRANSPARENT_ALPHA_THRESHOLD: u8 = 128;
 
@@ -535,6 +538,18 @@ impl<'a> DelaySource<'a> {
 pub struct WtfGifCore {
     data: Vec<u8>,
     metadata: GifMetadata,
+    decode_scratch: std::cell::RefCell<FrameDecodeScratch>,
+}
+
+#[derive(Default)]
+struct FrameDecodeScratch {
+    image_data: Vec<u8>,
+    lzw: LzwStackScratch,
+    indices: Vec<u8>,
+    palette: Vec<u32>,
+    palette_offset: usize,
+    palette_size: usize,
+    palette_format: Option<PixelFormat>,
 }
 
 #[wasm_bindgen]
@@ -731,6 +746,61 @@ pub fn encode_indexed_lzw(
 ) -> Result<Vec<u8>, JsValue> {
     encode_indexed_lzw_inner(index_stream, min_code_size, color_count)
         .map_err(|message| JsValue::from_str(&message))
+}
+
+#[wasm_bindgen]
+pub fn encode_indexed_lzw_scratch(
+    index_stream: &[u8],
+    min_code_size: u8,
+    color_count: usize,
+) -> Result<usize, JsValue> {
+    encode_indexed_lzw_scratch_inner(index_stream, min_code_size, color_count, false)
+        .map_err(|message| JsValue::from_str(&message))
+}
+
+#[wasm_bindgen]
+pub fn encode_indexed_literal_lzw_scratch(
+    index_stream: &[u8],
+    min_code_size: u8,
+    color_count: usize,
+) -> Result<usize, JsValue> {
+    encode_indexed_lzw_scratch_inner(index_stream, min_code_size, color_count, true)
+        .map_err(|message| JsValue::from_str(&message))
+}
+
+#[wasm_bindgen]
+pub fn indexed_lzw_input_scratch_reserve(length: usize) -> usize {
+    REUSABLE_LZW_SCRATCH.with(|scratch| {
+        let mut scratch = scratch.borrow_mut();
+        scratch.input.resize(length, 0);
+        scratch.input.as_mut_ptr() as usize
+    })
+}
+
+#[wasm_bindgen]
+pub fn encode_indexed_lzw_scratch_from_input(
+    length: usize,
+    min_code_size: u8,
+    color_count: usize,
+    literal: bool,
+) -> Result<usize, JsValue> {
+    encode_indexed_lzw_scratch_from_input_inner(
+        length,
+        min_code_size,
+        color_count,
+        literal,
+    )
+    .map_err(|message| JsValue::from_str(&message))
+}
+
+#[wasm_bindgen]
+pub fn indexed_lzw_scratch_ptr() -> usize {
+    REUSABLE_LZW_SCRATCH.with(|scratch| scratch.borrow().output.as_ptr() as usize)
+}
+
+#[wasm_bindgen]
+pub fn wasm_memory() -> JsValue {
+    wasm_bindgen::memory()
 }
 
 #[wasm_bindgen]
@@ -1076,6 +1146,7 @@ impl WtfGifCore {
         Ok(WtfGifCore {
             data: data.to_vec(),
             metadata,
+            decode_scratch: std::cell::RefCell::new(FrameDecodeScratch::default()),
         })
     }
 
@@ -1114,10 +1185,43 @@ impl WtfGifCore {
             .map_err(|message| JsValue::from_str(&message))
     }
 
+    pub fn decode_and_blit_frame_rgba(
+        &self,
+        frame_index: usize,
+        pixels: &mut [u8],
+    ) -> Result<(), JsValue> {
+        decode_and_blit_frame_reusing_scratch(
+            &self.data,
+            &self.metadata,
+            frame_index,
+            PixelFormat::Rgba,
+            pixels,
+            &mut self.decode_scratch.borrow_mut(),
+        )
+        .map_err(|message| JsValue::from_str(&message))
+    }
+
+    pub fn decode_and_blit_frame_bgra(
+        &self,
+        frame_index: usize,
+        pixels: &mut [u8],
+    ) -> Result<(), JsValue> {
+        decode_and_blit_frame_reusing_scratch(
+            &self.data,
+            &self.metadata,
+            frame_index,
+            PixelFormat::Bgra,
+            pixels,
+            &mut self.decode_scratch.borrow_mut(),
+        )
+        .map_err(|message| JsValue::from_str(&message))
+    }
+
     pub fn decode_all_rgba(&self) -> Result<Vec<u32>, JsValue> {
         prepare_all_composited_frames_inner(&self.data, &self.metadata, PixelFormat::Rgba)
             .map_err(|message| JsValue::from_str(&message))
     }
+
 
     pub fn reencode_gif_pixel_perfect(&self) -> Result<Vec<u8>, JsValue> {
         let loop_count = self.metadata.loop_count.map(i32::from).unwrap_or(-1);
@@ -1621,6 +1725,56 @@ fn decode_frame_pixels_inner(
     blit_indices_to_pixels(&palette, metadata.width, frame, &indices, &mut pixels)?;
 
     Ok(pixels)
+}
+
+fn decode_and_blit_frame_reusing_scratch(
+    data: &[u8],
+    metadata: &GifMetadata,
+    frame_index: usize,
+    format: PixelFormat,
+    pixels: &mut [u8],
+    scratch: &mut FrameDecodeScratch,
+) -> Result<(), String> {
+    let expected_length = usize::from(metadata.width)
+        .checked_mul(usize::from(metadata.height))
+        .and_then(|pixel_count| pixel_count.checked_mul(4))
+        .ok_or_else(|| "Canvas size overflow".to_string())?;
+    if pixels.len() < expected_length {
+        return Err("Pixel buffer is too small".to_string());
+    }
+    let frame = metadata
+        .frames
+        .get(frame_index)
+        .ok_or_else(|| "Frame index out of range".to_string())?;
+    decode_frame_indices_reusing_output(
+        data,
+        frame,
+        &mut scratch.image_data,
+        &mut scratch.lzw,
+        &mut scratch.indices,
+    )?;
+    let target = &mut pixels[..expected_length];
+    let (prefix, canvas, suffix) = unsafe { target.align_to_mut::<u32>() };
+    if prefix.is_empty() && suffix.is_empty() {
+        if scratch.palette_offset != frame.palette_offset
+            || scratch.palette_size != frame.palette_size
+            || scratch.palette_format != Some(format)
+        {
+            scratch.palette = build_palette_u32(data, frame, format)?;
+            scratch.palette_offset = frame.palette_offset;
+            scratch.palette_size = frame.palette_size;
+            scratch.palette_format = Some(format);
+        }
+        return blit_indices_to_canvas_u32(
+            &scratch.palette,
+            metadata.width,
+            frame,
+            &scratch.indices,
+            canvas,
+        );
+    }
+    let palette = build_palette_pixels(data, frame, format)?;
+    blit_indices_to_pixels(&palette, metadata.width, frame, &scratch.indices, target)
 }
 
 fn prepare_composited_frames_inner(
@@ -6134,30 +6288,41 @@ fn push_u16_le(output: &mut Vec<u8>, value: u16) {
 }
 
 struct LzwEncodeTables {
-    keys: Vec<i32>,
-    values: Vec<u16>,
-    generations: Vec<u32>,
+    entries: Vec<u32>,
     epoch: u32,
 }
 
 impl LzwEncodeTables {
     fn new() -> Self {
         Self {
-            keys: vec![0; LZW_TABLE_CAP],
-            values: vec![0; LZW_TABLE_CAP],
-            generations: vec![0; LZW_TABLE_CAP],
+            entries: vec![0; LZW_DIRECT_ENTRY_COUNT],
             epoch: 0,
         }
     }
 
     fn reset(&mut self) -> u32 {
         self.epoch = self.epoch.wrapping_add(1);
-        if self.epoch == 0 {
-            self.generations.fill(0);
+        if self.epoch == 0 || self.epoch > LZW_ENTRY_EPOCH_MAX {
+            self.entries.fill(0);
             self.epoch = 1;
         }
         self.epoch
     }
+}
+
+struct LzwEncodeScratch {
+    input: Vec<u8>,
+    output: Vec<u8>,
+    tables: LzwEncodeTables,
+}
+
+std::thread_local! {
+    static REUSABLE_LZW_SCRATCH: std::cell::RefCell<LzwEncodeScratch> =
+        std::cell::RefCell::new(LzwEncodeScratch {
+            input: Vec::new(),
+            output: Vec::new(),
+            tables: LzwEncodeTables::new(),
+        });
 }
 
 fn encode_indexed_lzw_inner(
@@ -6165,9 +6330,78 @@ fn encode_indexed_lzw_inner(
     min_code_size: u8,
     color_count: usize,
 ) -> Result<Vec<u8>, String> {
-    let mut output = Vec::with_capacity(index_stream.len() / 2 + 16);
-    encode_indexed_lzw_to(&mut output, index_stream, min_code_size, color_count)?;
-    Ok(output)
+    encode_indexed_lzw_scratch_inner(index_stream, min_code_size, color_count, false)?;
+    Ok(REUSABLE_LZW_SCRATCH.with(|scratch| scratch.borrow().output.clone()))
+}
+
+fn encode_indexed_lzw_scratch_inner(
+    index_stream: &[u8],
+    min_code_size: u8,
+    color_count: usize,
+    literal: bool,
+) -> Result<usize, String> {
+    REUSABLE_LZW_SCRATCH.with(|scratch| {
+        let mut scratch = scratch.borrow_mut();
+        let LzwEncodeScratch { output, tables, .. } = &mut *scratch;
+        output.clear();
+        output.reserve(index_stream.len() / 2 + 16);
+        if literal {
+            encode_indexed_literal_lzw_direct_to(
+                output,
+                index_stream,
+                min_code_size,
+                color_count,
+            )?;
+        } else {
+            encode_indexed_lzw_to_with_tables(
+                output,
+                index_stream,
+                min_code_size,
+                color_count,
+                tables,
+            )?;
+        }
+        Ok(output.len())
+    })
+}
+
+fn encode_indexed_lzw_scratch_from_input_inner(
+    length: usize,
+    min_code_size: u8,
+    color_count: usize,
+    literal: bool,
+) -> Result<usize, String> {
+    REUSABLE_LZW_SCRATCH.with(|scratch| {
+        let mut scratch = scratch.borrow_mut();
+        let LzwEncodeScratch {
+            input,
+            output,
+            tables,
+        } = &mut *scratch;
+        if length > input.len() {
+            return Err("Indexed input scratch length exceeds capacity".to_string());
+        }
+        let index_stream = &input[..length];
+        output.clear();
+        output.reserve(index_stream.len() / 2 + 16);
+        if literal {
+            encode_indexed_literal_lzw_direct_to(
+                output,
+                index_stream,
+                min_code_size,
+                color_count,
+            )?;
+        } else {
+            encode_indexed_lzw_to_with_tables(
+                output,
+                index_stream,
+                min_code_size,
+                color_count,
+                tables,
+            )?;
+        }
+        Ok(output.len())
+    })
 }
 
 fn encode_indexed_literal_lzw_to(
@@ -6215,6 +6449,9 @@ fn encode_indexed_literal_lzw_direct_to(
     min_code_size: u8,
     color_count: usize,
 ) -> Result<(), String> {
+    if min_code_size == 7 && color_count <= 128 {
+        return encode_eight_bit_literal_lzw_direct_to(output, index_stream, color_count);
+    }
     output.push(min_code_size);
     let compressed_start = output.len();
     encode_indexed_literal_codes_raw(output, index_stream, min_code_size, color_count)?;
@@ -6235,6 +6472,83 @@ fn encode_indexed_literal_lzw_direct_to(
     Ok(())
 }
 
+struct GifSubblockAppender<'a> {
+    output: &'a mut [u8],
+    position: usize,
+    raw_remaining: usize,
+    block_remaining: usize,
+}
+
+impl GifSubblockAppender<'_> {
+    #[inline]
+    fn start_block(&mut self) {
+        if self.block_remaining == 0 && self.raw_remaining > 0 {
+            self.block_remaining = self.raw_remaining.min(255);
+            self.output[self.position] = self.block_remaining as u8;
+            self.position += 1;
+        }
+    }
+
+    #[inline]
+    fn write_byte(&mut self, value: u8) {
+        self.start_block();
+        self.output[self.position] = value;
+        self.position += 1;
+        self.block_remaining -= 1;
+        self.raw_remaining -= 1;
+    }
+
+    #[inline]
+    fn write_slice(&mut self, mut bytes: &[u8]) {
+        while !bytes.is_empty() {
+            self.start_block();
+            let length = bytes.len().min(self.block_remaining);
+            self.output[self.position..self.position + length]
+                .copy_from_slice(&bytes[..length]);
+            self.position += length;
+            self.block_remaining -= length;
+            self.raw_remaining -= length;
+            bytes = &bytes[length..];
+        }
+    }
+}
+
+fn encode_eight_bit_literal_lzw_direct_to(
+    output: &mut Vec<u8>,
+    index_stream: &[u8],
+    color_count: usize,
+) -> Result<(), String> {
+    if color_count == 0 || color_count > 128 {
+        return Err("Invalid color count".to_string());
+    }
+    if index_stream.is_empty() {
+        return Err("Indexed pixel stream is empty".to_string());
+    }
+    if !indices_fit_color_count(index_stream, color_count) {
+        return Err("Pixel index out of range".to_string());
+    }
+
+    let raw_length = index_stream.len() + index_stream.len().div_ceil(126) + 1;
+    let block_count = raw_length.div_ceil(255);
+    let output_start = output.len();
+    output.resize(output_start + 1 + block_count + raw_length + 1, 0);
+    output[output_start] = 7;
+    let mut appender = GifSubblockAppender {
+        output: &mut output[output_start + 1..],
+        position: 0,
+        raw_remaining: raw_length,
+        block_remaining: 0,
+    };
+    for literals in index_stream.chunks(126) {
+        appender.write_byte(128);
+        appender.write_slice(literals);
+    }
+    appender.write_byte(129);
+    debug_assert_eq!(appender.raw_remaining, 0);
+    debug_assert_eq!(appender.position, block_count + raw_length);
+    Ok(())
+}
+
 fn encode_indexed_literal_codes_raw(
     output: &mut Vec<u8>,
     index_stream: &[u8],
@@ -6250,6 +6564,9 @@ fn encode_indexed_literal_codes_raw(
     if index_stream.is_empty() {
         return Err("Indexed pixel stream is empty".to_string());
     }
+    if !indices_fit_color_count(index_stream, color_count) {
+        return Err("Pixel index out of range".to_string());
+    }
     let clear = 1usize << min_code_size;
     let eoi = clear + 1;
     let code_size = usize::from(min_code_size) + 1;
@@ -6261,15 +6578,14 @@ fn encode_indexed_literal_codes_raw(
     if min_code_size == 2 {
         return encode_two_bit_literal_codes(output, index_stream, color_count);
     }
-    if min_code_size == 8 && color_count == 256 {
+    if min_code_size == 7 {
+        return encode_eight_bit_literal_codes(output, index_stream);
+    }
+    if min_code_size == 8 {
         return encode_nine_bit_literal_codes(output, index_stream);
     }
-    if color_count < 256
-        && index_stream
-            .iter()
-            .any(|&pixel| usize::from(pixel) >= color_count)
-    {
-        return Err("Pixel index out of range".to_string());
+    if min_code_size == 4 && color_count == 16 {
+        return encode_five_bit_literal_codes(output, index_stream);
     }
     if min_code_size == 6 && color_count == 64 {
         return encode_seven_bit_literal_codes(output, index_stream);
@@ -6292,6 +6608,147 @@ fn encode_indexed_literal_codes_raw(
         bits >>= 8;
         bit_count = bit_count.saturating_sub(8);
     }
+    Ok(())
+}
+
+#[inline]
+fn indices_fit_color_count(index_stream: &[u8], color_count: usize) -> bool {
+    if color_count >= 256 {
+        return true;
+    }
+    if color_count.is_power_of_two() {
+        let invalid_bits = !(color_count as u8 - 1);
+        let invalid_mask = u64::from(invalid_bits) * 0x0101_0101_0101_0101;
+        let mut chunks = index_stream.chunks_exact(8);
+        for chunk in &mut chunks {
+            let packed = u64::from_le_bytes(chunk.try_into().unwrap());
+            if packed & invalid_mask != 0 {
+                return false;
+            }
+        }
+        return chunks
+            .remainder()
+            .iter()
+            .all(|&pixel| usize::from(pixel) < color_count);
+    }
+    index_stream
+        .iter()
+        .all(|&pixel| usize::from(pixel) < color_count)
+}
+
+fn encode_eight_bit_literal_codes(output: &mut Vec<u8>, index_stream: &[u8]) -> Result<(), String> {
+    for literals in index_stream.chunks(126) {
+        output.push(128);
+        output.extend_from_slice(literals);
+    }
+    output.push(129);
+    Ok(())
+}
+
+const fn build_five_bit_pair_table() -> [u16; 4096] {
+    let mut table = [0u16; 4096];
+    let mut index = 0usize;
+    while index < table.len() {
+        table[index] = ((index & 0x0f) | (((index >> 8) & 0x0f) << 5)) as u16;
+        index += 1;
+    }
+    table
+}
+
+static FIVE_BIT_PAIR_TABLE: [u16; 4096] = build_five_bit_pair_table();
+
+#[inline(always)]
+unsafe fn five_bit_pair(input: *const u8) -> u64 {
+    let index = u16::from_le(unsafe { input.cast::<u16>().read_unaligned() }) as usize;
+    u64::from(*unsafe { FIVE_BIT_PAIR_TABLE.get_unchecked(index) })
+}
+
+fn encode_five_bit_literal_codes(output: &mut Vec<u8>, index_stream: &[u8]) -> Result<(), String> {
+    let clear_count = index_stream.len().div_ceil(14);
+    let raw_length = ((index_stream.len() + clear_count + 1) * 5).div_ceil(8);
+    let output_start = output.len();
+    output.resize(output_start + raw_length, 0);
+    let output_pointer = unsafe { output.as_mut_ptr().add(output_start) };
+    let input_pointer = index_stream.as_ptr();
+    let mut output_position = 0usize;
+    let mut bits = 0u64;
+    let mut bit_count = 0usize;
+    let full_group_count = index_stream.len() / 14;
+    for group in 0..full_group_count {
+        let literals = unsafe { input_pointer.add(group * 14) };
+        bits |= 16u64 << bit_count;
+        bit_count += 5;
+        while bit_count >= 8 {
+            unsafe { output_pointer.add(output_position).write(bits as u8) };
+            output_position += 1;
+            bits >>= 8;
+            bit_count -= 8;
+        }
+
+        let first = unsafe {
+            five_bit_pair(literals)
+                | (five_bit_pair(literals.add(2)) << 10)
+                | (five_bit_pair(literals.add(4)) << 20)
+                | (five_bit_pair(literals.add(6)) << 30)
+        };
+        let combined = bits | (first << bit_count);
+        let first_bytes = combined.to_le_bytes();
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                first_bytes.as_ptr(),
+                output_pointer.add(output_position),
+                5,
+            )
+        };
+        output_position += 5;
+        bits = combined >> 40;
+
+        let second = unsafe {
+            five_bit_pair(literals.add(8))
+                | (five_bit_pair(literals.add(10)) << 10)
+                | (five_bit_pair(literals.add(12)) << 20)
+        };
+        bits |= second << bit_count;
+        bit_count += 30;
+        while bit_count >= 8 {
+            unsafe { output_pointer.add(output_position).write(bits as u8) };
+            output_position += 1;
+            bits >>= 8;
+            bit_count -= 8;
+        }
+    }
+
+    let remainder = &index_stream[full_group_count * 14..];
+    if !remainder.is_empty() {
+        bits |= 16u64 << bit_count;
+        bit_count += 5;
+        while bit_count >= 8 {
+            unsafe { output_pointer.add(output_position).write(bits as u8) };
+            output_position += 1;
+            bits >>= 8;
+            bit_count -= 8;
+        }
+        for &pixel in remainder {
+            bits |= u64::from(pixel) << bit_count;
+            bit_count += 5;
+            while bit_count >= 8 {
+                unsafe { output_pointer.add(output_position).write(bits as u8) };
+                output_position += 1;
+                bits >>= 8;
+                bit_count -= 8;
+            }
+        }
+    }
+
+    bits |= 17u64 << bit_count;
+    bit_count += 5;
+    while bit_count > 0 {
+        unsafe { output_pointer.add(output_position).write(bits as u8) };
+        output_position += 1;
+        bits >>= 8;
+        bit_count = bit_count.saturating_sub(8);
+    }
+    debug_assert_eq!(output_position, raw_length);
     Ok(())
 }
 
@@ -6397,32 +6854,81 @@ fn encode_nine_bit_literal_codes(output: &mut Vec<u8>, index_stream: &[u8]) -> R
 fn encode_two_bit_literal_codes(
     output: &mut Vec<u8>,
     index_stream: &[u8],
-    color_count: usize,
+    _color_count: usize,
 ) -> Result<(), String> {
+    let pair_count = index_stream.len() / 2;
+    let raw_bit_length = pair_count * 9 + usize::from(index_stream.len() % 2 != 0) * 6 + 3;
+    let raw_length = raw_bit_length.div_ceil(8);
+    let output_start = output.len();
+    output.resize(output_start + raw_length, 0);
+    let output_pointer = unsafe { output.as_mut_ptr().add(output_start) };
+    let mut output_position = 0usize;
     let mut bits = 0u64;
     let mut bit_count = 0usize;
-    let mut index = 0usize;
-    while index + 1 < index_stream.len() {
-        let first = usize::from(index_stream[index]);
-        let second = usize::from(index_stream[index + 1]);
-        if first >= color_count || second >= color_count {
-            return Err("Pixel index out of range".to_string());
+    let mut groups = index_stream.chunks_exact(14);
+    for group in &mut groups {
+        let mut packed = 0u64;
+        for pair in 0..7 {
+            let first = usize::from(group[pair * 2]);
+            let second = usize::from(group[pair * 2 + 1]);
+            let reset_group = 4 | (first << 3) | (second << 6);
+            packed |= (reset_group as u64) << (pair * 9);
         }
+
+        let combined = bits | (packed << bit_count);
+        let total_bits = bit_count + 63;
+        if total_bits >= 64 {
+            let bytes = combined.to_le_bytes();
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    bytes.as_ptr(),
+                    output_pointer.add(output_position),
+                    8,
+                )
+            };
+            output_position += 8;
+            bits = packed >> (64 - bit_count);
+            bit_count = total_bits - 64;
+        } else {
+            let bytes = combined.to_le_bytes();
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    bytes.as_ptr(),
+                    output_pointer.add(output_position),
+                    7,
+                )
+            };
+            output_position += 7;
+            bits = combined >> 56;
+            bit_count = total_bits - 56;
+        }
+    }
+
+    let remainder = groups.remainder();
+    let mut index = 0usize;
+    while index + 1 < remainder.len() {
+        let first = usize::from(remainder[index]);
+        let second = usize::from(remainder[index + 1]);
         // Each reset group is CLEAR, literal, literal: three 3-bit codes.
         bits |= ((4 | (first << 3) | (second << 6)) as u64) << bit_count;
         bit_count += 9;
         if bit_count >= 32 {
-            output.extend_from_slice(&(bits as u32).to_le_bytes());
+            let bytes = (bits as u32).to_le_bytes();
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    bytes.as_ptr(),
+                    output_pointer.add(output_position),
+                    4,
+                )
+            };
+            output_position += 4;
             bits >>= 32;
             bit_count -= 32;
         }
         index += 2;
     }
-    if index < index_stream.len() {
-        let pixel = usize::from(index_stream[index]);
-        if pixel >= color_count {
-            return Err("Pixel index out of range".to_string());
-        }
+    if index < remainder.len() {
+        let pixel = usize::from(remainder[index]);
         bits |= ((4 | (pixel << 3)) as u64) << bit_count;
         bit_count += 6;
     }
@@ -6430,10 +6936,12 @@ fn encode_two_bit_literal_codes(
     bits |= 5u64 << bit_count;
     bit_count += 3;
     while bit_count > 0 {
-        output.push((bits & 0xff) as u8);
+        unsafe { output_pointer.add(output_position).write(bits as u8) };
+        output_position += 1;
         bits >>= 8;
         bit_count = bit_count.saturating_sub(8);
     }
+    debug_assert_eq!(output_position, raw_length);
     Ok(())
 }
 
@@ -6452,22 +6960,6 @@ fn emit_raw_lzw_code(
         *bits >>= 32;
         *bit_count -= 32;
     }
-}
-
-fn encode_indexed_lzw_to(
-    output: &mut Vec<u8>,
-    index_stream: &[u8],
-    min_code_size: u8,
-    color_count: usize,
-) -> Result<(), String> {
-    let mut tables = LzwEncodeTables::new();
-    encode_indexed_lzw_to_with_tables(
-        output,
-        index_stream,
-        min_code_size,
-        color_count,
-        &mut tables,
-    )
 }
 
 fn encode_indexed_lzw_to_with_tables(
@@ -6605,16 +7097,10 @@ where
             return Err("Pixel index out of range".to_string());
         }
 
-        let key = ((ib << 8) | k) as i32;
-        let mut slot = (key as usize) & (LZW_TABLE_CAP - 1);
-        let mut found = None;
-        while tables.generations[slot] == epoch {
-            if tables.keys[slot] == key {
-                found = Some(usize::from(tables.values[slot]));
-                break;
-            }
-            slot = (slot + 1) & (LZW_TABLE_CAP - 1);
-        }
+        let slot = ib * color_count + k;
+        let entry = tables.entries[slot];
+        let found = (entry >> LZW_ENTRY_EPOCH_SHIFT == epoch)
+            .then_some((entry & LZW_ENTRY_CODE_MASK) as usize);
 
         if let Some(code) = found {
             if code < next_code {
@@ -6648,9 +7134,7 @@ where
             code_mask = (1usize << code_size) - 1;
             epoch = tables.reset();
         } else if min_code_size == 1 {
-            tables.generations[slot] = epoch;
-            tables.keys[slot] = key;
-            tables.values[slot] = next_code as u16;
+            tables.entries[slot] = (epoch << LZW_ENTRY_EPOCH_SHIFT) | next_code as u32;
             next_code += 1;
             if next_code > code_mask && code_size < 12 {
                 code_size += 1;
@@ -6661,9 +7145,7 @@ where
                 code_size += 1;
                 code_mask = (1usize << code_size) - 1;
             }
-            tables.generations[slot] = epoch;
-            tables.keys[slot] = key;
-            tables.values[slot] = next_code as u16;
+            tables.entries[slot] = (epoch << LZW_ENTRY_EPOCH_SHIFT) | next_code as u32;
             next_code += 1;
         }
 
