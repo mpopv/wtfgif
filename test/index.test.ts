@@ -461,7 +461,7 @@ describe("Cross-library write/read compatibility", () => {
     });
   }
 
-  test("performance comparison - wtfgif vs omggif decoding speed", () => {
+  test("repeated decoding stays pixel-compatible with omggif", () => {
     const file = gifFiles[0]!; // Use first available file
     const gif = readFileSync(join(gifsDir, file));
     const omgReader = new OmgGifReader(gif);
@@ -474,23 +474,16 @@ describe("Cross-library write/read compatibility", () => {
     omgReader.decodeAndBlitFrameRGBA(0, pixels);
     wtfReader.decodeAndBlitFrameRGBA(0, pixels);
 
-    // Time omggif
-    const omgStart = performance.now();
     for (let i = 0; i < 10; i++) {
       omgReader.decodeAndBlitFrameRGBA(0, pixels);
     }
-    const omgTime = performance.now() - omgStart;
+    const omgPixels = new Uint8Array(pixels);
 
-    // Time wtfgif
-    const wtfStart = performance.now();
+    pixels.fill(0);
     for (let i = 0; i < 10; i++) {
       wtfReader.decodeAndBlitFrameRGBA(0, pixels);
     }
-    const wtfTime = performance.now() - wtfStart;
-
-    const speedup = omgTime / wtfTime;
-    // wtfgif should be competitive (at least 50% of omggif speed)
-    expect(speedup).toBeGreaterThan(0.3);
+    expect(pixels).toStrictEqual(omgPixels);
 
     wtfReader.returnToPool();
   });

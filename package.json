@@ -8,7 +8,10 @@
     "node": "^20.16.0 || >=22.3.0"
   },
   "files": [
-    "dist"
+    "dist",
+    "BENCHMARKS.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md"
   ],
   "sideEffects": [
     "./dist/index.cjs",
@@ -60,10 +63,17 @@
     "audit": "npm audit --audit-level=moderate",
     "lint": "biome lint .",
     "validate:wasm-core": "npm run build:wasm && node scripts/validate-wasm-core.mjs",
-    "bench": "npm run build && node scripts/bench.mjs",
+    "bench": "npm run build && npm run build:native:prototype && node scripts/bench-cold.mjs",
+    "bench:in-process": "npm run build && npm run build:native:prototype && node scripts/bench.mjs",
+    "build:native:prototype": "node scripts/build-native-prototype.mjs",
+    "bench:native:prototype": "npm run build && npm run build:native:prototype && node scripts/bench-native-prototype.mjs",
     "check": "npm run lint && npm run typecheck && npm run audit && npm run build:wasm && npm test && npm run build && npm run test:package && npm pack --dry-run",
+    "prepublishOnly": "npm run check",
     "prepack": "npm run build:wasm",
     "prepare": "npm run build"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "repository": {
     "type": "git",
@@ -93,7 +103,7 @@
     "url": "https://github.com/mpopv/wtfgif/issues"
   },
   "homepage": "https://github.com/mpopv/wtfgif#readme",
-  "description": "A drop-in optimized replacement for omggif: - Fused LZW decode→blit - 32-bit palette, Uint32 stores - Interlace pass scheduling - Typed-array open-addressing hash for encoder",
+  "description": "A fast, TypeScript-ready drop-in replacement for omggif with portable JavaScript and WebAssembly backends.",
   "devDependencies": {
     "@biomejs/biome": "^2.2.0",
     "@types/node": "^24.2.1",

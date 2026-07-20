@@ -1,23 +1,27 @@
 # Contributing
 
-Thanks for your interest in improving wtfgif!
+Bug reports and focused pull requests are welcome.
 
-## Getting Started
+## Setup
 
-1. Fork the repository and create a new branch for your feature or fix.
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Make your changes following the existing code style.
-4. Run the build and tests to ensure everything passes:
-   ```bash
-   npm run build
-   npm test
-   ```
-5. Commit your changes with a descriptive message and open a pull request.
+wtfgif requires Node 20.16 or newer and the stable Rust toolchain. Install
+`wasm-pack`, then install dependencies:
 
-## Code of Conduct
+```bash
+cargo install wasm-pack --locked
+npm ci
+```
 
-By participating you agree to abide by the [MIT License](LICENSE).
+## Before opening a pull request
 
+Run the complete release gate:
+
+```bash
+npm run check
+```
+
+Changes to decoding or encoding must include a regression test. Compatibility
+changes should compare behavior with omggif when applicable. Performance
+changes should preserve decoded pixels and report the command, fixture set, and
+whether the measurement used a warm process, cold process, WebAssembly, or the
+experimental native addon.

@@ -11,6 +11,14 @@ import {
 	setWasmCoreModule,
 } from "./wasm/runtime";
 import { createWasmCoreDecodeBackend } from "./wasm/coreBackend";
+import {
+	getNativeAddonStatus,
+	setNativeAddonModule,
+} from "./native/runtime";
+import {
+	decodeGifFramesRgba,
+	reencodeGifPixelPerfect,
+} from "./native/oneOff";
 
 const initializeWasmGlobally = initializeGlobalWasm;
 
@@ -31,12 +39,17 @@ export {
 	setWasmCoreModule,
 	createWasmCoreDecodeBackend,
 	installWasmCoreBackend,
+	setNativeAddonModule,
+	getNativeAddonStatus,
+	decodeGifFramesRgba,
+	reencodeGifPixelPerfect,
 };
 
 export type {
 	EncodeIndexedGifFramesBackend,
 	EncodeIndexedGifFramesOptions,
 	EncodeRgbaGifFramesOptions,
+	GifCompressionMode,
 	GifFrameDelay,
 	IndexedGifFrame,
 	IndexedGifFrames,
@@ -45,8 +58,19 @@ export type {
 } from "./encoder/writer";
 
 export type {
+	NativeAddonModule,
+	NativeDecodedRgbaFrames,
+} from "./native/runtime";
+
+export type {
 	GifDecodeBackend,
 	GifDecodeBackendStatus,
+	GifBinary,
+	GifOptions,
+	GifPixelBuffer,
+	Frame,
+	FrameInfo,
+	FrameOptions,
 	PreparedFrameBackendPreference,
 	PreparedFrameCacheMode,
 	PreparedFrameDedupeMode,
@@ -70,6 +94,10 @@ const browserExports = {
 	setWasmCoreModule,
 	createWasmCoreDecodeBackend,
 	installWasmCoreBackend,
+	setNativeAddonModule,
+	getNativeAddonStatus,
+	decodeGifFramesRgba,
+	reencodeGifPixelPerfect,
 };
 
 if (typeof window !== "undefined") {

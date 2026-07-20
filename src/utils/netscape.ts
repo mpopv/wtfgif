@@ -1,4 +1,5 @@
 import { GIF } from "../constants/gif";
+import { GifBinary } from "../types";
 
 // Identifier for the Netscape application extension: "NETSCAPE2.0"
 export const NETSCAPE_APPLICATION_ID = new Uint8Array([
@@ -10,15 +11,16 @@ export const NETSCAPE_APPLICATION_ID = new Uint8Array([
  * Returns the new buffer position after the extension.
  */
 export function writeNetscapeLoopCount(
-  buf: Uint8Array,
+  buf: GifBinary,
   p: number,
   loopCount: number,
 ): number {
   buf[p++] = GIF.EXT;
   buf[p++] = GIF.APPLICATION;
   buf[p++] = GIF.NETSCAPE_LEN;
-  buf.set(NETSCAPE_APPLICATION_ID, p);
-  p += NETSCAPE_APPLICATION_ID.length;
+  for (let i = 0; i < NETSCAPE_APPLICATION_ID.length; i++) {
+    buf[p++] = NETSCAPE_APPLICATION_ID[i]!;
+  }
   buf[p++] = 0x03;
   buf[p++] = 0x01;
   buf[p++] = loopCount & 0xff;

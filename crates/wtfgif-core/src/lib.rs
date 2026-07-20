@@ -32,6 +32,7 @@ struct GifMetadata {
     height: u16,
     global_palette_offset: Option<usize>,
     global_palette_size: usize,
+    loop_count: Option<u16>,
     frames: Vec<FrameMetadata>,
 }
 
@@ -46,8 +47,465 @@ const COMPOSITED_DELTA_VERSION: u32 = 1;
 const COMPOSITED_DELTA_HEADER_LEN: usize = 4;
 const COMPOSITED_DELTA_ENTRY_LEN: usize = 9;
 const LZW_TABLE_CAP: usize = 16_384;
-const COLOR_INDEX_CAP: usize = 1_024;
+const COLOR_INDEX_CAP: usize = 512;
 const TRANSPARENT_ALPHA_THRESHOLD: u8 = 128;
+
+#[cfg(not(target_arch = "wasm32"))]
+#[repr(C)]
+pub struct NativeDecodedGif {
+    pixels: *mut u8,
+    byte_len: usize,
+    width: u32,
+    height: u32,
+    frame_count: u32,
+    parse_nanos: u64,
+    decode_nanos: u64,
+    compose_nanos: u64,
+    host_owned: i32,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+type NativeRgbaAllocator =
+    unsafe extern "C" fn(context: *mut std::ffi::c_void, byte_len: usize) -> *mut u8;
+
+#[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
+#[link(name = "System")]
+extern "C" {
+    fn dispatch_get_global_queue(identifier: isize, flags: usize) -> *mut std::ffi::c_void;
+    fn dispatch_apply_f(
+        iterations: usize,
+        queue: *mut std::ffi::c_void,
+        context: *mut std::ffi::c_void,
+        work: unsafe extern "C" fn(*mut std::ffi::c_void, usize),
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[repr(C)]
+pub struct NativeEncodedGif {
+    bytes: *mut u8,
+    byte_len: usize,
+    byte_capacity: usize,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub unsafe extern "C" fn wtfgif_decode_all_rgba(
+    data: *const u8,
+    data_len: usize,
+    decoded: *mut NativeDecodedGif,
+) -> i32 {
+    wtfgif_decode_all_rgba_inner(data, data_len, None, std::ptr::null_mut(), decoded)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub unsafe extern "C" fn wtfgif_decode_all_rgba_host(
+    data: *const u8,
+    data_len: usize,
+    allocate: NativeRgbaAllocator,
+    allocate_context: *mut std::ffi::c_void,
+    decoded: *mut NativeDecodedGif,
+) -> i32 {
+    wtfgif_decode_all_rgba_inner(data, data_len, Some(allocate), allocate_context, decoded)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+unsafe fn wtfgif_decode_all_rgba_inner(
+    data: *const u8,
+    data_len: usize,
+    allocate: Option<NativeRgbaAllocator>,
+    allocate_context: *mut std::ffi::c_void,
+    decoded: *mut NativeDecodedGif,
+) -> i32 {
+    if data.is_null() || decoded.is_null() {
+        return 0;
+    }
+    let data = std::slice::from_raw_parts(data, data_len);
+    let Ok(metadata) = parse_metadata(data) else {
+        return 0;
+    };
+    let canvas_pixels = usize::from(metadata.width).checked_mul(usize::from(metadata.height));
+    let output_pixels = canvas_pixels.and_then(|pixels| pixels.checked_mul(metadata.frames.len()));
+    if let (Some(allocate), Some(canvas_pixels), Some(output_pixels)) =
+        (allocate, canvas_pixels, output_pixels)
+    {
+        if output_pixels < 50_000 && frames_are_independent_native(&metadata) {
+            let byte_len = match output_pixels.checked_mul(std::mem::size_of::<u32>()) {
+                Some(byte_len) => byte_len,
+                None => return 0,
+            };
+            let pixels_ptr = allocate(allocate_context, byte_len);
+            if pixels_ptr.is_null() {
+                return 0;
+            }
+            let output = std::slice::from_raw_parts_mut(
+                pixels_ptr.cast::<std::mem::MaybeUninit<u32>>(),
+                output_pixels,
+            );
+            if decode_small_independent_frames_into_native(data, &metadata, canvas_pixels, output)
+                .is_err()
+            {
+                return 0;
+            }
+            decoded.write(NativeDecodedGif {
+                pixels: pixels_ptr,
+                byte_len,
+                width: u32::from(metadata.width),
+                height: u32::from(metadata.height),
+                frame_count: metadata.frames.len() as u32,
+                parse_nanos: 0,
+                decode_nanos: 0,
+                compose_nanos: 0,
+                host_owned: 1,
+            });
+            return 1;
+        }
+        if let Some(segments) = independent_frame_segments_native(&metadata) {
+            let byte_len = match output_pixels.checked_mul(std::mem::size_of::<u32>()) {
+                Some(byte_len) => byte_len,
+                None => return 0,
+            };
+            let pixels_ptr = allocate(allocate_context, byte_len);
+            if pixels_ptr.is_null() {
+                return 0;
+            }
+            let output = std::slice::from_raw_parts_mut(
+                pixels_ptr.cast::<std::mem::MaybeUninit<u32>>(),
+                output_pixels,
+            );
+            if decode_segmented_frames_into_native(data, &metadata, &segments, output).is_err() {
+                return 0;
+            }
+            decoded.write(NativeDecodedGif {
+                pixels: pixels_ptr,
+                byte_len,
+                width: u32::from(metadata.width),
+                height: u32::from(metadata.height),
+                frame_count: metadata.frames.len() as u32,
+                parse_nanos: 0,
+                decode_nanos: 0,
+                compose_nanos: 0,
+                host_owned: 1,
+            });
+            return 1;
+        }
+        let mixed_pipeline_output = output_pixels >= 2_000_000
+            && metadata
+                .frames
+                .iter()
+                .any(|frame| frame.disposal > 1 || !frame_covers_canvas(frame, &metadata));
+        if mixed_pipeline_output && should_pipeline_decode_native(&metadata) {
+            let byte_len = match output_pixels.checked_mul(std::mem::size_of::<u32>()) {
+                Some(byte_len) => byte_len,
+                None => return 0,
+            };
+            let pixels_ptr = allocate(allocate_context, byte_len);
+            if pixels_ptr.is_null() {
+                return 0;
+            }
+            let output = std::slice::from_raw_parts_mut(
+                pixels_ptr.cast::<std::mem::MaybeUninit<u32>>(),
+                output_pixels,
+            );
+            if decode_and_compose_pipeline_into_native(data, &metadata, output).is_err() {
+                return 0;
+            }
+            decoded.write(NativeDecodedGif {
+                pixels: pixels_ptr,
+                byte_len,
+                width: u32::from(metadata.width),
+                height: u32::from(metadata.height),
+                frame_count: metadata.frames.len() as u32,
+                parse_nanos: 0,
+                decode_nanos: 0,
+                compose_nanos: 0,
+                host_owned: 1,
+            });
+            return 1;
+        }
+    }
+
+    let result = (|| {
+        let pixels = if frames_are_independent_native(&metadata) {
+            decode_independent_frames_native(data, &metadata)?
+        } else if let Some(segments) = independent_frame_segments_native(&metadata) {
+            decode_segmented_frames_native(data, &metadata, &segments)?
+        } else if should_fuse_sequential_decode_native(&metadata) {
+            prepare_all_composited_frames_inner(data, &metadata, PixelFormat::Rgba)?
+        } else if should_pipeline_decode_native(&metadata) {
+            decode_and_compose_pipeline_native(data, &metadata)?
+        } else {
+            let decoded_indices = decode_frame_indices_parallel_native(data, &metadata)?;
+            compose_decoded_frames_native(data, &metadata, &decoded_indices)?
+        };
+        Ok::<_, String>(pixels)
+    })();
+    let Ok(pixels) = result else {
+        return 0;
+    };
+    let mut pixels = pixels.into_boxed_slice();
+    let byte_len = pixels.len() * std::mem::size_of::<u32>();
+    let pixels_ptr = pixels.as_mut_ptr().cast::<u8>();
+    std::mem::forget(pixels);
+    decoded.write(NativeDecodedGif {
+        pixels: pixels_ptr,
+        byte_len,
+        width: u32::from(metadata.width),
+        height: u32::from(metadata.height),
+        frame_count: metadata.frames.len() as u32,
+        parse_nanos: 0,
+        decode_nanos: 0,
+        compose_nanos: 0,
+        host_owned: 0,
+    });
+    1
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub unsafe extern "C" fn wtfgif_free_rgba(pixels: *mut u8, byte_len: usize) {
+    if pixels.is_null() || byte_len == 0 || byte_len % std::mem::size_of::<u32>() != 0 {
+        return;
+    }
+    let pixel_len = byte_len / std::mem::size_of::<u32>();
+    drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+        pixels.cast::<u32>(),
+        pixel_len,
+    )));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub unsafe extern "C" fn wtfgif_encode_rgba_fast(
+    rgba_stream: *const u8,
+    rgba_len: usize,
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    palette_rgb: *const u32,
+    palette_len: usize,
+    delays: *const u16,
+    delay_count: usize,
+    loop_count: i32,
+    deltas: i32,
+    encoded: *mut NativeEncodedGif,
+) -> i32 {
+    if rgba_stream.is_null()
+        || encoded.is_null()
+        || (palette_len != 0 && palette_rgb.is_null())
+        || (delay_count != 0 && delays.is_null())
+    {
+        return 0;
+    }
+
+    let rgba_stream = std::slice::from_raw_parts(rgba_stream, rgba_len);
+    let palette_rgb = if palette_len == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(palette_rgb, palette_len)
+    };
+    let delays = if delay_count == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(delays, delay_count)
+    };
+    let result = encode_rgba_gif_inner(
+        rgba_stream,
+        width,
+        height,
+        frame_count,
+        palette_rgb,
+        DelaySource::PerFrame(delays),
+        loop_count,
+        deltas != 0,
+        TRANSPARENT_ALPHA_THRESHOLD,
+        true,
+    );
+    let Ok(bytes) = result else {
+        return 0;
+    };
+
+    let mut bytes = bytes;
+    let byte_len = bytes.len();
+    let byte_capacity = bytes.capacity();
+    let bytes_ptr = bytes.as_mut_ptr();
+    std::mem::forget(bytes);
+    encoded.write(NativeEncodedGif {
+        bytes: bytes_ptr,
+        byte_len,
+        byte_capacity,
+    });
+    1
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub unsafe extern "C" fn wtfgif_encode_indexed_fast(
+    index_stream: *const u8,
+    index_len: usize,
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    palette_rgb: *const u32,
+    palette_len: usize,
+    delays: *const u16,
+    delay_count: usize,
+    loop_count: i32,
+    deltas: i32,
+    encoded: *mut NativeEncodedGif,
+) -> i32 {
+    if index_stream.is_null() || encoded.is_null() || palette_rgb.is_null() || delays.is_null() {
+        return 0;
+    }
+    let index_stream = std::slice::from_raw_parts(index_stream, index_len);
+    let palette_rgb = std::slice::from_raw_parts(palette_rgb, palette_len);
+    let delays = std::slice::from_raw_parts(delays, delay_count);
+    let delay_source = DelaySource::PerFrame(delays);
+    let result = if deltas != 0 {
+        encode_indexed_literal_delta_gif_inner(
+            index_stream,
+            width,
+            height,
+            frame_count,
+            palette_rgb,
+            delay_source,
+            loop_count,
+        )
+    } else {
+        encode_indexed_literal_gif_inner(
+            index_stream,
+            width,
+            height,
+            frame_count,
+            palette_rgb,
+            delay_source,
+            loop_count,
+            None,
+        )
+    };
+    let Ok(mut bytes) = result else {
+        return 0;
+    };
+    let byte_len = bytes.len();
+    let byte_capacity = bytes.capacity();
+    let bytes_ptr = bytes.as_mut_ptr();
+    std::mem::forget(bytes);
+    encoded.write(NativeEncodedGif {
+        bytes: bytes_ptr,
+        byte_len,
+        byte_capacity,
+    });
+    1
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub unsafe extern "C" fn wtfgif_reencode_gif_fast(
+    data: *const u8,
+    data_len: usize,
+    encoded: *mut NativeEncodedGif,
+) -> i32 {
+    if data.is_null() || encoded.is_null() {
+        return 0;
+    }
+    let data = std::slice::from_raw_parts(data, data_len);
+    let result = (|| {
+        let metadata = parse_metadata(data)?;
+        let loop_count = metadata.loop_count.map(i32::from).unwrap_or(-1);
+        reencode_gif_literal_parallel_native(data, &metadata, loop_count)
+    })();
+    let Ok(bytes) = result else {
+        return 0;
+    };
+
+    let mut bytes = bytes;
+    let byte_len = bytes.len();
+    let byte_capacity = bytes.capacity();
+    let bytes_ptr = bytes.as_mut_ptr();
+    std::mem::forget(bytes);
+    encoded.write(NativeEncodedGif {
+        bytes: bytes_ptr,
+        byte_len,
+        byte_capacity,
+    });
+    1
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub unsafe extern "C" fn wtfgif_reencode_gif_fast_host(
+    data: *const u8,
+    data_len: usize,
+    allocate: NativeRgbaAllocator,
+    allocate_context: *mut std::ffi::c_void,
+    encoded: *mut NativeEncodedGif,
+) -> i32 {
+    if data.is_null() || encoded.is_null() {
+        return 0;
+    }
+    let data_slice = std::slice::from_raw_parts(data, data_len);
+    match try_reencode_small_gif_into_host(data_slice, allocate, allocate_context) {
+        Ok(Some((bytes, byte_len))) => {
+            encoded.write(NativeEncodedGif {
+                bytes,
+                byte_len,
+                byte_capacity: 0,
+            });
+            2
+        }
+        Ok(None) => {
+            let Ok(metadata) = parse_metadata(data_slice) else {
+                return 0;
+            };
+            let loop_count = metadata.loop_count.map(i32::from).unwrap_or(-1);
+            match try_reencode_parallel_gif_into_host(
+                data_slice,
+                &metadata,
+                loop_count,
+                allocate,
+                allocate_context,
+            ) {
+                Ok(Some((bytes, byte_len))) => {
+                    encoded.write(NativeEncodedGif {
+                        bytes,
+                        byte_len,
+                        byte_capacity: 0,
+                    });
+                    2
+                }
+                Ok(None) => {
+                    let Ok(mut bytes) =
+                        reencode_gif_literal_parallel_native(data_slice, &metadata, loop_count)
+                    else {
+                        return 0;
+                    };
+                    let byte_len = bytes.len();
+                    let byte_capacity = bytes.capacity();
+                    let bytes_pointer = bytes.as_mut_ptr();
+                    std::mem::forget(bytes);
+                    encoded.write(NativeEncodedGif {
+                        bytes: bytes_pointer,
+                        byte_len,
+                        byte_capacity,
+                    });
+                    1
+                }
+                Err(_) => 0,
+            }
+        }
+        Err(_) => 0,
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub unsafe extern "C" fn wtfgif_free_bytes(bytes: *mut u8, byte_len: usize, byte_capacity: usize) {
+    if bytes.is_null() {
+        return;
+    }
+    drop(Vec::from_raw_parts(bytes, byte_len, byte_capacity));
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DelaySource<'a> {
@@ -183,6 +641,52 @@ pub fn encode_indexed_gif(
 }
 
 #[wasm_bindgen]
+pub fn encode_indexed_literal_gif(
+    index_stream: &[u8],
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    palette_rgb: &[u32],
+    delay: u16,
+    loop_count: i32,
+) -> Result<Vec<u8>, JsValue> {
+    encode_indexed_literal_gif_inner(
+        index_stream,
+        width,
+        height,
+        frame_count,
+        palette_rgb,
+        DelaySource::Constant(delay),
+        loop_count,
+        None,
+    )
+    .map_err(|message| JsValue::from_str(&message))
+}
+
+#[wasm_bindgen]
+pub fn encode_indexed_literal_gif_with_delays(
+    index_stream: &[u8],
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    palette_rgb: &[u32],
+    delays: &[u16],
+    loop_count: i32,
+) -> Result<Vec<u8>, JsValue> {
+    encode_indexed_literal_gif_inner(
+        index_stream,
+        width,
+        height,
+        frame_count,
+        palette_rgb,
+        DelaySource::PerFrame(delays),
+        loop_count,
+        None,
+    )
+    .map_err(|message| JsValue::from_str(&message))
+}
+
+#[wasm_bindgen]
 pub fn encode_indexed_gif_with_delays(
     index_stream: &[u8],
     width: u16,
@@ -250,6 +754,50 @@ pub fn encode_indexed_delta_gif_with_delays(
 }
 
 #[wasm_bindgen]
+pub fn encode_indexed_literal_delta_gif(
+    index_stream: &[u8],
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    palette_rgb: &[u32],
+    delay: u16,
+    loop_count: i32,
+) -> Result<Vec<u8>, JsValue> {
+    encode_indexed_literal_delta_gif_inner(
+        index_stream,
+        width,
+        height,
+        frame_count,
+        palette_rgb,
+        DelaySource::Constant(delay),
+        loop_count,
+    )
+    .map_err(|message| JsValue::from_str(&message))
+}
+
+#[wasm_bindgen]
+pub fn encode_indexed_literal_delta_gif_with_delays(
+    index_stream: &[u8],
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    palette_rgb: &[u32],
+    delays: &[u16],
+    loop_count: i32,
+) -> Result<Vec<u8>, JsValue> {
+    encode_indexed_literal_delta_gif_inner(
+        index_stream,
+        width,
+        height,
+        frame_count,
+        palette_rgb,
+        DelaySource::PerFrame(delays),
+        loop_count,
+    )
+    .map_err(|message| JsValue::from_str(&message))
+}
+
+#[wasm_bindgen]
 pub fn encode_rgba_gif(
     rgba_stream: &[u8],
     width: u16,
@@ -270,6 +818,109 @@ pub fn encode_rgba_gif(
         loop_count,
         deltas,
         TRANSPARENT_ALPHA_THRESHOLD,
+        false,
+    )
+    .map_err(|message| JsValue::from_str(&message))
+}
+
+#[wasm_bindgen]
+pub fn encode_rgba_literal_gif(
+    rgba_stream: &[u8],
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    palette_rgb: &[u32],
+    delay: u16,
+    loop_count: i32,
+) -> Result<Vec<u8>, JsValue> {
+    encode_rgba_gif_inner(
+        rgba_stream,
+        width,
+        height,
+        frame_count,
+        palette_rgb,
+        DelaySource::Constant(delay),
+        loop_count,
+        false,
+        TRANSPARENT_ALPHA_THRESHOLD,
+        true,
+    )
+    .map_err(|message| JsValue::from_str(&message))
+}
+
+#[wasm_bindgen]
+pub fn encode_rgba_literal_gif_with_options(
+    rgba_stream: &[u8],
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    palette_rgb: &[u32],
+    delays: &[u16],
+    loop_count: i32,
+    alpha_threshold: u8,
+) -> Result<Vec<u8>, JsValue> {
+    encode_rgba_gif_inner(
+        rgba_stream,
+        width,
+        height,
+        frame_count,
+        palette_rgb,
+        DelaySource::PerFrame(delays),
+        loop_count,
+        false,
+        alpha_threshold,
+        true,
+    )
+    .map_err(|message| JsValue::from_str(&message))
+}
+
+#[wasm_bindgen]
+pub fn encode_rgba_literal_delta_gif(
+    rgba_stream: &[u8],
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    palette_rgb: &[u32],
+    delay: u16,
+    loop_count: i32,
+) -> Result<Vec<u8>, JsValue> {
+    encode_rgba_gif_inner(
+        rgba_stream,
+        width,
+        height,
+        frame_count,
+        palette_rgb,
+        DelaySource::Constant(delay),
+        loop_count,
+        true,
+        TRANSPARENT_ALPHA_THRESHOLD,
+        true,
+    )
+    .map_err(|message| JsValue::from_str(&message))
+}
+
+#[wasm_bindgen]
+pub fn encode_rgba_literal_delta_gif_with_options(
+    rgba_stream: &[u8],
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    palette_rgb: &[u32],
+    delays: &[u16],
+    loop_count: i32,
+    alpha_threshold: u8,
+) -> Result<Vec<u8>, JsValue> {
+    encode_rgba_gif_inner(
+        rgba_stream,
+        width,
+        height,
+        frame_count,
+        palette_rgb,
+        DelaySource::PerFrame(delays),
+        loop_count,
+        true,
+        alpha_threshold,
+        true,
     )
     .map_err(|message| JsValue::from_str(&message))
 }
@@ -296,6 +947,7 @@ pub fn encode_rgba_gif_with_options(
         loop_count,
         deltas,
         alpha_threshold,
+        false,
     )
     .map_err(|message| JsValue::from_str(&message))
 }
@@ -427,6 +1079,7 @@ fn parse_metadata(data: &[u8]) -> Result<GifMetadata, String> {
 
     let mut frames = Vec::new();
     let mut graphic_control = GraphicControl::default();
+    let mut loop_count = None;
 
     while offset < data.len() {
         let byte = data[offset];
@@ -457,6 +1110,9 @@ fn parse_metadata(data: &[u8]) -> Result<GifMetadata, String> {
                     graphic_control = gce;
                     offset = next_offset;
                 } else {
+                    if label == 0xff {
+                        loop_count = read_loop_count_extension(data, offset).or(loop_count);
+                    }
                     offset = skip_sub_blocks(data, offset, "extension data")?;
                 }
             }
@@ -476,8 +1132,23 @@ fn parse_metadata(data: &[u8]) -> Result<GifMetadata, String> {
         height,
         global_palette_offset,
         global_palette_size,
+        loop_count,
         frames,
     })
+}
+
+fn read_loop_count_extension(data: &[u8], offset: usize) -> Option<u16> {
+    let end = offset.checked_add(16)?;
+    if end > data.len()
+        || data[offset] != 11
+        || (&data[offset + 1..offset + 12] != b"NETSCAPE2.0"
+            && &data[offset + 1..offset + 12] != b"ANIMEXTS1.0")
+        || data[offset + 12] != 3
+        || data[offset + 13] != 1
+    {
+        return None;
+    }
+    Some(u16::from_le_bytes([data[offset + 14], data[offset + 15]]))
 }
 
 fn parse_graphic_control(data: &[u8], offset: usize) -> Result<(GraphicControl, usize), String> {
@@ -569,14 +1240,137 @@ fn parse_image_descriptor(
 }
 
 fn decode_frame_indices_inner(data: &[u8], frame: &FrameMetadata) -> Result<Vec<u8>, String> {
-    let image_data = collect_image_data(data, frame.data_offset)?;
-    let frame_size = usize::from(frame.width) * usize::from(frame.height);
-    let linear = lzw_decode_to_indices(frame.min_code_size, &image_data, frame_size)?;
+    let mut image_data = Vec::new();
+    decode_frame_indices_with_image_scratch(data, frame, &mut image_data)
+}
 
+fn decode_frame_indices_with_image_scratch(
+    data: &[u8],
+    frame: &FrameMetadata,
+    image_data: &mut Vec<u8>,
+) -> Result<Vec<u8>, String> {
+    let frame_size = usize::from(frame.width) * usize::from(frame.height);
+    if should_decode_lzw_direct(frame, frame_size) {
+        if image_data.capacity() < frame.data_length {
+            image_data.reserve(frame.data_length.saturating_sub(image_data.len()));
+        }
+        collect_image_data_into(data, frame.data_offset, image_data)?;
+        let mut output = vec![0; frame_size];
+        lzw_decode_to_indices_direct(frame.min_code_size, image_data, &mut output)?;
+        return deinterlace_frame_indices(output, frame);
+    }
+    let mut lzw_scratch = LzwStackScratch::default();
+    decode_frame_indices_with_scratches(data, frame, image_data, &mut lzw_scratch)
+}
+
+fn decode_frame_indices_with_scratches(
+    data: &[u8],
+    frame: &FrameMetadata,
+    image_data: &mut Vec<u8>,
+    lzw_scratch: &mut LzwStackScratch,
+) -> Result<Vec<u8>, String> {
+    if image_data.capacity() < frame.data_length {
+        image_data.reserve(frame.data_length.saturating_sub(image_data.len()));
+    }
+    collect_image_data_into(data, frame.data_offset, image_data)?;
+    let frame_size = usize::from(frame.width) * usize::from(frame.height);
+    let linear = if should_decode_lzw_direct(frame, frame_size) {
+        let mut output = vec![0; frame_size];
+        if should_decode_lzw_copy(frame, frame_size) {
+            lzw_decode_to_indices_copy_with_scratch(
+                frame.min_code_size,
+                image_data,
+                &mut output,
+                lzw_scratch,
+            )?;
+        } else {
+            lzw_decode_to_indices_direct_with_scratch(
+                frame.min_code_size,
+                image_data,
+                &mut output,
+                lzw_scratch,
+            )?;
+        }
+        output
+    } else {
+        let mut output = vec![0; frame_size];
+        lzw_decode_to_indices_stack_with_scratch(
+            frame.min_code_size,
+            image_data,
+            &mut output,
+            lzw_scratch,
+        )?;
+        output
+    };
+    deinterlace_frame_indices(linear, frame)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn decode_frame_indices_reusing_output(
+    data: &[u8],
+    frame: &FrameMetadata,
+    image_data: &mut Vec<u8>,
+    lzw_scratch: &mut LzwStackScratch,
+    output: &mut Vec<u8>,
+) -> Result<(), String> {
+    if frame.interlaced {
+        *output = decode_frame_indices_with_scratches(data, frame, image_data, lzw_scratch)?;
+        return Ok(());
+    }
+    if image_data.capacity() < frame.data_length {
+        image_data.reserve(frame.data_length.saturating_sub(image_data.len()));
+    }
+    collect_image_data_into(data, frame.data_offset, image_data)?;
+    let frame_size = usize::from(frame.width) * usize::from(frame.height);
+    output.resize(frame_size, 0);
+    if should_decode_lzw_direct(frame, frame_size) {
+        if should_decode_lzw_copy(frame, frame_size) {
+            lzw_decode_to_indices_copy_with_scratch(
+                frame.min_code_size,
+                image_data,
+                output,
+                lzw_scratch,
+            )
+        } else {
+            lzw_decode_to_indices_direct_with_scratch(
+                frame.min_code_size,
+                image_data,
+                output,
+                lzw_scratch,
+            )
+        }
+    } else {
+        lzw_decode_to_indices_stack_with_scratch(
+            frame.min_code_size,
+            image_data,
+            output,
+            lzw_scratch,
+        )
+    }
+}
+
+#[inline]
+fn should_decode_lzw_direct(frame: &FrameMetadata, frame_size: usize) -> bool {
+    (frame.min_code_size == 8 && frame_size >= 256)
+        || frame_size >= 40_000
+        || (frame_size >= 1_000
+            && frame.data_length.saturating_mul(20) < frame_size.saturating_mul(13))
+        || (frame_size >= 256 && frame.data_length.saturating_mul(5) < frame_size.saturating_mul(2))
+}
+
+#[inline]
+fn should_decode_lzw_copy(frame: &FrameMetadata, frame_size: usize) -> bool {
+    frame.min_code_size <= 6
+        || frame_size >= 10_000
+        || frame.data_length.saturating_mul(5) < frame_size.saturating_mul(2)
+}
+
+fn deinterlace_frame_indices(linear: Vec<u8>, frame: &FrameMetadata) -> Result<Vec<u8>, String> {
     if !frame.interlaced {
         return Ok(linear);
     }
 
+    let frame_size = usize::from(frame.width) * usize::from(frame.height);
     let mut deinterlaced = vec![0; frame_size];
     let width = usize::from(frame.width);
     let height = usize::from(frame.height);
@@ -629,8 +1423,28 @@ fn prepare_composited_frames_inner(
     requested_frames: &[u8],
     format: PixelFormat,
 ) -> Result<Vec<u32>, String> {
-    if requested_frames.len() > metadata.frames.len() {
-        return Err("Requested frame flags exceed frame count".to_string());
+    prepare_composited_frames_selected(data, metadata, Some(requested_frames), format)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn prepare_all_composited_frames_inner(
+    data: &[u8],
+    metadata: &GifMetadata,
+    format: PixelFormat,
+) -> Result<Vec<u32>, String> {
+    prepare_composited_frames_selected(data, metadata, None, format)
+}
+
+fn prepare_composited_frames_selected(
+    data: &[u8],
+    metadata: &GifMetadata,
+    requested_frames: Option<&[u8]>,
+    format: PixelFormat,
+) -> Result<Vec<u32>, String> {
+    if let Some(requested_frames) = requested_frames {
+        if requested_frames.len() > metadata.frames.len() {
+            return Err("Requested frame flags exceed frame count".to_string());
+        }
     }
 
     let canvas_width = usize::from(metadata.width);
@@ -638,25 +1452,67 @@ fn prepare_composited_frames_inner(
     let canvas_pixels = canvas_width
         .checked_mul(canvas_height)
         .ok_or_else(|| "Canvas size overflow".to_string())?;
-    let requested_count = requested_frames.iter().filter(|flag| **flag != 0).count();
+    let requested_count = requested_frames.map_or(metadata.frames.len(), |requested_frames| {
+        requested_frames.iter().filter(|flag| **flag != 0).count()
+    });
     let output_pixels = requested_count
         .checked_mul(canvas_pixels)
         .ok_or_else(|| "Prepared frame output overflow".to_string())?;
     let mut output = Vec::with_capacity(output_pixels);
     let mut canvas = vec![0u32; canvas_pixels];
+    let mut image_data = Vec::new();
+    let mut lzw_scratch = LzwStackScratch::default();
+    #[cfg(not(target_arch = "wasm32"))]
+    let mut indices_scratch = Vec::new();
+    let palettes_share_table = metadata.frames.first().is_some_and(|first| {
+        metadata.frames.iter().all(|frame| {
+            frame.palette_offset == first.palette_offset && frame.palette_size == first.palette_size
+        })
+    });
+    let shared_palette = if palettes_share_table {
+        Some(build_palette_u32(data, &metadata.frames[0], format)?)
+    } else {
+        None
+    };
 
-    for (frame_index, requested) in requested_frames.iter().enumerate() {
+    let frame_limit = requested_frames.map_or(metadata.frames.len(), <[u8]>::len);
+    for frame_index in 0..frame_limit {
+        let requested = requested_frames
+            .and_then(|frames| frames.get(frame_index))
+            .copied()
+            .unwrap_or(1);
         let frame = metadata
             .frames
             .get(frame_index)
             .ok_or_else(|| "Frame index out of range".to_string())?;
         let restore = (frame.disposal == 3).then(|| canvas.clone());
-        let palette = build_palette_u32(data, frame, format)?;
-        let indices = decode_frame_indices_inner(data, frame)?;
+        let palette_storage;
+        let palette = if let Some(palette) = shared_palette.as_ref() {
+            palette
+        } else {
+            palette_storage = build_palette_u32(data, frame, format)?;
+            &palette_storage
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        let indices = {
+            decode_frame_indices_reusing_output(
+                data,
+                frame,
+                &mut image_data,
+                &mut lzw_scratch,
+                &mut indices_scratch,
+            )?;
+            &indices_scratch
+        };
+        #[cfg(target_arch = "wasm32")]
+        let indices_storage =
+            decode_frame_indices_with_scratches(data, frame, &mut image_data, &mut lzw_scratch)?;
+        #[cfg(target_arch = "wasm32")]
+        let indices = &indices_storage;
 
-        blit_indices_to_canvas_u32(&palette, metadata.width, frame, &indices, &mut canvas)?;
+        blit_indices_to_canvas_u32(palette, metadata.width, frame, indices, &mut canvas)?;
 
-        if *requested != 0 {
+        if requested != 0 {
             output.extend_from_slice(&canvas);
         }
 
@@ -664,6 +1520,2041 @@ fn prepare_composited_frames_inner(
     }
 
     Ok(output)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn compose_decoded_frames_native(
+    data: &[u8],
+    metadata: &GifMetadata,
+    decoded_indices: &[Vec<u8>],
+) -> Result<Vec<u32>, String> {
+    let canvas_pixels = usize::from(metadata.width)
+        .checked_mul(usize::from(metadata.height))
+        .ok_or_else(|| "Canvas size overflow".to_string())?;
+    let output_pixels = metadata
+        .frames
+        .len()
+        .checked_mul(canvas_pixels)
+        .ok_or_else(|| "Prepared frame output overflow".to_string())?;
+    let available_threads = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1);
+    if available_threads > 1 && output_pixels >= 200_000 {
+        return compose_decoded_frames_by_rows_native(
+            data,
+            metadata,
+            decoded_indices,
+            available_threads,
+            output_pixels,
+        );
+    }
+    let mut output = Vec::with_capacity(output_pixels);
+    let mut canvas = vec![0u32; canvas_pixels];
+
+    for (frame, indices) in metadata.frames.iter().zip(decoded_indices.iter()) {
+        let restore = (frame.disposal == 3).then(|| canvas.clone());
+        let palette = build_palette_u32(data, frame, PixelFormat::Rgba)?;
+        blit_indices_to_canvas_u32(&palette, metadata.width, frame, indices, &mut canvas)?;
+        output.extend_from_slice(&canvas);
+        apply_frame_disposal_u32(&mut canvas, metadata.width, metadata.height, frame, restore);
+    }
+    Ok(output)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn compose_decoded_frames_by_rows_native(
+    data: &[u8],
+    metadata: &GifMetadata,
+    decoded_indices: &[Vec<u8>],
+    available_threads: usize,
+    output_pixels: usize,
+) -> Result<Vec<u32>, String> {
+    let canvas_width = usize::from(metadata.width);
+    let canvas_height = usize::from(metadata.height);
+    let canvas_pixels = canvas_width * canvas_height;
+    let thread_count = available_threads.min(canvas_height);
+    let rows_per_thread = canvas_height.div_ceil(thread_count);
+    let palettes_share_table = metadata.frames.first().is_some_and(|first| {
+        metadata.frames.iter().all(|frame| {
+            frame.palette_offset == first.palette_offset && frame.palette_size == first.palette_size
+        })
+    });
+    let palettes = if palettes_share_table {
+        vec![build_palette_u32(
+            data,
+            &metadata.frames[0],
+            PixelFormat::Rgba,
+        )?]
+    } else {
+        metadata
+            .frames
+            .iter()
+            .map(|frame| build_palette_u32(data, frame, PixelFormat::Rgba))
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    let mut output = Vec::<std::mem::MaybeUninit<u32>>::with_capacity(output_pixels);
+    unsafe {
+        output.set_len(output_pixels);
+    }
+    let output_address = output.as_mut_ptr() as usize;
+
+    let result = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..thread_count)
+            .map(|thread_index| {
+                let row_start = thread_index * rows_per_thread;
+                let row_end = (row_start + rows_per_thread).min(canvas_height);
+                let palettes = &palettes;
+                scope.spawn(move || {
+                    let stripe_pixels = (row_end - row_start) * canvas_width;
+                    let mut canvas = vec![0u32; stripe_pixels];
+                    for (frame_index, (frame, indices)) in metadata
+                        .frames
+                        .iter()
+                        .zip(decoded_indices.iter())
+                        .enumerate()
+                    {
+                        let palette = &palettes[if palettes_share_table { 0 } else { frame_index }];
+                        let restore = (frame.disposal == 3).then(|| canvas.clone());
+                        blit_indices_to_canvas_stripe_u32(
+                            palette,
+                            canvas_width,
+                            frame,
+                            indices,
+                            row_start,
+                            row_end,
+                            &mut canvas,
+                        )?;
+                        unsafe {
+                            let destination = (output_address as *mut std::mem::MaybeUninit<u32>)
+                                .add(frame_index * canvas_pixels + row_start * canvas_width)
+                                .cast::<u32>();
+                            std::ptr::copy_nonoverlapping(
+                                canvas.as_ptr(),
+                                destination,
+                                stripe_pixels,
+                            );
+                        }
+                        if frame.disposal == 2 {
+                            clear_frame_rect_stripe_u32(
+                                &mut canvas,
+                                canvas_width,
+                                frame,
+                                row_start,
+                                row_end,
+                            );
+                        } else if frame.disposal == 3 {
+                            canvas = restore.expect("restore canvas exists");
+                        }
+                    }
+                    Ok::<_, String>(())
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle
+                .join()
+                .map_err(|_| "Parallel GIF compositor panicked".to_string())??;
+        }
+        Ok::<_, String>(())
+    });
+    result?;
+
+    let pointer = output.as_mut_ptr().cast::<u32>();
+    let length = output.len();
+    let capacity = output.capacity();
+    std::mem::forget(output);
+    Ok(unsafe { Vec::from_raw_parts(pointer, length, capacity) })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn blit_indices_to_canvas_stripe_u32(
+    palette: &[u32],
+    canvas_width: usize,
+    frame: &FrameMetadata,
+    indices: &[u8],
+    row_start: usize,
+    row_end: usize,
+    canvas: &mut [u32],
+) -> Result<(), String> {
+    let frame_y = usize::from(frame.y);
+    let frame_bottom = frame_y + usize::from(frame.height);
+    let first_row = frame_y.max(row_start);
+    let last_row = frame_bottom.min(row_end);
+    if first_row >= last_row {
+        return Ok(());
+    }
+    let frame_width = usize::from(frame.width);
+    let frame_x = usize::from(frame.x);
+    let frame_pixels = frame_width
+        .checked_mul(usize::from(frame.height))
+        .ok_or_else(|| "Decoded frame size overflow".to_string())?;
+    if indices.len() < frame_pixels {
+        return Err("Decoded index buffer is too short".to_string());
+    }
+    if frame_x.saturating_add(frame_width) > canvas_width
+        || canvas_width == 0
+        || row_end.saturating_sub(row_start) > canvas.len() / canvas_width
+    {
+        return Err("Frame destination exceeds canvas bounds".to_string());
+    }
+    let full_byte_palette = palette.len() == 256;
+    match frame.transparent_index {
+        None => {
+            for global_y in first_row..last_row {
+                let source = (global_y - frame_y) * frame_width;
+                let source_row = &indices[source..source + frame_width];
+                let destination = (global_y - row_start) * canvas_width + frame_x;
+                let destination_row = &mut canvas[destination..destination + frame_width];
+                if full_byte_palette {
+                    for (pixel, &index) in destination_row.iter_mut().zip(source_row) {
+                        *pixel = unsafe { *palette.get_unchecked(usize::from(index)) };
+                    }
+                    continue;
+                }
+                for (pixel, &index) in destination_row.iter_mut().zip(source_row) {
+                    *pixel = *palette
+                        .get(usize::from(index))
+                        .ok_or_else(|| format!("Palette index {index} exceeds palette size"))?;
+                }
+            }
+        }
+        Some(transparent_index) => {
+            for global_y in first_row..last_row {
+                let source = (global_y - frame_y) * frame_width;
+                let source_row = &indices[source..source + frame_width];
+                let destination = (global_y - row_start) * canvas_width + frame_x;
+                let destination_row = &mut canvas[destination..destination + frame_width];
+                if full_byte_palette {
+                    let palette_address = palette.as_ptr();
+                    let transparent_bytes =
+                        u64::from(transparent_index).wrapping_mul(0x0101_0101_0101_0101);
+                    let mut pixel_index = 0usize;
+                    while pixel_index + 8 <= frame_width {
+                        let packed_indices = unsafe {
+                            std::ptr::read_unaligned(
+                                source_row.as_ptr().add(pixel_index).cast::<u64>(),
+                            )
+                        };
+                        if packed_indices == transparent_bytes {
+                            pixel_index += 8;
+                            continue;
+                        }
+                        let compared = packed_indices ^ transparent_bytes;
+                        let transparent_lanes = compared.wrapping_sub(0x0101_0101_0101_0101)
+                            & !compared
+                            & 0x8080_8080_8080_8080;
+                        if transparent_lanes == 0 {
+                            let colors = unsafe {
+                                [
+                                    *palette_address.add((packed_indices & 0xff) as usize),
+                                    *palette_address
+                                        .add(((packed_indices >> 8) & 0xff) as usize),
+                                    *palette_address
+                                        .add(((packed_indices >> 16) & 0xff) as usize),
+                                    *palette_address
+                                        .add(((packed_indices >> 24) & 0xff) as usize),
+                                    *palette_address
+                                        .add(((packed_indices >> 32) & 0xff) as usize),
+                                    *palette_address
+                                        .add(((packed_indices >> 40) & 0xff) as usize),
+                                    *palette_address
+                                        .add(((packed_indices >> 48) & 0xff) as usize),
+                                    *palette_address
+                                        .add(((packed_indices >> 56) & 0xff) as usize),
+                                ]
+                            };
+                            unsafe {
+                                std::ptr::copy_nonoverlapping(
+                                    colors.as_ptr(),
+                                    destination_row.as_mut_ptr().add(pixel_index),
+                                    colors.len(),
+                                );
+                            }
+                            pixel_index += 8;
+                            continue;
+                        }
+                        for lane in 0..8 {
+                            let index = unsafe { *source_row.get_unchecked(pixel_index + lane) };
+                            if index != transparent_index {
+                                destination_row[pixel_index + lane] =
+                                    unsafe { *palette_address.add(usize::from(index)) };
+                            }
+                        }
+                        pixel_index += 8;
+                    }
+                    while pixel_index < frame_width {
+                        let index = source_row[pixel_index];
+                        if index != transparent_index {
+                            destination_row[pixel_index] =
+                                unsafe { *palette_address.add(usize::from(index)) };
+                        }
+                        pixel_index += 1;
+                    }
+                    continue;
+                }
+                for (pixel, &index) in destination_row.iter_mut().zip(source_row) {
+                    if index != transparent_index {
+                        *pixel = *palette
+                            .get(usize::from(index))
+                            .ok_or_else(|| format!("Palette index {index} exceeds palette size"))?;
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn clear_frame_rect_stripe_u32(
+    canvas: &mut [u32],
+    canvas_width: usize,
+    frame: &FrameMetadata,
+    row_start: usize,
+    row_end: usize,
+) {
+    let frame_y = usize::from(frame.y);
+    let first_row = frame_y.max(row_start);
+    let last_row = (frame_y + usize::from(frame.height)).min(row_end);
+    let x = usize::from(frame.x);
+    let width = usize::from(frame.width);
+    for global_y in first_row..last_row {
+        let start = (global_y - row_start) * canvas_width + x;
+        canvas[start..start + width].fill(0);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn frames_are_independent_native(metadata: &GifMetadata) -> bool {
+    metadata.frames.iter().enumerate().all(|(index, frame)| {
+        let starts_clear = index == 0
+            || (metadata.frames[index - 1].disposal == 2
+                && frame_covers_canvas(&metadata.frames[index - 1], metadata));
+        starts_clear || (frame_covers_canvas(frame, metadata) && frame.transparent_index.is_none())
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[inline]
+fn frame_covers_canvas(frame: &FrameMetadata, metadata: &GifMetadata) -> bool {
+    frame.x == 0 && frame.y == 0 && frame.width == metadata.width && frame.height == metadata.height
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn independent_frame_segments_native(metadata: &GifMetadata) -> Option<Vec<(usize, usize)>> {
+    let mut segments = Vec::new();
+    let mut start = 0usize;
+    for (frame_index, frame) in metadata.frames.iter().enumerate() {
+        let clears_canvas = frame.disposal == 2
+            && frame.x == 0
+            && frame.y == 0
+            && frame.width == metadata.width
+            && frame.height == metadata.height;
+        if clears_canvas && frame_index + 1 < metadata.frames.len() {
+            segments.push((start, frame_index + 1));
+            start = frame_index + 1;
+        }
+    }
+    segments.push((start, metadata.frames.len()));
+    let output_pixels = usize::from(metadata.width)
+        .saturating_mul(usize::from(metadata.height))
+        .saturating_mul(metadata.frames.len());
+    let longest_segment = segments
+        .iter()
+        .map(|(segment_start, segment_end)| segment_end - segment_start)
+        .max()
+        .unwrap_or(0);
+    (segments.len() >= 2 && output_pixels >= 100_000 && longest_segment <= 8).then_some(segments)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn decode_segments_worker(
+    data: &[u8],
+    metadata: &GifMetadata,
+    segments: &[(usize, usize)],
+    palettes: &[Vec<u32>],
+    palettes_share_table: bool,
+    canvas_pixels: usize,
+    output_address: usize,
+    next_segment: &std::sync::atomic::AtomicUsize,
+) -> Result<(), String> {
+    let mut image_data = Vec::new();
+    let mut lzw_scratch = LzwStackScratch::default();
+    let mut indices = Vec::new();
+    loop {
+        let segment_index = next_segment.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let Some(&(start, end)) = segments.get(segment_index) else {
+            return Ok(());
+        };
+        if end == start + 1 {
+            let frame = &metadata.frames[start];
+            if frame_covers_canvas(frame, metadata) && !frame.interlaced {
+                let palette = &palettes[if palettes_share_table { 0 } else { start }];
+                decode_frame_indices_reusing_output(
+                    data,
+                    frame,
+                    &mut image_data,
+                    &mut lzw_scratch,
+                    &mut indices,
+                )?;
+                let destination = unsafe {
+                    std::slice::from_raw_parts_mut(
+                        (output_address as *mut std::mem::MaybeUninit<u32>)
+                            .add(start * canvas_pixels),
+                        canvas_pixels,
+                    )
+                };
+                if palette.len() == 256 {
+                    let palette_address = palette.as_ptr();
+                    let indices_address = indices.as_ptr();
+                    let destination_address = destination.as_mut_ptr().cast::<u32>();
+                    let mut pixel_index = 0usize;
+                    match frame.transparent_index {
+                        None => {
+                            while pixel_index + 8 <= canvas_pixels {
+                                let packed = unsafe {
+                                    std::ptr::read_unaligned(
+                                        indices_address.add(pixel_index).cast::<u64>(),
+                                    )
+                                };
+                                let colors = unsafe {
+                                    [
+                                        *palette_address.add((packed & 0xff) as usize),
+                                        *palette_address.add(((packed >> 8) & 0xff) as usize),
+                                        *palette_address.add(((packed >> 16) & 0xff) as usize),
+                                        *palette_address.add(((packed >> 24) & 0xff) as usize),
+                                        *palette_address.add(((packed >> 32) & 0xff) as usize),
+                                        *palette_address.add(((packed >> 40) & 0xff) as usize),
+                                        *palette_address.add(((packed >> 48) & 0xff) as usize),
+                                        *palette_address.add(((packed >> 56) & 0xff) as usize),
+                                    ]
+                                };
+                                unsafe {
+                                    std::ptr::copy_nonoverlapping(
+                                        colors.as_ptr(),
+                                        destination_address.add(pixel_index),
+                                        colors.len(),
+                                    );
+                                }
+                                pixel_index += 8;
+                            }
+                        }
+                        Some(transparent_index) => {
+                            while pixel_index + 8 <= canvas_pixels {
+                                let packed = unsafe {
+                                    std::ptr::read_unaligned(
+                                        indices_address.add(pixel_index).cast::<u64>(),
+                                    )
+                                };
+                                let indices = [
+                                    (packed & 0xff) as u8,
+                                    ((packed >> 8) & 0xff) as u8,
+                                    ((packed >> 16) & 0xff) as u8,
+                                    ((packed >> 24) & 0xff) as u8,
+                                    ((packed >> 32) & 0xff) as u8,
+                                    ((packed >> 40) & 0xff) as u8,
+                                    ((packed >> 48) & 0xff) as u8,
+                                    ((packed >> 56) & 0xff) as u8,
+                                ];
+                                let colors = indices.map(|index| {
+                                    if index == transparent_index {
+                                        0
+                                    } else {
+                                        unsafe { *palette_address.add(usize::from(index)) }
+                                    }
+                                });
+                                unsafe {
+                                    std::ptr::copy_nonoverlapping(
+                                        colors.as_ptr(),
+                                        destination_address.add(pixel_index),
+                                        colors.len(),
+                                    );
+                                }
+                                pixel_index += 8;
+                            }
+                        }
+                    }
+                    while pixel_index < canvas_pixels {
+                        let index = unsafe { *indices_address.add(pixel_index) };
+                        let color = if frame.transparent_index == Some(index) {
+                            0
+                        } else {
+                            unsafe { *palette_address.add(usize::from(index)) }
+                        };
+                        unsafe {
+                            destination_address.add(pixel_index).write(color);
+                        }
+                        pixel_index += 1;
+                    }
+                    continue;
+                }
+                match frame.transparent_index {
+                    None => {
+                        for (pixel, &index) in destination.iter_mut().zip(&indices) {
+                            pixel.write(*palette.get(usize::from(index)).ok_or_else(|| {
+                                format!("Palette index {index} exceeds palette size")
+                            })?);
+                        }
+                    }
+                    Some(transparent_index) => {
+                        for (pixel, &index) in destination.iter_mut().zip(&indices) {
+                            pixel.write(if index == transparent_index {
+                                0
+                            } else {
+                                *palette.get(usize::from(index)).ok_or_else(|| {
+                                    format!("Palette index {index} exceeds palette size")
+                                })?
+                            });
+                        }
+                    }
+                }
+                continue;
+            }
+        }
+        let mut canvas = vec![0u32; canvas_pixels];
+        for frame_index in start..end {
+            let frame = &metadata.frames[frame_index];
+            let restore = (frame.disposal == 3).then(|| canvas.clone());
+            let palette = &palettes[if palettes_share_table { 0 } else { frame_index }];
+            decode_frame_indices_reusing_output(
+                data,
+                frame,
+                &mut image_data,
+                &mut lzw_scratch,
+                &mut indices,
+            )?;
+            blit_indices_to_canvas_u32(palette, metadata.width, frame, &indices, &mut canvas)?;
+            unsafe {
+                let destination = (output_address as *mut std::mem::MaybeUninit<u32>)
+                    .add(frame_index * canvas_pixels)
+                    .cast::<u32>();
+                std::ptr::copy_nonoverlapping(canvas.as_ptr(), destination, canvas_pixels);
+            }
+            apply_frame_disposal_u32(&mut canvas, metadata.width, metadata.height, frame, restore);
+        }
+    }
+}
+
+#[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
+struct DecodeSegmentsDispatchContext<'a> {
+    data: &'a [u8],
+    metadata: &'a GifMetadata,
+    segments: &'a [(usize, usize)],
+    palettes: &'a [Vec<u32>],
+    palettes_share_table: bool,
+    canvas_pixels: usize,
+    output_address: usize,
+    next_segment: std::sync::atomic::AtomicUsize,
+    error: std::sync::Mutex<Option<String>>,
+}
+
+#[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
+unsafe extern "C" fn decode_segments_dispatch_worker(
+    context: *mut std::ffi::c_void,
+    _iteration: usize,
+) {
+    let context = &*(context.cast::<DecodeSegmentsDispatchContext<'_>>());
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        decode_segments_worker(
+            context.data,
+            context.metadata,
+            context.segments,
+            context.palettes,
+            context.palettes_share_table,
+            context.canvas_pixels,
+            context.output_address,
+            &context.next_segment,
+        )
+    }));
+    let error = match result {
+        Ok(Ok(())) => return,
+        Ok(Err(error)) => error,
+        Err(_) => "Parallel GIF segment decoder panicked".to_string(),
+    };
+    if let Ok(mut stored_error) = context.error.lock() {
+        if stored_error.is_none() {
+            *stored_error = Some(error);
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn decode_segmented_frames_into_native(
+    data: &[u8],
+    metadata: &GifMetadata,
+    segments: &[(usize, usize)],
+    output: &mut [std::mem::MaybeUninit<u32>],
+) -> Result<(), String> {
+    let canvas_pixels = usize::from(metadata.width)
+        .checked_mul(usize::from(metadata.height))
+        .ok_or_else(|| "Canvas size overflow".to_string())?;
+    let output_pixels = metadata
+        .frames
+        .len()
+        .checked_mul(canvas_pixels)
+        .ok_or_else(|| "Prepared frame output overflow".to_string())?;
+    if output.len() != output_pixels {
+        return Err("Host output buffer has the wrong size".to_string());
+    }
+    let available_threads = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1);
+    let thread_count = available_threads.min(segments.len());
+    let palettes_share_table = metadata.frames.first().is_some_and(|first| {
+        metadata.frames.iter().all(|frame| {
+            frame.palette_offset == first.palette_offset && frame.palette_size == first.palette_size
+        })
+    });
+    let palettes = if palettes_share_table {
+        vec![build_palette_u32(
+            data,
+            &metadata.frames[0],
+            PixelFormat::Rgba,
+        )?]
+    } else {
+        metadata
+            .frames
+            .iter()
+            .map(|frame| build_palette_u32(data, frame, PixelFormat::Rgba))
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    let output_address = output.as_mut_ptr() as usize;
+    let next_segment = std::sync::atomic::AtomicUsize::new(0);
+
+    #[cfg(target_os = "macos")]
+    {
+        let mut context = DecodeSegmentsDispatchContext {
+            data,
+            metadata,
+            segments,
+            palettes: &palettes,
+            palettes_share_table,
+            canvas_pixels,
+            output_address,
+            next_segment,
+            error: std::sync::Mutex::new(None),
+        };
+        unsafe {
+            let queue = dispatch_get_global_queue(0, 0);
+            if queue.is_null() {
+                return Err("Could not acquire the system worker queue".to_string());
+            }
+            dispatch_apply_f(
+                thread_count,
+                queue,
+                (&mut context as *mut DecodeSegmentsDispatchContext<'_>).cast(),
+                decode_segments_dispatch_worker,
+            );
+        }
+        if let Some(error) = context
+            .error
+            .into_inner()
+            .map_err(|_| "Parallel GIF segment decoder error lock was poisoned".to_string())?
+        {
+            return Err(error);
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..thread_count)
+            .map(|_| {
+                let next_segment = &next_segment;
+                scope.spawn(move || {
+                    decode_segments_worker(
+                        data,
+                        metadata,
+                        segments,
+                        &palettes,
+                        palettes_share_table,
+                        canvas_pixels,
+                        output_address,
+                        next_segment,
+                    )
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle
+                .join()
+                .map_err(|_| "Parallel GIF segment decoder panicked".to_string())??;
+        }
+        Ok::<_, String>(())
+    })?;
+
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn decode_segmented_frames_native(
+    data: &[u8],
+    metadata: &GifMetadata,
+    segments: &[(usize, usize)],
+) -> Result<Vec<u32>, String> {
+    let canvas_pixels = usize::from(metadata.width)
+        .checked_mul(usize::from(metadata.height))
+        .ok_or_else(|| "Canvas size overflow".to_string())?;
+    let output_pixels = metadata
+        .frames
+        .len()
+        .checked_mul(canvas_pixels)
+        .ok_or_else(|| "Prepared frame output overflow".to_string())?;
+    let mut output = Vec::<std::mem::MaybeUninit<u32>>::with_capacity(output_pixels);
+    unsafe {
+        output.set_len(output_pixels);
+    }
+    decode_segmented_frames_into_native(data, metadata, segments, &mut output)?;
+    let pointer = output.as_mut_ptr().cast::<u32>();
+    let length = output.len();
+    let capacity = output.capacity();
+    std::mem::forget(output);
+    Ok(unsafe { Vec::from_raw_parts(pointer, length, capacity) })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn should_fuse_sequential_decode_native(metadata: &GifMetadata) -> bool {
+    let total_frame_pixels = metadata.frames.iter().fold(0usize, |total, frame| {
+        total.saturating_add(usize::from(frame.width) * usize::from(frame.height))
+    });
+    metadata.frames.len() < 8 || total_frame_pixels < 30_000
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn should_pipeline_decode_native(metadata: &GifMetadata) -> bool {
+    let available_threads = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1);
+    if available_threads < 4 || metadata.frames.len() < 8 {
+        return false;
+    }
+    let canvas_pixels = usize::from(metadata.width) * usize::from(metadata.height);
+    let output_pixels = canvas_pixels.saturating_mul(metadata.frames.len());
+    let decoded_pixels = metadata.frames.iter().fold(0usize, |total, frame| {
+        total.saturating_add(usize::from(frame.width) * usize::from(frame.height))
+    });
+    output_pixels >= 50_000 && decoded_pixels >= 50_000
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct PipelineDecodedFrame {
+    state: std::sync::atomic::AtomicU8,
+    result: std::sync::OnceLock<Result<Vec<u8>, String>>,
+    direct_mapped: std::sync::atomic::AtomicBool,
+    offset: usize,
+    length: usize,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn decode_pipeline_frame_into(
+    data: &[u8],
+    frame: &FrameMetadata,
+    image_data: &mut Vec<u8>,
+    lzw_scratch: &mut LzwStackScratch,
+    decoded_indices_address: usize,
+    layout: &PipelineDecodedFrame,
+) -> Result<(), String> {
+    if frame.interlaced {
+        let indices =
+            decode_frame_indices_with_scratches(data, frame, image_data, lzw_scratch)?;
+        if indices.len() != layout.length {
+            return Err("Decoded frame length does not match dimensions".to_string());
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                indices.as_ptr(),
+                (decoded_indices_address as *mut u8).add(layout.offset),
+                layout.length,
+            );
+        }
+        return Ok(());
+    }
+    if image_data.capacity() < frame.data_length {
+        image_data.reserve(frame.data_length.saturating_sub(image_data.len()));
+    }
+    collect_image_data_into(data, frame.data_offset, image_data)?;
+    unsafe {
+        std::ptr::write_bytes(
+            (decoded_indices_address as *mut u8).add(layout.offset),
+            0,
+            layout.length,
+        );
+    }
+    let output = unsafe {
+        std::slice::from_raw_parts_mut(
+            (decoded_indices_address as *mut u8).add(layout.offset),
+            layout.length,
+        )
+    };
+    if should_decode_lzw_direct(frame, layout.length) {
+        if should_decode_lzw_copy(frame, layout.length) {
+            lzw_decode_to_indices_copy_with_scratch(
+                frame.min_code_size,
+                image_data,
+                output,
+                lzw_scratch,
+            )
+        } else {
+            lzw_decode_to_indices_direct_with_scratch(
+                frame.min_code_size,
+                image_data,
+                output,
+                lzw_scratch,
+            )
+        }
+    } else {
+        lzw_decode_to_indices_stack_with_scratch(
+            frame.min_code_size,
+            image_data,
+            output,
+            lzw_scratch,
+        )
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::too_many_arguments)]
+fn decode_pipeline_frame_result(
+    data: &[u8],
+    metadata: &GifMetadata,
+    frame_index: usize,
+    frame: &FrameMetadata,
+    layout: &PipelineDecodedFrame,
+    image_data: &mut Vec<u8>,
+    lzw_scratch: &mut LzwStackScratch,
+    decoded_indices_address: usize,
+    flat_decoded_indices: bool,
+    palette: &[u32],
+    output_address: usize,
+    canvas_pixels: usize,
+    parallel_direct_mapping: bool,
+) -> Result<Vec<u8>, String> {
+    if flat_decoded_indices {
+        decode_pipeline_frame_into(
+            data,
+            frame,
+            image_data,
+            lzw_scratch,
+            decoded_indices_address,
+            layout,
+        )?;
+        return Ok(Vec::new());
+    }
+    if parallel_direct_mapping && !frame.interlaced {
+        if image_data.capacity() < frame.data_length {
+            image_data.reserve(frame.data_length.saturating_sub(image_data.len()));
+        }
+        collect_image_data_into(data, frame.data_offset, image_data)?;
+        let destination = unsafe {
+            (output_address as *mut std::mem::MaybeUninit<u32>)
+                .add(frame_index * canvas_pixels)
+                .cast::<u32>()
+        };
+        unsafe {
+            std::ptr::write_bytes(destination.cast::<u8>(), 0, canvas_pixels);
+        }
+        let destination_bytes =
+            unsafe { std::slice::from_raw_parts_mut(destination.cast::<u8>(), canvas_pixels) };
+        if should_decode_lzw_direct(frame, canvas_pixels) {
+            if should_decode_lzw_copy(frame, canvas_pixels) {
+                lzw_decode_to_indices_copy_with_scratch(
+                    frame.min_code_size,
+                    image_data,
+                    destination_bytes,
+                    lzw_scratch,
+                )?;
+            } else {
+                lzw_decode_to_indices_direct_with_scratch(
+                    frame.min_code_size,
+                    image_data,
+                    destination_bytes,
+                    lzw_scratch,
+                )?;
+            }
+        } else {
+            lzw_decode_to_indices_stack_with_scratch(
+                frame.min_code_size,
+                image_data,
+                destination_bytes,
+                lzw_scratch,
+            )?;
+        }
+        if let Some(transparent_index) = frame.transparent_index {
+            if destination_bytes.contains(&transparent_index) {
+                return Ok(destination_bytes.to_vec());
+            }
+        }
+        if palette.len() == 256 {
+            let palette_address = palette.as_ptr();
+            let indices_address = destination.cast::<u8>();
+            let mut pixel_index = canvas_pixels;
+            while pixel_index >= 8 {
+                pixel_index -= 8;
+                let packed_indices = unsafe {
+                    std::ptr::read_unaligned(indices_address.add(pixel_index).cast::<u64>())
+                };
+                let colors = unsafe {
+                    [
+                        *palette_address.add((packed_indices & 0xff) as usize),
+                        *palette_address.add(((packed_indices >> 8) & 0xff) as usize),
+                        *palette_address.add(((packed_indices >> 16) & 0xff) as usize),
+                        *palette_address.add(((packed_indices >> 24) & 0xff) as usize),
+                        *palette_address.add(((packed_indices >> 32) & 0xff) as usize),
+                        *palette_address.add(((packed_indices >> 40) & 0xff) as usize),
+                        *palette_address.add(((packed_indices >> 48) & 0xff) as usize),
+                        *palette_address.add(((packed_indices >> 56) & 0xff) as usize),
+                    ]
+                };
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        colors.as_ptr(),
+                        destination.add(pixel_index),
+                        colors.len(),
+                    );
+                }
+            }
+            while pixel_index > 0 {
+                pixel_index -= 1;
+                let index = unsafe { usize::from(*indices_address.add(pixel_index)) };
+                unsafe {
+                    destination
+                        .add(pixel_index)
+                        .write(*palette_address.add(index));
+                }
+            }
+        } else {
+            for pixel_index in (0..canvas_pixels).rev() {
+                let index = destination_bytes[pixel_index];
+                let color = *palette
+                    .get(usize::from(index))
+                    .ok_or_else(|| format!("Palette index {index} exceeds palette size"))?;
+                unsafe {
+                    destination.add(pixel_index).write(color);
+                }
+            }
+        }
+        layout
+            .direct_mapped
+            .store(true, std::sync::atomic::Ordering::Release);
+        return Ok(Vec::new());
+    }
+    let indices = decode_frame_indices_with_scratches(data, frame, image_data, lzw_scratch)?;
+    if !parallel_direct_mapping {
+        return Ok(indices);
+    }
+    debug_assert!(frame_covers_canvas(frame, metadata));
+    if frame
+        .transparent_index
+        .is_some_and(|transparent_index| indices.contains(&transparent_index))
+    {
+        return Ok(indices);
+    }
+    if indices.len() != canvas_pixels {
+        return Err("Decoded full frame length does not match canvas".to_string());
+    }
+    let destination = unsafe {
+        (output_address as *mut std::mem::MaybeUninit<u32>)
+            .add(frame_index * canvas_pixels)
+            .cast::<u32>()
+    };
+    if palette.len() == 256 {
+        for (pixel_index, &index) in indices.iter().enumerate() {
+            unsafe {
+                destination
+                    .add(pixel_index)
+                    .write(*palette.get_unchecked(usize::from(index)));
+            }
+        }
+    } else {
+        for (pixel_index, &index) in indices.iter().enumerate() {
+            let color = *palette
+                .get(usize::from(index))
+                .ok_or_else(|| format!("Palette index {index} exceeds palette size"))?;
+            unsafe {
+                destination.add(pixel_index).write(color);
+            }
+        }
+    }
+    layout
+        .direct_mapped
+        .store(true, std::sync::atomic::Ordering::Release);
+    Ok(Vec::new())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::too_many_arguments)]
+fn decode_pipeline_worker(
+    data: &[u8],
+    metadata: &GifMetadata,
+    decoded: &[PipelineDecodedFrame],
+    decoded_indices_address: usize,
+    flat_decoded_indices: bool,
+    palettes: &[Vec<u32>],
+    palettes_share_table: bool,
+    output_address: usize,
+    canvas_pixels: usize,
+    parallel_direct_mapping: bool,
+    next_frame: &std::sync::atomic::AtomicUsize,
+    assist_decode: bool,
+) {
+    let mut image_data = Vec::new();
+    let mut lzw_scratch = LzwStackScratch::default();
+    loop {
+        let frame_index = next_frame.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let Some(frame) = metadata.frames.get(frame_index) else {
+            return;
+        };
+        let layout = &decoded[frame_index];
+        if assist_decode
+            && layout
+                .state
+                .compare_exchange(
+                    0,
+                    1,
+                    std::sync::atomic::Ordering::Acquire,
+                    std::sync::atomic::Ordering::Relaxed,
+                )
+                .is_err()
+        {
+            continue;
+        }
+        let palette = &palettes[if palettes_share_table { 0 } else { frame_index }];
+        let result = decode_pipeline_frame_result(
+            data,
+            metadata,
+            frame_index,
+            frame,
+            layout,
+            &mut image_data,
+            &mut lzw_scratch,
+            decoded_indices_address,
+            flat_decoded_indices,
+            palette,
+            output_address,
+            canvas_pixels,
+            parallel_direct_mapping,
+        );
+        let _ = layout.result.set(result);
+        if assist_decode {
+            layout
+                .state
+                .store(2, std::sync::atomic::Ordering::Release);
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::too_many_arguments)]
+fn compose_pipeline_stripe(
+    data: &[u8],
+    metadata: &GifMetadata,
+    decoded: &[PipelineDecodedFrame],
+    decoded_indices_address: usize,
+    flat_decoded_indices: bool,
+    parallel_direct_mapping: bool,
+    palettes: &[Vec<u32>],
+    palettes_share_table: bool,
+    canvas_width: usize,
+    canvas_height: usize,
+    canvas_pixels: usize,
+    rows_per_thread: usize,
+    thread_index: usize,
+    output_address: usize,
+    next_frame: &std::sync::atomic::AtomicUsize,
+    assist_decode: bool,
+    direct_overlay_output: bool,
+) -> Result<(), String> {
+    let row_start = thread_index * rows_per_thread;
+    let row_end = (row_start + rows_per_thread).min(canvas_height);
+    let stripe_pixels = (row_end - row_start) * canvas_width;
+    let mut canvas = if direct_overlay_output {
+        Vec::new()
+    } else {
+        vec![0u32; stripe_pixels]
+    };
+    let mut image_data = Vec::new();
+    let mut lzw_scratch = LzwStackScratch::default();
+    for (frame_index, frame) in metadata.frames.iter().enumerate() {
+        let palette = &palettes[if palettes_share_table { 0 } else { frame_index }];
+        let layout = &decoded[frame_index];
+        let frame_result = if assist_decode {
+            'frame_ready: loop {
+                if let Some(result) = layout.result.get() {
+                    break result;
+                }
+                if layout
+                    .state
+                    .compare_exchange(
+                        0,
+                        1,
+                        std::sync::atomic::Ordering::Acquire,
+                        std::sync::atomic::Ordering::Relaxed,
+                    )
+                    .is_ok()
+                {
+                    let result = decode_pipeline_frame_result(
+                        data,
+                        metadata,
+                        frame_index,
+                        frame,
+                        layout,
+                        &mut image_data,
+                        &mut lzw_scratch,
+                        decoded_indices_address,
+                        flat_decoded_indices,
+                        palette,
+                        output_address,
+                        canvas_pixels,
+                        parallel_direct_mapping,
+                    );
+                    let _ = layout.result.set(result);
+                    layout
+                        .state
+                        .store(2, std::sync::atomic::Ordering::Release);
+                    break layout.result.get().unwrap();
+                }
+
+                let background_index =
+                    next_frame.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if let Some(background_frame) = metadata.frames.get(background_index) {
+                    let background_layout = &decoded[background_index];
+                    if background_layout
+                        .state
+                        .compare_exchange(
+                            0,
+                            1,
+                            std::sync::atomic::Ordering::Acquire,
+                            std::sync::atomic::Ordering::Relaxed,
+                        )
+                        .is_ok()
+                    {
+                        let background_palette = &palettes[if palettes_share_table {
+                            0
+                        } else {
+                            background_index
+                        }];
+                        let result = decode_pipeline_frame_result(
+                            data,
+                            metadata,
+                            background_index,
+                            background_frame,
+                            background_layout,
+                            &mut image_data,
+                            &mut lzw_scratch,
+                            decoded_indices_address,
+                            flat_decoded_indices,
+                            background_palette,
+                            output_address,
+                            canvas_pixels,
+                            parallel_direct_mapping,
+                        );
+                        let _ = background_layout.result.set(result);
+                        background_layout
+                            .state
+                            .store(2, std::sync::atomic::Ordering::Release);
+                    }
+                    continue;
+                }
+
+                let mut spins = 0usize;
+                loop {
+                    if let Some(result) = layout.result.get() {
+                        break 'frame_ready result;
+                    }
+                    if spins < 64 {
+                        std::hint::spin_loop();
+                        spins += 1;
+                    } else {
+                        std::thread::yield_now();
+                    }
+                }
+            }
+        } else {
+            let wait_for_result = || {
+                let mut spins = 0usize;
+                loop {
+                    if let Some(result) = layout.result.get() {
+                        return result;
+                    }
+                    if spins < 64 {
+                        std::hint::spin_loop();
+                        spins += 1;
+                    } else {
+                        std::thread::yield_now();
+                    }
+                }
+            };
+            if canvas_pixels >= 16_000 {
+                match layout.result.get() {
+                    Some(result) => result,
+                    None => wait_for_result(),
+                }
+            } else {
+                wait_for_result()
+            }
+        };
+        let stored_indices = frame_result.as_ref().map_err(Clone::clone)?;
+        if layout
+            .direct_mapped
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            continue;
+        }
+        let indices = if flat_decoded_indices {
+            unsafe {
+                std::slice::from_raw_parts(
+                    (decoded_indices_address as *const u8).add(layout.offset),
+                    layout.length,
+                )
+            }
+        } else {
+            stored_indices
+        };
+        if direct_overlay_output {
+            let frame_covers_canvas = frame_covers_canvas(frame, metadata);
+            let source_start = row_start * canvas_width;
+            let destination = unsafe {
+                (output_address as *mut std::mem::MaybeUninit<u32>)
+                    .add(frame_index * canvas_pixels + source_start)
+                    .cast::<u32>()
+            };
+            let previous = (frame_index != 0).then(|| unsafe {
+                (output_address as *const std::mem::MaybeUninit<u32>)
+                    .add((frame_index - 1) * canvas_pixels + source_start)
+                    .cast::<u32>()
+            });
+            if !frame_covers_canvas {
+                unsafe {
+                    if let Some(previous) = previous {
+                        std::ptr::copy_nonoverlapping(previous, destination, stripe_pixels);
+                    } else {
+                        std::ptr::write_bytes(destination, 0, stripe_pixels);
+                    }
+                }
+                let destination =
+                    unsafe { std::slice::from_raw_parts_mut(destination, stripe_pixels) };
+                blit_indices_to_canvas_stripe_u32(
+                    palette,
+                    canvas_width,
+                    frame,
+                    indices,
+                    row_start,
+                    row_end,
+                    destination,
+                )?;
+                continue;
+            }
+            let source = indices
+                .get(source_start..source_start + stripe_pixels)
+                .ok_or_else(|| "Decoded index buffer is too short".to_string())?;
+            match frame.transparent_index {
+                None => {
+                    for (offset, &index) in source.iter().enumerate() {
+                        let color = *palette
+                            .get(usize::from(index))
+                            .ok_or_else(|| format!("Palette index {index} exceeds palette size"))?;
+                        unsafe {
+                            destination.add(offset).write(color);
+                        }
+                    }
+                }
+                Some(transparent_index) => {
+                    for (offset, &index) in source.iter().enumerate() {
+                        let color = if index == transparent_index {
+                            previous
+                                .map(|previous| unsafe { *previous.add(offset) })
+                                .unwrap_or(0)
+                        } else {
+                            *palette.get(usize::from(index)).ok_or_else(|| {
+                                format!("Palette index {index} exceeds palette size")
+                            })?
+                        };
+                        unsafe {
+                            destination.add(offset).write(color);
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+        let restore = (frame.disposal == 3).then(|| canvas.clone());
+        blit_indices_to_canvas_stripe_u32(
+            palette,
+            canvas_width,
+            frame,
+            indices,
+            row_start,
+            row_end,
+            &mut canvas,
+        )?;
+        unsafe {
+            let destination = (output_address as *mut std::mem::MaybeUninit<u32>)
+                .add(frame_index * canvas_pixels + row_start * canvas_width)
+                .cast::<u32>();
+            std::ptr::copy_nonoverlapping(canvas.as_ptr(), destination, stripe_pixels);
+        }
+        if frame.disposal == 2 {
+            clear_frame_rect_stripe_u32(&mut canvas, canvas_width, frame, row_start, row_end);
+        } else if frame.disposal == 3 {
+            canvas = restore.expect("restore canvas exists");
+        }
+    }
+    Ok(())
+}
+
+#[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
+struct DecodePipelineDispatchContext<'a> {
+    data: &'a [u8],
+    metadata: &'a GifMetadata,
+    decoded: &'a [PipelineDecodedFrame],
+    decoded_indices_address: usize,
+    flat_decoded_indices: bool,
+    parallel_direct_mapping: bool,
+    palettes: &'a [Vec<u32>],
+    palettes_share_table: bool,
+    canvas_width: usize,
+    canvas_height: usize,
+    canvas_pixels: usize,
+    rows_per_thread: usize,
+    decode_thread_count: usize,
+    output_address: usize,
+    next_frame: &'a std::sync::atomic::AtomicUsize,
+    assist_decode: bool,
+    direct_overlay_output: bool,
+    error: std::sync::Mutex<Option<String>>,
+}
+
+#[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
+unsafe extern "C" fn decode_pipeline_dispatch_worker(
+    context: *mut std::ffi::c_void,
+    iteration: usize,
+) {
+    let context = &*(context.cast::<DecodePipelineDispatchContext<'_>>());
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if iteration < context.decode_thread_count {
+            decode_pipeline_worker(
+                context.data,
+                context.metadata,
+                context.decoded,
+                context.decoded_indices_address,
+                context.flat_decoded_indices,
+                context.palettes,
+                context.palettes_share_table,
+                context.output_address,
+                context.canvas_pixels,
+                context.parallel_direct_mapping,
+                context.next_frame,
+                context.assist_decode,
+            );
+            Ok(())
+        } else {
+            compose_pipeline_stripe(
+                context.data,
+                context.metadata,
+                context.decoded,
+                context.decoded_indices_address,
+                context.flat_decoded_indices,
+                context.parallel_direct_mapping,
+                context.palettes,
+                context.palettes_share_table,
+                context.canvas_width,
+                context.canvas_height,
+                context.canvas_pixels,
+                context.rows_per_thread,
+                iteration - context.decode_thread_count,
+                context.output_address,
+                context.next_frame,
+                context.assist_decode,
+                context.direct_overlay_output,
+            )
+        }
+    }));
+    let error = match result {
+        Ok(Ok(())) => return,
+        Ok(Err(error)) => error,
+        Err(_) => "Parallel GIF pipeline panicked".to_string(),
+    };
+    if let Ok(mut stored_error) = context.error.lock() {
+        if stored_error.is_none() {
+            *stored_error = Some(error);
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn decode_and_compose_pipeline_native(
+    data: &[u8],
+    metadata: &GifMetadata,
+) -> Result<Vec<u32>, String> {
+    let canvas_width = usize::from(metadata.width);
+    let canvas_height = usize::from(metadata.height);
+    let canvas_pixels = canvas_width
+        .checked_mul(canvas_height)
+        .ok_or_else(|| "Canvas size overflow".to_string())?;
+    let output_pixels = metadata
+        .frames
+        .len()
+        .checked_mul(canvas_pixels)
+        .ok_or_else(|| "Prepared frame output overflow".to_string())?;
+    let mut output = Vec::<std::mem::MaybeUninit<u32>>::with_capacity(output_pixels);
+    unsafe {
+        output.set_len(output_pixels);
+    }
+    decode_and_compose_pipeline_into_native(data, metadata, &mut output)?;
+    let pointer = output.as_mut_ptr().cast::<u32>();
+    let length = output.len();
+    let capacity = output.capacity();
+    std::mem::forget(output);
+    Ok(unsafe { Vec::from_raw_parts(pointer, length, capacity) })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn decode_and_compose_pipeline_into_native(
+    data: &[u8],
+    metadata: &GifMetadata,
+    output: &mut [std::mem::MaybeUninit<u32>],
+) -> Result<(), String> {
+    let canvas_width = usize::from(metadata.width);
+    let canvas_height = usize::from(metadata.height);
+    let canvas_pixels = canvas_width
+        .checked_mul(canvas_height)
+        .ok_or_else(|| "Canvas size overflow".to_string())?;
+    let output_pixels = metadata
+        .frames
+        .len()
+        .checked_mul(canvas_pixels)
+        .ok_or_else(|| "Prepared frame output overflow".to_string())?;
+    if output.len() != output_pixels {
+        return Err("Host output buffer has the wrong size".to_string());
+    }
+    let available_threads = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1);
+    let assist_decode = (32..=128).contains(&metadata.frames.len()) && canvas_pixels >= 40_000;
+    let decode_thread_count = if assist_decode || canvas_pixels < 10_000 {
+        available_threads * 2 / 3
+    } else {
+        available_threads / 2
+    };
+    let compose_thread_count = available_threads - decode_thread_count;
+    let direct_overlay_output = metadata
+        .frames
+        .iter()
+        .all(|frame| frame.disposal <= 1 && frame_covers_canvas(frame, metadata));
+    let rows_per_thread = canvas_height.div_ceil(compose_thread_count);
+    let next_frame = std::sync::atomic::AtomicUsize::new(0);
+    let mut decoded_indices_length = 0usize;
+    let decoded: Vec<PipelineDecodedFrame> = metadata
+        .frames
+        .iter()
+        .map(|frame| {
+            let length = usize::from(frame.width)
+                .checked_mul(usize::from(frame.height))
+                .ok_or_else(|| "Decoded frame size overflow".to_string())?;
+            let offset = decoded_indices_length;
+            decoded_indices_length = decoded_indices_length
+                .checked_add(length)
+                .ok_or_else(|| "Decoded frame stream overflow".to_string())?;
+            Ok(PipelineDecodedFrame {
+                state: std::sync::atomic::AtomicU8::new(0),
+                result: std::sync::OnceLock::new(),
+                direct_mapped: std::sync::atomic::AtomicBool::new(false),
+                offset,
+                length,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let flat_decoded_indices = metadata.frames.len() >= 128 && canvas_pixels < 10_000;
+    let mut decoded_indices = if flat_decoded_indices {
+        let mut storage =
+            Vec::<std::mem::MaybeUninit<u8>>::with_capacity(decoded_indices_length);
+        unsafe {
+            storage.set_len(decoded_indices_length);
+        }
+        storage
+    } else {
+        Vec::new()
+    };
+    let decoded_indices_address = if flat_decoded_indices {
+        decoded_indices.as_mut_ptr() as usize
+    } else {
+        0
+    };
+    let palettes_share_table = metadata.frames.first().is_some_and(|first| {
+        metadata.frames.iter().all(|frame| {
+            frame.palette_offset == first.palette_offset && frame.palette_size == first.palette_size
+        })
+    });
+    let palettes = if palettes_share_table {
+        vec![build_palette_u32(
+            data,
+            &metadata.frames[0],
+            PixelFormat::Rgba,
+        )?]
+    } else {
+        metadata
+            .frames
+            .iter()
+            .map(|frame| build_palette_u32(data, frame, PixelFormat::Rgba))
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    let output_address = output.as_mut_ptr() as usize;
+    let parallel_direct_mapping = direct_overlay_output && metadata.frames.len() >= 100;
+
+    #[cfg(target_os = "macos")]
+    {
+        let mut context = DecodePipelineDispatchContext {
+            data,
+            metadata,
+            decoded: &decoded,
+            decoded_indices_address,
+            flat_decoded_indices,
+            parallel_direct_mapping,
+            palettes: &palettes,
+            palettes_share_table,
+            canvas_width,
+            canvas_height,
+            canvas_pixels,
+            rows_per_thread,
+            decode_thread_count,
+            output_address,
+            next_frame: &next_frame,
+            assist_decode,
+            direct_overlay_output,
+            error: std::sync::Mutex::new(None),
+        };
+        unsafe {
+            let queue = dispatch_get_global_queue(0, 0);
+            if queue.is_null() {
+                return Err("Could not acquire the system worker queue".to_string());
+            }
+            dispatch_apply_f(
+                available_threads,
+                queue,
+                (&mut context as *mut DecodePipelineDispatchContext<'_>).cast(),
+                decode_pipeline_dispatch_worker,
+            );
+        }
+        if let Some(error) = context
+            .error
+            .into_inner()
+            .map_err(|_| "Parallel GIF pipeline error lock was poisoned".to_string())?
+        {
+            return Err(error);
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    std::thread::scope(|scope| {
+        let decode_handles: Vec<_> = (0..decode_thread_count)
+            .map(|_| {
+                scope.spawn(|| {
+                    decode_pipeline_worker(
+                        data,
+                        metadata,
+                        &decoded,
+                        decoded_indices_address,
+                        flat_decoded_indices,
+                        &palettes,
+                        palettes_share_table,
+                        output_address,
+                        canvas_pixels,
+                        parallel_direct_mapping,
+                        &next_frame,
+                        assist_decode,
+                    )
+                })
+            })
+            .collect();
+        let compose_handles: Vec<_> = (0..compose_thread_count)
+            .map(|thread_index| {
+                scope.spawn(|| {
+                    compose_pipeline_stripe(
+                        data,
+                        metadata,
+                        &decoded,
+                        decoded_indices_address,
+                        flat_decoded_indices,
+                        parallel_direct_mapping,
+                        &palettes,
+                        palettes_share_table,
+                        canvas_width,
+                        canvas_height,
+                        canvas_pixels,
+                        rows_per_thread,
+                        thread_index,
+                        output_address,
+                        &next_frame,
+                        assist_decode,
+                        direct_overlay_output,
+                    )
+                })
+            })
+            .collect();
+        for handle in decode_handles {
+            handle
+                .join()
+                .map_err(|_| "Parallel GIF decoder panicked".to_string())?;
+        }
+        for handle in compose_handles {
+            handle
+                .join()
+                .map_err(|_| "Parallel GIF compositor panicked".to_string())??;
+        }
+        Ok::<_, String>(())
+    })?;
+
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn decode_small_independent_frames_into_native(
+    data: &[u8],
+    metadata: &GifMetadata,
+    canvas_pixels: usize,
+    output: &mut [std::mem::MaybeUninit<u32>],
+) -> Result<(), String> {
+    let output_pixels = metadata
+        .frames
+        .len()
+        .checked_mul(canvas_pixels)
+        .ok_or_else(|| "Prepared frame output overflow".to_string())?;
+    if output.len() != output_pixels {
+        return Err("Host output buffer has the wrong size".to_string());
+    }
+    let mut image_data = Vec::new();
+    let mut fixed_image_data = [std::mem::MaybeUninit::<u8>::uninit(); 512];
+    let mut lzw_scratch = LzwStackScratch::default();
+    let mut indices = Vec::new();
+    for (frame_index, frame) in metadata.frames.iter().enumerate() {
+        let palette = build_palette_u32(data, frame, PixelFormat::Rgba)?;
+        let destination =
+            &mut output[frame_index * canvas_pixels..(frame_index + 1) * canvas_pixels];
+        if frame_covers_canvas(frame, metadata) && !frame.interlaced {
+            let image_bytes = if frame.data_length <= fixed_image_data.len() {
+                collect_image_data_into_fixed(data, frame.data_offset, &mut fixed_image_data)?
+            } else {
+                if image_data.capacity() < frame.data_length {
+                    image_data.reserve(frame.data_length.saturating_sub(image_data.len()));
+                }
+                collect_image_data_into(data, frame.data_offset, &mut image_data)?;
+                &image_data
+            };
+            let destination_bytes = unsafe {
+                std::slice::from_raw_parts_mut(destination.as_mut_ptr().cast::<u8>(), canvas_pixels)
+            };
+            destination_bytes.fill(0);
+            if should_decode_lzw_direct(frame, canvas_pixels) {
+                lzw_decode_to_indices_direct_with_scratch(
+                    frame.min_code_size,
+                    image_bytes,
+                    destination_bytes,
+                    &mut lzw_scratch,
+                )?;
+            } else {
+                lzw_decode_to_indices_stack_with_scratch(
+                    frame.min_code_size,
+                    image_bytes,
+                    destination_bytes,
+                    &mut lzw_scratch,
+                )?;
+            }
+            for pixel_index in (0..canvas_pixels).rev() {
+                let index = usize::from(destination_bytes[pixel_index]);
+                let color = if frame.transparent_index == Some(index as u8) {
+                    0
+                } else {
+                    *palette
+                        .get(index)
+                        .ok_or_else(|| format!("Palette index {index} exceeds palette size"))?
+                };
+                destination[pixel_index].write(color);
+            }
+            continue;
+        }
+        if !frame.interlaced && frame.data_length <= fixed_image_data.len() {
+            let image_bytes =
+                collect_image_data_into_fixed(data, frame.data_offset, &mut fixed_image_data)?;
+            let frame_size = usize::from(frame.width) * usize::from(frame.height);
+            indices.resize(frame_size, 0);
+            indices.fill(0);
+            if should_decode_lzw_direct(frame, frame_size) {
+                lzw_decode_to_indices_direct_with_scratch(
+                    frame.min_code_size,
+                    image_bytes,
+                    &mut indices,
+                    &mut lzw_scratch,
+                )?;
+            } else {
+                lzw_decode_to_indices_stack_with_scratch(
+                    frame.min_code_size,
+                    image_bytes,
+                    &mut indices,
+                    &mut lzw_scratch,
+                )?;
+            }
+        } else {
+            decode_frame_indices_reusing_output(
+                data,
+                frame,
+                &mut image_data,
+                &mut lzw_scratch,
+                &mut indices,
+            )?;
+        }
+        if !frame_covers_canvas(frame, metadata) {
+            destination.fill(std::mem::MaybeUninit::new(0));
+            let destination = unsafe {
+                std::slice::from_raw_parts_mut(
+                    destination.as_mut_ptr().cast::<u32>(),
+                    destination.len(),
+                )
+            };
+            blit_indices_to_canvas_u32(&palette, metadata.width, frame, &indices, destination)?;
+            continue;
+        }
+        match frame.transparent_index {
+            None => {
+                for (pixel, &index) in destination.iter_mut().zip(&indices) {
+                    pixel.write(
+                        *palette
+                            .get(usize::from(index))
+                            .ok_or_else(|| format!("Palette index {index} exceeds palette size"))?,
+                    );
+                }
+            }
+            Some(transparent_index) => {
+                for (pixel, &index) in destination.iter_mut().zip(&indices) {
+                    pixel.write(if index == transparent_index {
+                        0
+                    } else {
+                        *palette
+                            .get(usize::from(index))
+                            .ok_or_else(|| format!("Palette index {index} exceeds palette size"))?
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn decode_independent_frames_native(
+    data: &[u8],
+    metadata: &GifMetadata,
+) -> Result<Vec<u32>, String> {
+    let canvas_pixels = usize::from(metadata.width)
+        .checked_mul(usize::from(metadata.height))
+        .ok_or_else(|| "Canvas size overflow".to_string())?;
+    let output_pixels = metadata
+        .frames
+        .len()
+        .checked_mul(canvas_pixels)
+        .ok_or_else(|| "Prepared frame output overflow".to_string())?;
+    if output_pixels < 50_000 {
+        let mut output = Vec::<std::mem::MaybeUninit<u32>>::with_capacity(output_pixels);
+        unsafe {
+            output.set_len(output_pixels);
+        }
+        decode_small_independent_frames_into_native(data, metadata, canvas_pixels, &mut output)?;
+        let pointer = output.as_mut_ptr().cast::<u32>();
+        let length = output.len();
+        let capacity = output.capacity();
+        std::mem::forget(output);
+        return Ok(unsafe { Vec::from_raw_parts(pointer, length, capacity) });
+    }
+    let available_threads = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1);
+    let thread_count = available_threads.min(metadata.frames.len());
+    let mut output = Vec::<std::mem::MaybeUninit<u32>>::with_capacity(output_pixels);
+    unsafe {
+        output.set_len(output_pixels);
+    }
+    let output_address = output.as_mut_ptr() as usize;
+    let next_frame = std::sync::atomic::AtomicUsize::new(0);
+
+    let worker = || {
+        let mut image_data = Vec::new();
+        loop {
+            let frame_index = next_frame.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let Some(frame) = metadata.frames.get(frame_index) else {
+                break;
+            };
+            let palette = build_palette_u32(data, frame, PixelFormat::Rgba)?;
+            let destination = unsafe {
+                (output_address as *mut std::mem::MaybeUninit<u32>).add(frame_index * canvas_pixels)
+            };
+            if frame.interlaced
+                || canvas_pixels < 100_000
+                || frame.transparent_index.is_some()
+                || !frame_covers_canvas(frame, metadata)
+            {
+                let indices =
+                    decode_frame_indices_with_image_scratch(data, frame, &mut image_data)?;
+                let destination =
+                    unsafe { std::slice::from_raw_parts_mut(destination, canvas_pixels) };
+                if !frame_covers_canvas(frame, metadata) {
+                    destination.fill(std::mem::MaybeUninit::new(0));
+                    let destination = unsafe {
+                        std::slice::from_raw_parts_mut(
+                            destination.as_mut_ptr().cast::<u32>(),
+                            destination.len(),
+                        )
+                    };
+                    blit_indices_to_canvas_u32(
+                        &palette,
+                        metadata.width,
+                        frame,
+                        &indices,
+                        destination,
+                    )?;
+                    continue;
+                }
+                match frame.transparent_index {
+                    None => {
+                        for (pixel, index) in destination.iter_mut().zip(indices) {
+                            pixel.write(*palette.get(usize::from(index)).ok_or_else(|| {
+                                format!("Palette index {index} exceeds palette size")
+                            })?);
+                        }
+                    }
+                    Some(transparent_index) => {
+                        for (pixel, index) in destination.iter_mut().zip(indices) {
+                            let color = if index == transparent_index {
+                                0
+                            } else {
+                                *palette.get(usize::from(index)).ok_or_else(|| {
+                                    format!("Palette index {index} exceeds palette size")
+                                })?
+                            };
+                            pixel.write(color);
+                        }
+                    }
+                }
+                continue;
+            }
+
+            if image_data.capacity() < frame.data_length {
+                image_data.reserve(frame.data_length.saturating_sub(image_data.len()));
+            }
+            collect_image_data_into(data, frame.data_offset, &mut image_data)?;
+            let destination_bytes =
+                unsafe { std::slice::from_raw_parts_mut(destination.cast::<u8>(), canvas_pixels) };
+            lzw_decode_to_indices_direct(frame.min_code_size, &image_data, destination_bytes)?;
+            if palette.len() == 256 {
+                let palette_address = palette.as_ptr();
+                let indices_address = destination.cast::<u8>();
+                let mut pixel_index = canvas_pixels;
+                while pixel_index >= 8 {
+                    pixel_index -= 8;
+                    let packed_indices = unsafe {
+                        std::ptr::read_unaligned(indices_address.add(pixel_index).cast::<u64>())
+                    };
+                    let colors = unsafe {
+                        [
+                            *palette_address.add((packed_indices & 0xff) as usize),
+                            *palette_address.add(((packed_indices >> 8) & 0xff) as usize),
+                            *palette_address.add(((packed_indices >> 16) & 0xff) as usize),
+                            *palette_address.add(((packed_indices >> 24) & 0xff) as usize),
+                            *palette_address.add(((packed_indices >> 32) & 0xff) as usize),
+                            *palette_address.add(((packed_indices >> 40) & 0xff) as usize),
+                            *palette_address.add(((packed_indices >> 48) & 0xff) as usize),
+                            *palette_address.add(((packed_indices >> 56) & 0xff) as usize),
+                        ]
+                    };
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(
+                            colors.as_ptr(),
+                            destination.add(pixel_index).cast::<u32>(),
+                            colors.len(),
+                        );
+                    }
+                }
+                while pixel_index > 0 {
+                    pixel_index -= 1;
+                    let index = unsafe { usize::from(*indices_address.add(pixel_index)) };
+                    let color = unsafe { *palette_address.add(index) };
+                    unsafe {
+                        destination
+                            .add(pixel_index)
+                            .write(std::mem::MaybeUninit::new(color));
+                    }
+                }
+                continue;
+            }
+
+            for pixel_index in (0..canvas_pixels).rev() {
+                let index = unsafe { *destination.cast::<u8>().add(pixel_index) };
+                let color = *palette
+                    .get(usize::from(index))
+                    .ok_or_else(|| format!("Palette index {index} exceeds palette size"))?;
+                unsafe {
+                    destination
+                        .add(pixel_index)
+                        .write(std::mem::MaybeUninit::new(color));
+                }
+            }
+        }
+        Ok::<_, String>(())
+    };
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..thread_count).map(|_| scope.spawn(&worker)).collect();
+        for handle in handles {
+            handle
+                .join()
+                .map_err(|_| "Parallel GIF decoder panicked".to_string())??;
+        }
+        Ok::<_, String>(())
+    })?;
+    let pointer = output.as_mut_ptr().cast::<u32>();
+    let length = output.len();
+    let capacity = output.capacity();
+    std::mem::forget(output);
+    Ok(unsafe { Vec::from_raw_parts(pointer, length, capacity) })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn decode_indices_worker(
+    data: &[u8],
+    metadata: &GifMetadata,
+    results_address: usize,
+    next_frame: &std::sync::atomic::AtomicUsize,
+) {
+    loop {
+        let frame_index = next_frame.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let Some(frame) = metadata.frames.get(frame_index) else {
+            return;
+        };
+        unsafe {
+            (results_address as *mut std::mem::MaybeUninit<Result<Vec<u8>, String>>)
+                .add(frame_index)
+                .write(std::mem::MaybeUninit::new(decode_frame_indices_inner(
+                    data, frame,
+                )));
+        }
+    }
+}
+
+#[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
+struct DecodeIndicesDispatchContext<'a> {
+    data: &'a [u8],
+    metadata: &'a GifMetadata,
+    results_address: usize,
+    next_frame: std::sync::atomic::AtomicUsize,
+    panicked: std::sync::atomic::AtomicBool,
+}
+
+#[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
+unsafe extern "C" fn decode_indices_dispatch_worker(
+    context: *mut std::ffi::c_void,
+    _iteration: usize,
+) {
+    let context = &*(context.cast::<DecodeIndicesDispatchContext<'_>>());
+    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        decode_indices_worker(
+            context.data,
+            context.metadata,
+            context.results_address,
+            &context.next_frame,
+        );
+    }))
+    .is_err()
+    {
+        context
+            .panicked
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn decode_frame_indices_parallel_native(
+    data: &[u8],
+    metadata: &GifMetadata,
+) -> Result<Vec<Vec<u8>>, String> {
+    let total_frame_pixels = metadata.frames.iter().try_fold(0usize, |total, frame| {
+        usize::from(frame.width)
+            .checked_mul(usize::from(frame.height))
+            .and_then(|pixels| total.checked_add(pixels))
+            .ok_or_else(|| "Decoded frame size overflow".to_string())
+    })?;
+    let available_threads = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1);
+    let thread_cap = if total_frame_pixels < 100_000 {
+        6
+    } else {
+        usize::MAX
+    };
+    let thread_count = available_threads.min(metadata.frames.len()).min(thread_cap);
+    if thread_count <= 1 || metadata.frames.len() < 8 || total_frame_pixels < 30_000 {
+        let mut image_data = Vec::new();
+        let mut decoded = Vec::with_capacity(metadata.frames.len());
+        for frame in &metadata.frames {
+            decoded.push(decode_frame_indices_with_image_scratch(
+                data,
+                frame,
+                &mut image_data,
+            )?);
+        }
+        return Ok(decoded);
+    }
+
+    let mut results =
+        Vec::<std::mem::MaybeUninit<Result<Vec<u8>, String>>>::with_capacity(metadata.frames.len());
+    unsafe {
+        results.set_len(metadata.frames.len());
+    }
+    let results_address = results.as_mut_ptr() as usize;
+    let next_frame = std::sync::atomic::AtomicUsize::new(0);
+    #[cfg(target_os = "macos")]
+    let joined = {
+        let mut context = DecodeIndicesDispatchContext {
+            data,
+            metadata,
+            results_address,
+            next_frame,
+            panicked: std::sync::atomic::AtomicBool::new(false),
+        };
+        unsafe {
+            let queue = dispatch_get_global_queue(0, 0);
+            if queue.is_null() {
+                std::mem::forget(results);
+                return Err("Could not acquire the system worker queue".to_string());
+            }
+            dispatch_apply_f(
+                thread_count,
+                queue,
+                (&mut context as *mut DecodeIndicesDispatchContext<'_>).cast(),
+                decode_indices_dispatch_worker,
+            );
+        }
+        !context.panicked.load(std::sync::atomic::Ordering::Relaxed)
+    };
+    #[cfg(not(target_os = "macos"))]
+    let joined = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..thread_count)
+            .map(|_| {
+                let next_frame = &next_frame;
+                scope.spawn(move || {
+                    decode_indices_worker(data, metadata, results_address, next_frame)
+                })
+            })
+            .collect();
+        handles.into_iter().all(|handle| handle.join().is_ok())
+    });
+    if !joined {
+        std::mem::forget(results);
+        return Err("Parallel GIF decoder panicked".to_string());
+    }
+
+    let pointer = results.as_mut_ptr().cast::<Result<Vec<u8>, String>>();
+    let length = results.len();
+    let capacity = results.capacity();
+    std::mem::forget(results);
+    unsafe { Vec::from_raw_parts(pointer, length, capacity) }
+        .into_iter()
+        .collect()
 }
 
 fn prepare_composited_delta_frames_inner(
@@ -947,17 +3838,19 @@ struct ColorIndexTable {
 }
 
 impl ColorIndexTable {
-    fn new() -> Self {
+    fn new(capacity: usize) -> Self {
+        debug_assert!(capacity.is_power_of_two());
         Self {
-            keys: vec![-1; COLOR_INDEX_CAP],
-            values: vec![0; COLOR_INDEX_CAP],
+            keys: vec![-1; capacity],
+            values: vec![0; capacity],
         }
     }
 
     #[inline]
     fn get(&self, key: u32) -> Option<u8> {
         let key = key as i32;
-        let mut slot = (key as usize).wrapping_mul(2_654_435_761) & (COLOR_INDEX_CAP - 1);
+        let mask = self.keys.len() - 1;
+        let mut slot = (key as usize).wrapping_mul(2_654_435_761) & mask;
         loop {
             let stored = self.keys[slot];
             if stored == key {
@@ -966,14 +3859,15 @@ impl ColorIndexTable {
             if stored == -1 {
                 return None;
             }
-            slot = (slot + 1) & (COLOR_INDEX_CAP - 1);
+            slot = (slot + 1) & mask;
         }
     }
 
     #[inline]
     fn insert_if_absent(&mut self, key: u32, value: u8) {
         let key = key as i32;
-        let mut slot = (key as usize).wrapping_mul(2_654_435_761) & (COLOR_INDEX_CAP - 1);
+        let mask = self.keys.len() - 1;
+        let mut slot = (key as usize).wrapping_mul(2_654_435_761) & mask;
         loop {
             let stored = self.keys[slot];
             if stored == key {
@@ -984,7 +3878,7 @@ impl ColorIndexTable {
                 self.values[slot] = value;
                 return;
             }
-            slot = (slot + 1) & (COLOR_INDEX_CAP - 1);
+            slot = (slot + 1) & mask;
         }
     }
 }
@@ -996,11 +3890,22 @@ struct PaletteMapper<'a> {
 
 impl<'a> PaletteMapper<'a> {
     fn new(palette_rgb: &'a [u32]) -> Self {
-        let mut exact = ColorIndexTable::new();
+        let mut exact = ColorIndexTable::new(if palette_rgb.len() <= 4 {
+            8
+        } else if palette_rgb.len() <= 16 {
+            32
+        } else {
+            COLOR_INDEX_CAP
+        });
         for (index, color) in palette_rgb.iter().enumerate() {
             exact.insert_if_absent(color & 0x00ff_ffff, index as u8);
         }
         Self { palette_rgb, exact }
+    }
+
+    #[inline]
+    fn exact_index(&self, r: u8, g: u8, b: u8) -> Option<u8> {
+        self.exact.get(rgb_key(r, g, b))
     }
 
     #[inline]
@@ -1022,6 +3927,7 @@ fn encode_rgba_gif_inner(
     loop_count: i32,
     deltas: bool,
     alpha_threshold: u8,
+    literal: bool,
 ) -> Result<Vec<u8>, String> {
     if width == 0 || height == 0 {
         return Err("Width/Height invalid".to_string());
@@ -1057,11 +3963,24 @@ fn encode_rgba_gif_inner(
             palette_rgb,
             delays,
             loop_count,
+            literal,
         );
     }
 
     let (palette, indexed, transparent_index) =
-        index_rgba_frames(rgba_stream, palette_rgb, alpha_threshold)?;
+        index_rgba_frames(rgba_stream, palette_rgb, alpha_threshold, literal)?;
+    if literal && !deltas {
+        return encode_indexed_literal_gif_inner(
+            &indexed,
+            width,
+            height,
+            frame_count,
+            &palette,
+            delays,
+            loop_count,
+            transparent_index,
+        );
+    }
     encode_indexed_gif_inner_with_rects(
         &indexed,
         width,
@@ -1072,6 +3991,7 @@ fn encode_rgba_gif_inner(
         loop_count,
         deltas,
         transparent_index,
+        literal,
     )
 }
 
@@ -1083,6 +4003,7 @@ fn encode_rgba_delta_gif_to_palette_inner(
     palette_rgb: &[u32],
     delays: DelaySource<'_>,
     loop_count: i32,
+    literal: bool,
 ) -> Result<Vec<u8>, String> {
     delays.validate(frame_count)?;
     let color_count = checked_palette_color_count(palette_rgb.len())?;
@@ -1103,7 +4024,8 @@ fn encode_rgba_delta_gif_to_palette_inner(
         13 + palette_bytes + 20 + frame_count.saturating_mul(estimated_frame_bytes) + 1,
     );
     let mapper = PaletteMapper::new(palette_rgb);
-    let mut lzw_tables = LzwEncodeTables::new();
+    let mut lzw_tables = (!literal).then(LzwEncodeTables::new);
+    let mut compressed_scratch = Vec::new();
     let mut mapped = Vec::with_capacity(frame_pixels);
 
     write_indexed_gif_header(&mut output, width, height, palette_rgb, color_count);
@@ -1126,34 +4048,64 @@ fn encode_rgba_delta_gif_to_palette_inner(
                     None,
                 );
                 map_rgba_rect_to_palette(frame, canvas_width, rect, &mapper, &mut mapped);
+                if literal {
+                    encode_indexed_literal_lzw_to(
+                        &mut output,
+                        &mapped,
+                        min_code_size,
+                        color_count,
+                        &mut compressed_scratch,
+                    )?;
+                } else {
+                    encode_indexed_lzw_to_with_tables(
+                        &mut output,
+                        &mapped,
+                        min_code_size,
+                        color_count,
+                        lzw_tables.as_mut().unwrap(),
+                    )?;
+                }
+            } else {
+                write_indexed_gif_frame_header(&mut output, 0, 0, 1, 1, delay, None);
+                let noop = [mapper.index_pixel(frame[0], frame[1], frame[2])];
+                if literal {
+                    encode_indexed_literal_lzw_to(
+                        &mut output,
+                        &noop,
+                        min_code_size,
+                        color_count,
+                        &mut compressed_scratch,
+                    )?;
+                } else {
+                    encode_indexed_lzw_to_with_tables(
+                        &mut output,
+                        &noop,
+                        min_code_size,
+                        color_count,
+                        lzw_tables.as_mut().unwrap(),
+                    )?;
+                }
+            }
+        } else {
+            write_indexed_gif_frame_header(&mut output, 0, 0, width, height, delay, None);
+            map_rgba_frame_to_palette(frame, &mapper, &mut mapped);
+            if literal {
+                encode_indexed_literal_lzw_to(
+                    &mut output,
+                    &mapped,
+                    min_code_size,
+                    color_count,
+                    &mut compressed_scratch,
+                )?;
+            } else {
                 encode_indexed_lzw_to_with_tables(
                     &mut output,
                     &mapped,
                     min_code_size,
                     color_count,
-                    &mut lzw_tables,
-                )?;
-            } else {
-                write_indexed_gif_frame_header(&mut output, 0, 0, 1, 1, delay, None);
-                let noop = [mapper.index_pixel(frame[0], frame[1], frame[2])];
-                encode_indexed_lzw_to_with_tables(
-                    &mut output,
-                    &noop,
-                    min_code_size,
-                    color_count,
-                    &mut lzw_tables,
+                    lzw_tables.as_mut().unwrap(),
                 )?;
             }
-        } else {
-            write_indexed_gif_frame_header(&mut output, 0, 0, width, height, delay, None);
-            map_rgba_frame_to_palette(frame, &mapper, &mut mapped);
-            encode_indexed_lzw_to_with_tables(
-                &mut output,
-                &mapped,
-                min_code_size,
-                color_count,
-                &mut lzw_tables,
-            )?;
         }
         previous_frame = Some(frame);
     }
@@ -1166,14 +4118,20 @@ fn index_rgba_frames(
     rgba_stream: &[u8],
     palette_rgb: &[u32],
     alpha_threshold: u8,
+    exact_only: bool,
 ) -> Result<(Vec<u32>, Vec<u8>, Option<u8>), String> {
     if !palette_rgb.is_empty() {
         checked_palette_color_count(palette_rgb.len())?;
-        return index_rgba_frames_to_palette(rgba_stream, palette_rgb, alpha_threshold);
+        return index_rgba_frames_to_palette(rgba_stream, palette_rgb, alpha_threshold, exact_only);
     }
 
-    if let Some(exact) = try_index_rgba_frames_exact(rgba_stream, alpha_threshold) {
+    if let Some(exact) = try_index_rgba_frames_exact(rgba_stream, alpha_threshold, exact_only)? {
         return Ok(exact);
+    }
+    if exact_only {
+        return Err(
+            "Pixel-perfect GIF encoding requires at most 256 exact palette entries".to_string(),
+        );
     }
 
     Ok(index_rgba_frames_332(rgba_stream, alpha_threshold))
@@ -1182,14 +4140,20 @@ fn index_rgba_frames(
 fn try_index_rgba_frames_exact(
     rgba_stream: &[u8],
     alpha_threshold: u8,
-) -> Option<(Vec<u32>, Vec<u8>, Option<u8>)> {
-    let mut table = ColorIndexTable::new();
+    exact_only: bool,
+) -> Result<Option<(Vec<u32>, Vec<u8>, Option<u8>)>, String> {
+    let mut table = ColorIndexTable::new(COLOR_INDEX_CAP);
     let mut palette = Vec::with_capacity(256);
     let mut indexed = Vec::with_capacity(rgba_stream.len() / 4);
     let mut has_transparent_pixels = false;
 
     let mut offset = 0usize;
     while offset < rgba_stream.len() {
+        if exact_only && rgba_stream[offset + 3] != 0 && rgba_stream[offset + 3] != 255 {
+            return Err(
+                "Pixel-perfect GIF encoding requires alpha values of exactly 0 or 255".to_string(),
+            );
+        }
         if rgba_stream[offset + 3] < alpha_threshold {
             has_transparent_pixels = true;
             offset += 4;
@@ -1205,7 +4169,7 @@ fn try_index_rgba_frames_exact(
             continue;
         }
         if palette.len() == if has_transparent_pixels { 255 } else { 256 } {
-            return None;
+            return Ok(None);
         }
 
         let index = palette.len() as u8;
@@ -1215,7 +4179,7 @@ fn try_index_rgba_frames_exact(
     }
 
     if has_transparent_pixels && palette.len() == 256 {
-        return None;
+        return Ok(None);
     }
 
     let transparent_index = if has_transparent_pixels {
@@ -1242,72 +4206,106 @@ fn try_index_rgba_frames_exact(
         offset += 4;
     }
 
-    Some((palette, indexed, transparent_index))
+    Ok(Some((palette, indexed, transparent_index)))
 }
 
 fn index_rgba_frames_to_palette(
     rgba_stream: &[u8],
     palette_rgb: &[u32],
     alpha_threshold: u8,
+    exact_only: bool,
 ) -> Result<(Vec<u32>, Vec<u8>, Option<u8>), String> {
     let mapper = PaletteMapper::new(palette_rgb);
     let mut palette: Vec<u32> = palette_rgb
         .iter()
         .map(|color| color & 0x00ff_ffff)
         .collect();
+    if !rgba_stream_has_transparent_pixels(rgba_stream, alpha_threshold) {
+        let mut indexed = Vec::with_capacity(rgba_stream.len() / 4);
+        if exact_only {
+            for pixel in rgba_stream.chunks_exact(4) {
+                if pixel[3] != 255 {
+                    return Err(
+                        "Pixel-perfect GIF encoding requires alpha values of exactly 0 or 255"
+                            .to_string(),
+                    );
+                }
+                indexed.push(
+                    mapper
+                        .exact_index(pixel[0], pixel[1], pixel[2])
+                        .ok_or_else(|| {
+                            "Pixel-perfect GIF encoding found an RGBA color outside the supplied palette"
+                                .to_string()
+                        })?,
+                );
+            }
+        } else {
+            map_rgba_frame_to_palette(rgba_stream, &mapper, &mut indexed);
+        }
+        return Ok((palette, indexed, None));
+    }
+
     let mut used_indexes = vec![false; palette_rgb.len()];
-    let mut has_transparent_pixels = false;
+    let mut indexed = Vec::with_capacity(rgba_stream.len() / 4);
 
     let mut offset = 0usize;
     while offset < rgba_stream.len() {
+        if exact_only && rgba_stream[offset + 3] != 0 && rgba_stream[offset + 3] != 255 {
+            return Err(
+                "Pixel-perfect GIF encoding requires alpha values of exactly 0 or 255".to_string(),
+            );
+        }
         if rgba_stream[offset + 3] < alpha_threshold {
-            has_transparent_pixels = true;
+            indexed.push(0);
             offset += 4;
             continue;
         }
-        let index = mapper.index_pixel(
-            rgba_stream[offset],
-            rgba_stream[offset + 1],
-            rgba_stream[offset + 2],
-        ) as usize;
-        used_indexes[index] = true;
-        offset += 4;
-    }
-
-    let transparent_index = if has_transparent_pixels {
-        if palette.len() < 256 {
-            let index = palette.len() as u8;
-            palette.push(0);
-            Some(index)
+        let index = if exact_only {
+            mapper
+                .exact_index(
+                    rgba_stream[offset],
+                    rgba_stream[offset + 1],
+                    rgba_stream[offset + 2],
+                )
+                .ok_or_else(|| {
+                    "Pixel-perfect GIF encoding found an RGBA color outside the supplied palette"
+                        .to_string()
+                })?
         } else {
-            Some(
-                used_indexes
-                    .iter()
-                    .position(|used| !*used)
-                    .map(|index| index as u8)
-                    .ok_or_else(|| {
-                        "RGBA frames contain transparent pixels, but the palette has no unused transparent slot."
-                            .to_string()
-                    })?,
-            )
-        }
-    } else {
-        None
-    };
-
-    let mut indexed = Vec::with_capacity(rgba_stream.len() / 4);
-    offset = 0;
-    while offset < rgba_stream.len() {
-        if rgba_stream[offset + 3] < alpha_threshold {
-            indexed.push(transparent_index.unwrap());
-        } else {
-            indexed.push(mapper.index_pixel(
+            mapper.index_pixel(
                 rgba_stream[offset],
                 rgba_stream[offset + 1],
                 rgba_stream[offset + 2],
-            ));
-        }
+            )
+        } as usize;
+        used_indexes[index] = true;
+        indexed.push(index as u8);
         offset += 4;
+    }
+
+    let transparent_index = if palette.len() < 256 {
+        let index = palette.len() as u8;
+        palette.push(0);
+        Some(index)
+    } else {
+        Some(
+            used_indexes
+                .iter()
+                .position(|used| !*used)
+                .map(|index| index as u8)
+                .ok_or_else(|| {
+                    "RGBA frames contain transparent pixels, but the palette has no unused transparent slot."
+                        .to_string()
+                })?,
+        )
+    };
+
+    if let Some(transparent_index) = transparent_index {
+        for (pixel, index) in rgba_stream.chunks_exact(4).zip(indexed.iter_mut()) {
+            if pixel[3] < alpha_threshold {
+                *index = transparent_index;
+            }
+        }
     }
 
     Ok((palette, indexed, transparent_index))
@@ -1541,6 +4539,1066 @@ fn encode_indexed_gif_inner(
     Ok(output)
 }
 
+fn encode_indexed_literal_gif_inner(
+    index_stream: &[u8],
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    palette_rgb: &[u32],
+    delays: DelaySource<'_>,
+    loop_count: i32,
+    transparent_index: Option<u8>,
+) -> Result<Vec<u8>, String> {
+    if width == 0 || height == 0 {
+        return Err("Width/Height invalid".to_string());
+    }
+    if frame_count == 0 {
+        return Err("Frame count must be greater than zero".to_string());
+    }
+    if loop_count < -1 || loop_count > i32::from(u16::MAX) {
+        return Err("Loop count invalid".to_string());
+    }
+    delays.validate(frame_count)?;
+
+    let color_count = checked_palette_color_count(palette_rgb.len())?;
+    let min_code_size = (log2_pow2(color_count) as u8).max(2);
+    let frame_len = usize::from(width)
+        .checked_mul(usize::from(height))
+        .ok_or_else(|| "Frame size overflow".to_string())?;
+    let expected_len = frame_len
+        .checked_mul(frame_count)
+        .ok_or_else(|| "Frame stream overflow".to_string())?;
+    if index_stream.len() != expected_len {
+        return Err("Indexed frame stream length does not match dimensions".to_string());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    if min_code_size > 2 && frame_count >= 8 && expected_len >= 50_000 {
+        return encode_indexed_literal_gif_parallel_native(
+            index_stream,
+            width,
+            height,
+            frame_count,
+            palette_rgb,
+            delays,
+            loop_count,
+            transparent_index,
+            color_count,
+            min_code_size,
+            frame_len,
+        );
+    }
+
+    let palette_bytes = color_count
+        .checked_mul(3)
+        .ok_or_else(|| "Palette size overflow".to_string())?;
+    let mut output = Vec::with_capacity(
+        13 + palette_bytes + 20 + expected_len.saturating_mul(2) + frame_count * 16 + 1,
+    );
+    write_indexed_gif_header(&mut output, width, height, palette_rgb, color_count);
+    write_loop_extension(&mut output, loop_count);
+    let mut compressed_scratch = Vec::new();
+
+    for (frame_index, frame) in index_stream.chunks_exact(frame_len).enumerate() {
+        write_indexed_gif_frame_header(
+            &mut output,
+            0,
+            0,
+            width,
+            height,
+            delays.get(frame_index),
+            transparent_index,
+        );
+        encode_indexed_literal_lzw_to(
+            &mut output,
+            frame,
+            min_code_size,
+            color_count,
+            &mut compressed_scratch,
+        )?;
+    }
+    output.push(0x3b);
+    Ok(output)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::too_many_arguments)]
+fn encode_indexed_literal_gif_parallel_native(
+    index_stream: &[u8],
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    palette_rgb: &[u32],
+    delays: DelaySource<'_>,
+    loop_count: i32,
+    transparent_index: Option<u8>,
+    color_count: usize,
+    min_code_size: u8,
+    frame_len: usize,
+) -> Result<Vec<u8>, String> {
+    let mut output = Vec::new();
+    write_indexed_gif_header(&mut output, width, height, palette_rgb, color_count);
+    write_loop_extension(&mut output, loop_count);
+    let lzw_length = literal_lzw_block_size(frame_len, min_code_size)?;
+    let mut output_length = output.len();
+    let mut frame_layout = Vec::with_capacity(frame_count);
+    for frame_index in 0..frame_count {
+        let gce_length =
+            usize::from(delays.get(frame_index) != 0 || transparent_index.is_some()) * 8;
+        let frame_length = 10usize
+            .checked_add(gce_length)
+            .and_then(|length| length.checked_add(lzw_length))
+            .ok_or_else(|| "Encoded GIF size overflow".to_string())?;
+        frame_layout.push((output_length, frame_length));
+        output_length = output_length
+            .checked_add(frame_length)
+            .ok_or_else(|| "Encoded GIF size overflow".to_string())?;
+    }
+    output_length = output_length
+        .checked_add(1)
+        .ok_or_else(|| "Encoded GIF size overflow".to_string())?;
+    output.reserve_exact(output_length - output.len());
+    unsafe {
+        output.set_len(output_length);
+    }
+    let output_address = output.as_mut_ptr() as usize;
+    let frame_results: Vec<std::sync::OnceLock<Result<(), String>>> = (0..frame_count)
+        .map(|_| std::sync::OnceLock::new())
+        .collect();
+    let next_frame = std::sync::atomic::AtomicUsize::new(0);
+    let available_threads = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1);
+    let thread_count = available_threads.min(frame_count);
+
+    let joined = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..thread_count)
+            .map(|_| {
+                let next_frame = &next_frame;
+                let frame_results = &frame_results;
+                let frame_layout = &frame_layout;
+                scope.spawn(move || loop {
+                    let frame_index = next_frame.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if frame_index >= frame_count {
+                        break;
+                    }
+                    let result = (|| {
+                        let frame =
+                            &index_stream[frame_index * frame_len..(frame_index + 1) * frame_len];
+                        let (destination, expected_length) = frame_layout[frame_index];
+                        let mut chunk = Vec::with_capacity(expected_length);
+                        write_indexed_gif_frame_header(
+                            &mut chunk,
+                            0,
+                            0,
+                            width,
+                            height,
+                            delays.get(frame_index),
+                            transparent_index,
+                        );
+                        let mut compressed_scratch = Vec::new();
+                        encode_indexed_literal_lzw_to(
+                            &mut chunk,
+                            frame,
+                            min_code_size,
+                            color_count,
+                            &mut compressed_scratch,
+                        )?;
+                        if chunk.len() != expected_length {
+                            return Err("Predicted encoded frame size differs".to_string());
+                        }
+                        unsafe {
+                            std::ptr::copy_nonoverlapping(
+                                chunk.as_ptr(),
+                                (output_address as *mut u8).add(destination),
+                                expected_length,
+                            );
+                        }
+                        Ok(())
+                    })();
+                    let _ = frame_results[frame_index].set(result);
+                })
+            })
+            .collect();
+        handles.into_iter().all(|handle| handle.join().is_ok())
+    });
+    if !joined {
+        return Err("Parallel GIF encoder panicked".to_string());
+    }
+    for frame_result in frame_results {
+        frame_result
+            .into_inner()
+            .ok_or_else(|| "Parallel GIF encoder skipped a frame".to_string())??;
+    }
+    output[output_length - 1] = 0x3b;
+    Ok(output)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+unsafe fn try_reencode_parallel_gif_into_host(
+    data: &[u8],
+    metadata: &GifMetadata,
+    loop_count: i32,
+    allocate: NativeRgbaAllocator,
+    allocate_context: *mut std::ffi::c_void,
+) -> Result<Option<(*mut u8, usize)>, String> {
+    let total_frame_pixels = metadata.frames.iter().try_fold(0usize, |total, frame| {
+        usize::from(frame.width)
+            .checked_mul(usize::from(frame.height))
+            .and_then(|pixels| total.checked_add(pixels))
+            .ok_or_else(|| "Decoded frame size overflow".to_string())
+    })?;
+    let available_threads = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1);
+    let thread_cap = if total_frame_pixels < 100_000 {
+        6
+    } else if metadata.frames.len() <= 12 {
+        6
+    } else {
+        usize::MAX
+    };
+    let thread_count = available_threads.min(metadata.frames.len()).min(thread_cap);
+    if thread_count <= 1 || metadata.frames.len() < 8 || total_frame_pixels < 30_000 {
+        return Ok(None);
+    }
+
+    let global_palette_length = metadata
+        .global_palette_size
+        .checked_mul(3)
+        .ok_or_else(|| "Global palette size overflow".to_string())?;
+    let header_length = 13usize
+        .checked_add(global_palette_length)
+        .and_then(|length| length.checked_add(usize::from(loop_count >= 0) * 19))
+        .ok_or_else(|| "Reencoded GIF size overflow".to_string())?;
+    let mut output_length = header_length;
+    let mut frame_layout = Vec::with_capacity(metadata.frames.len());
+    for frame in &metadata.frames {
+        let frame_length = reencoded_frame_literal_size(metadata, frame)?;
+        frame_layout.push((output_length, frame_length));
+        output_length = output_length
+            .checked_add(frame_length)
+            .ok_or_else(|| "Reencoded GIF size overflow".to_string())?;
+    }
+    output_length = output_length
+        .checked_add(1)
+        .ok_or_else(|| "Reencoded GIF size overflow".to_string())?;
+
+    let output_pointer = allocate(allocate_context, output_length);
+    if output_pointer.is_null() {
+        return Err("Could not allocate host GIF output".to_string());
+    }
+    let mut output =
+        std::mem::ManuallyDrop::new(Vec::from_raw_parts(output_pointer, 0, output_length));
+    write_reencoded_gif_header_to(&mut output, data, metadata, loop_count)?;
+    if output.len() != header_length {
+        return Err("Predicted host GIF header size differs".to_string());
+    }
+    output.set_len(output_length);
+    fill_reencoded_gif_literal_parallel_native(
+        data,
+        metadata,
+        &mut output,
+        &frame_layout,
+        output_length,
+        thread_count,
+    )?;
+    if output.as_mut_ptr() != output_pointer {
+        return Err("Host GIF output unexpectedly reallocated".to_string());
+    }
+    Ok(Some((output_pointer, output_length)))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+unsafe fn try_reencode_small_gif_into_host(
+    data: &[u8],
+    allocate: NativeRgbaAllocator,
+    allocate_context: *mut std::ffi::c_void,
+) -> Result<Option<(*mut u8, usize)>, String> {
+    if data.len() < 13 || data.len() > 32_768 {
+        return Ok(None);
+    }
+    let version = match &data[0..6] {
+        b"GIF87a" => "GIF87a",
+        b"GIF89a" => "GIF89a",
+        _ => return Err("Invalid GIF signature".to_string()),
+    };
+    let width = read_u16(data, 6, "logical screen width")?;
+    let height = read_u16(data, 8, "logical screen height")?;
+    if !matches!(
+        usize::from(width).checked_mul(usize::from(height)),
+        Some(pixels) if pixels <= 4_096
+    ) {
+        return Ok(None);
+    }
+    let packed = data[10];
+    let has_global_palette = (packed & 0x80) != 0;
+    let global_palette_size = if has_global_palette {
+        2usize << usize::from(packed & 0x07)
+    } else {
+        0
+    };
+    let global_palette_offset = has_global_palette.then_some(13);
+    let mut offset = 13usize;
+    if has_global_palette {
+        offset = checked_add(
+            offset,
+            global_palette_size * 3,
+            data.len(),
+            "global color table",
+        )?;
+    }
+
+    let mut frame_storage =
+        std::array::from_fn::<_, 16, _>(|_| std::mem::MaybeUninit::<FrameMetadata>::uninit());
+    let mut frames = std::mem::ManuallyDrop::new(Vec::from_raw_parts(
+        frame_storage.as_mut_ptr().cast::<FrameMetadata>(),
+        0,
+        frame_storage.len(),
+    ));
+    let mut graphic_control = GraphicControl::default();
+    let mut loop_count = None;
+    let mut total_frame_pixels = 0usize;
+    while offset < data.len() {
+        let byte = data[offset];
+        offset += 1;
+        match byte {
+            0x2c => {
+                if frames.len() == frames.capacity() {
+                    return Ok(None);
+                }
+                let (frame, next_offset) = parse_image_descriptor(
+                    data,
+                    offset,
+                    global_palette_offset,
+                    global_palette_size,
+                    graphic_control,
+                )?;
+                if frame.interlaced || frame.data_length > 8_192 {
+                    return Ok(None);
+                }
+                let frame_pixels = usize::from(frame.width)
+                    .checked_mul(usize::from(frame.height))
+                    .ok_or_else(|| "Frame size overflow".to_string())?;
+                if frame_pixels > 4_096 {
+                    return Ok(None);
+                }
+                total_frame_pixels = total_frame_pixels
+                    .checked_add(frame_pixels)
+                    .ok_or_else(|| "Decoded frame size overflow".to_string())?;
+                if total_frame_pixels > 30_000 {
+                    return Ok(None);
+                }
+                frames.push(frame);
+                offset = next_offset;
+                graphic_control = GraphicControl::default();
+            }
+            0x21 => {
+                if offset >= data.len() {
+                    return Err("Truncated extension block".to_string());
+                }
+                let label = data[offset];
+                offset += 1;
+                if label == 0xf9 {
+                    let (gce, next_offset) = parse_graphic_control(data, offset)?;
+                    graphic_control = gce;
+                    offset = next_offset;
+                } else {
+                    if label == 0xff {
+                        loop_count = read_loop_count_extension(data, offset).or(loop_count);
+                    }
+                    offset = skip_sub_blocks(data, offset, "extension data")?;
+                }
+            }
+            0x3b => break,
+            _ => {
+                return Err(format!(
+                    "Unexpected GIF block byte 0x{byte:02x} at offset {}",
+                    offset - 1
+                ));
+            }
+        }
+    }
+    if frames.is_empty() {
+        return Ok(None);
+    }
+
+    let metadata = std::mem::ManuallyDrop::new(GifMetadata {
+        version,
+        width,
+        height,
+        global_palette_offset,
+        global_palette_size,
+        loop_count,
+        frames: std::mem::ManuallyDrop::take(&mut frames),
+    });
+    let loop_count = metadata.loop_count.map(i32::from).unwrap_or(-1);
+    let global_palette_length = metadata
+        .global_palette_size
+        .checked_mul(3)
+        .ok_or_else(|| "Global palette size overflow".to_string())?;
+    let mut output_length = 13usize
+        .checked_add(global_palette_length)
+        .and_then(|length| length.checked_add(usize::from(loop_count >= 0) * 19))
+        .ok_or_else(|| "Reencoded GIF size overflow".to_string())?;
+    for frame in &metadata.frames {
+        output_length = output_length
+            .checked_add(reencoded_frame_literal_size(&metadata, frame)?)
+            .ok_or_else(|| "Reencoded GIF size overflow".to_string())?;
+    }
+    output_length = output_length
+        .checked_add(1)
+        .ok_or_else(|| "Reencoded GIF size overflow".to_string())?;
+    if output_length > 64 * 1_024 {
+        return Ok(None);
+    }
+
+    let output_pointer = allocate(allocate_context, output_length);
+    if output_pointer.is_null() {
+        return Err("Could not allocate host GIF output".to_string());
+    }
+    let mut output =
+        std::mem::ManuallyDrop::new(Vec::from_raw_parts(output_pointer, 0, output_length));
+    write_reencoded_gif_header_to(&mut output, data, &metadata, loop_count)?;
+
+    let mut image_data_storage = [std::mem::MaybeUninit::<u8>::uninit(); 8_192];
+    let mut indices_storage = [std::mem::MaybeUninit::<u8>::uninit(); 4_096];
+    let mut compressed_storage = [std::mem::MaybeUninit::<u8>::uninit(); 8_192];
+    let mut image_data = std::mem::ManuallyDrop::new(Vec::from_raw_parts(
+        image_data_storage.as_mut_ptr().cast::<u8>(),
+        0,
+        image_data_storage.len(),
+    ));
+    let mut indices = std::mem::ManuallyDrop::new(Vec::from_raw_parts(
+        indices_storage.as_mut_ptr().cast::<u8>(),
+        0,
+        indices_storage.len(),
+    ));
+    let mut compressed = std::mem::ManuallyDrop::new(Vec::from_raw_parts(
+        compressed_storage.as_mut_ptr().cast::<u8>(),
+        0,
+        compressed_storage.len(),
+    ));
+    let mut lzw_scratch = LzwStackScratch::default();
+    for frame in &metadata.frames {
+        decode_frame_indices_reusing_output(
+            data,
+            frame,
+            &mut image_data,
+            &mut lzw_scratch,
+            &mut indices,
+        )?;
+        write_reencoded_frame_literal_to(
+            &mut output,
+            data,
+            &metadata,
+            frame,
+            &indices,
+            &mut compressed,
+        )?;
+    }
+    output.push(0x3b);
+    if output.len() != output_length || output.as_mut_ptr() != output_pointer {
+        return Err("Predicted host GIF output size differs".to_string());
+    }
+    Ok(Some((output_pointer, output_length)))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn reencode_gif_literal_sequential_native(
+    data: &[u8],
+    metadata: &GifMetadata,
+    loop_count: i32,
+    decoded_size: usize,
+) -> Result<Vec<u8>, String> {
+    if loop_count < -1 || loop_count > i32::from(u16::MAX) {
+        return Err("Loop count invalid".to_string());
+    }
+
+    let mut output = write_reencoded_gif_header(
+        data,
+        metadata,
+        loop_count,
+        data.len()
+            .saturating_add(decoded_size)
+            .saturating_add(metadata.frames.len() * 32),
+    )?;
+    let mut image_data = Vec::new();
+    let mut lzw_scratch = LzwStackScratch::default();
+    let mut indices = Vec::new();
+    let mut compressed_scratch = Vec::new();
+
+    for frame in &metadata.frames {
+        decode_frame_indices_reusing_output(
+            data,
+            frame,
+            &mut image_data,
+            &mut lzw_scratch,
+            &mut indices,
+        )?;
+        write_reencoded_frame_literal_to(
+            &mut output,
+            data,
+            metadata,
+            frame,
+            &indices,
+            &mut compressed_scratch,
+        )?;
+    }
+
+    output.push(0x3b);
+    Ok(output)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn reencode_gif_literal_parallel_native(
+    data: &[u8],
+    metadata: &GifMetadata,
+    loop_count: i32,
+) -> Result<Vec<u8>, String> {
+    let total_frame_pixels = metadata.frames.iter().try_fold(0usize, |total, frame| {
+        usize::from(frame.width)
+            .checked_mul(usize::from(frame.height))
+            .and_then(|pixels| total.checked_add(pixels))
+            .ok_or_else(|| "Decoded frame size overflow".to_string())
+    })?;
+    let available_threads = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1);
+    let thread_cap = if total_frame_pixels < 100_000 {
+        6
+    } else if metadata.frames.len() <= 12 {
+        6
+    } else {
+        usize::MAX
+    };
+    let thread_count = available_threads.min(metadata.frames.len()).min(thread_cap);
+    if thread_count <= 1 || metadata.frames.len() < 8 || total_frame_pixels < 30_000 {
+        return reencode_gif_literal_sequential_native(
+            data,
+            metadata,
+            loop_count,
+            total_frame_pixels,
+        );
+    }
+
+    let mut output = write_reencoded_gif_header(data, metadata, loop_count, 0)?;
+    let mut output_length = output.len();
+    let mut frame_layout = Vec::with_capacity(metadata.frames.len());
+    for frame in &metadata.frames {
+        let frame_length = reencoded_frame_literal_size(metadata, frame)?;
+        frame_layout.push((output_length, frame_length));
+        output_length = output_length
+            .checked_add(frame_length)
+            .ok_or_else(|| "Reencoded GIF size overflow".to_string())?;
+    }
+    output_length = output_length
+        .checked_add(1)
+        .ok_or_else(|| "Reencoded GIF size overflow".to_string())?;
+    output.reserve_exact(output_length - output.len());
+    unsafe {
+        output.set_len(output_length);
+    }
+    fill_reencoded_gif_literal_parallel_native(
+        data,
+        metadata,
+        &mut output,
+        &frame_layout,
+        output_length,
+        thread_count,
+    )?;
+    Ok(output)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn reencode_gif_literal_worker(
+    data: &[u8],
+    metadata: &GifMetadata,
+    frame_layout: &[(usize, usize)],
+    output_address: usize,
+    next_frame: &std::sync::atomic::AtomicUsize,
+) -> Result<(), String> {
+    let mut image_data = Vec::new();
+    let mut lzw_scratch = LzwStackScratch::default();
+    let mut indices = Vec::new();
+    let mut compressed_scratch = Vec::new();
+    reencode_gif_literal_worker_with_scratch(
+        data,
+        metadata,
+        frame_layout,
+        output_address,
+        next_frame,
+        &mut image_data,
+        &mut lzw_scratch,
+        &mut indices,
+        &mut compressed_scratch,
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::too_many_arguments)]
+fn reencode_gif_literal_worker_with_scratch(
+    data: &[u8],
+    metadata: &GifMetadata,
+    frame_layout: &[(usize, usize)],
+    output_address: usize,
+    next_frame: &std::sync::atomic::AtomicUsize,
+    image_data: &mut Vec<u8>,
+    lzw_scratch: &mut LzwStackScratch,
+    indices: &mut Vec<u8>,
+    compressed_scratch: &mut Vec<u8>,
+) -> Result<(), String> {
+    loop {
+        let frame_index = next_frame.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let Some(frame) = metadata.frames.get(frame_index) else {
+            return Ok(());
+        };
+        let (destination, expected_length) = frame_layout[frame_index];
+        let destination_pointer = unsafe { (output_address as *mut u8).add(destination) };
+        let mut chunk = std::mem::ManuallyDrop::new(unsafe {
+            Vec::from_raw_parts(destination_pointer, 0, expected_length)
+        });
+        decode_frame_indices_reusing_output(data, frame, image_data, lzw_scratch, indices)?;
+        write_reencoded_frame_literal_to(
+            &mut chunk,
+            data,
+            metadata,
+            frame,
+            indices,
+            compressed_scratch,
+        )?;
+        if chunk.len() != expected_length {
+            return Err("Predicted reencoded frame size differs".to_string());
+        }
+        if chunk.as_ptr() != destination_pointer {
+            return Err("Reencoded frame unexpectedly reallocated".to_string());
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn reencode_gif_literal_worker_fixed<
+    const INDICES_CAPACITY: usize,
+    const COMPRESSED_CAPACITY: usize,
+>(
+    data: &[u8],
+    metadata: &GifMetadata,
+    frame_layout: &[(usize, usize)],
+    output_address: usize,
+    next_frame: &std::sync::atomic::AtomicUsize,
+) -> Result<(), String> {
+    let mut image_data_storage = [std::mem::MaybeUninit::<u8>::uninit(); 8_192];
+    let mut indices_storage = [std::mem::MaybeUninit::<u8>::uninit(); INDICES_CAPACITY];
+    let mut compressed_storage = [std::mem::MaybeUninit::<u8>::uninit(); COMPRESSED_CAPACITY];
+    let mut image_data = std::mem::ManuallyDrop::new(unsafe {
+        Vec::from_raw_parts(
+            image_data_storage.as_mut_ptr().cast::<u8>(),
+            0,
+            image_data_storage.len(),
+        )
+    });
+    let mut indices = std::mem::ManuallyDrop::new(unsafe {
+        Vec::from_raw_parts(
+            indices_storage.as_mut_ptr().cast::<u8>(),
+            0,
+            indices_storage.len(),
+        )
+    });
+    let mut compressed_scratch = std::mem::ManuallyDrop::new(unsafe {
+        Vec::from_raw_parts(
+            compressed_storage.as_mut_ptr().cast::<u8>(),
+            0,
+            compressed_storage.len(),
+        )
+    });
+    let mut lzw_scratch = LzwStackScratch::default();
+    reencode_gif_literal_worker_with_scratch(
+        data,
+        metadata,
+        frame_layout,
+        output_address,
+        next_frame,
+        &mut image_data,
+        &mut lzw_scratch,
+        &mut indices,
+        &mut compressed_scratch,
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn reencode_frames_fit_fixed_worker_scratch(
+    metadata: &GifMetadata,
+    frame_layout: &[(usize, usize)],
+) -> u8 {
+    let fits_small = metadata
+        .frames
+        .iter()
+        .zip(frame_layout)
+        .all(|(frame, &(_, frame_length))| {
+            let pixels = usize::from(frame.width) * usize::from(frame.height);
+            frame.data_length <= 8_192 && pixels <= 4_096 && frame_length <= 8_192
+        });
+    if fits_small {
+        return 1;
+    }
+    let fits_medium =
+        metadata
+            .frames
+            .iter()
+            .zip(frame_layout)
+            .all(|(frame, &(_, frame_length))| {
+                let pixels = usize::from(frame.width) * usize::from(frame.height);
+                frame.data_length <= 8_192 && pixels <= 16_384 && frame_length <= 16_384
+            });
+    u8::from(fits_medium) * 2
+}
+
+#[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
+struct ReencodeDispatchContext<'a> {
+    data: &'a [u8],
+    metadata: &'a GifMetadata,
+    frame_layout: &'a [(usize, usize)],
+    output_address: usize,
+    next_frame: std::sync::atomic::AtomicUsize,
+    error: std::sync::Mutex<Option<String>>,
+    fixed_worker_scratch: u8,
+}
+
+#[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
+unsafe extern "C" fn reencode_dispatch_worker(context: *mut std::ffi::c_void, _iteration: usize) {
+    let context = &*(context.cast::<ReencodeDispatchContext<'_>>());
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if context.fixed_worker_scratch == 1 {
+            reencode_gif_literal_worker_fixed::<4_096, 8_192>(
+                context.data,
+                context.metadata,
+                context.frame_layout,
+                context.output_address,
+                &context.next_frame,
+            )
+        } else if context.fixed_worker_scratch == 2 {
+            reencode_gif_literal_worker_fixed::<16_384, 16_384>(
+                context.data,
+                context.metadata,
+                context.frame_layout,
+                context.output_address,
+                &context.next_frame,
+            )
+        } else {
+            reencode_gif_literal_worker(
+                context.data,
+                context.metadata,
+                context.frame_layout,
+                context.output_address,
+                &context.next_frame,
+            )
+        }
+    }));
+    let error = match result {
+        Ok(Ok(())) => return,
+        Ok(Err(error)) => error,
+        Err(_) => "Parallel GIF transcoder panicked".to_string(),
+    };
+    if let Ok(mut stored_error) = context.error.lock() {
+        if stored_error.is_none() {
+            *stored_error = Some(error);
+        }
+    }
+}
+
+#[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
+fn fill_reencoded_gif_literal_dispatch(
+    data: &[u8],
+    metadata: &GifMetadata,
+    output_address: usize,
+    frame_layout: &[(usize, usize)],
+    thread_count: usize,
+) -> Result<(), String> {
+    let mut context = ReencodeDispatchContext {
+        data,
+        metadata,
+        frame_layout,
+        output_address,
+        next_frame: std::sync::atomic::AtomicUsize::new(0),
+        error: std::sync::Mutex::new(None),
+        fixed_worker_scratch: reencode_frames_fit_fixed_worker_scratch(metadata, frame_layout),
+    };
+    unsafe {
+        let queue = dispatch_get_global_queue(0, 0);
+        if queue.is_null() {
+            return Err("Could not acquire the system worker queue".to_string());
+        }
+        dispatch_apply_f(
+            thread_count,
+            queue,
+            (&mut context as *mut ReencodeDispatchContext<'_>).cast(),
+            reencode_dispatch_worker,
+        );
+    }
+    context
+        .error
+        .into_inner()
+        .map_err(|_| "Parallel GIF transcoder error lock was poisoned".to_string())?
+        .map_or(Ok(()), Err)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn fill_reencoded_gif_literal_parallel_native(
+    data: &[u8],
+    metadata: &GifMetadata,
+    output: &mut Vec<u8>,
+    frame_layout: &[(usize, usize)],
+    output_length: usize,
+    thread_count: usize,
+) -> Result<(), String> {
+    let output_address = output.as_mut_ptr() as usize;
+    #[cfg(target_os = "macos")]
+    {
+        fill_reencoded_gif_literal_dispatch(
+            data,
+            metadata,
+            output_address,
+            frame_layout,
+            thread_count,
+        )?;
+        output[output_length - 1] = 0x3b;
+        return Ok(());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let next_frame = std::sync::atomic::AtomicUsize::new(0);
+        let fixed_worker_scratch = reencode_frames_fit_fixed_worker_scratch(metadata, frame_layout);
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..thread_count)
+                .map(|_| {
+                    let next_frame = &next_frame;
+                    let frame_layout = &frame_layout;
+                    scope.spawn(move || -> Result<(), String> {
+                        if fixed_worker_scratch == 1 {
+                            reencode_gif_literal_worker_fixed::<4_096, 8_192>(
+                                data,
+                                metadata,
+                                frame_layout,
+                                output_address,
+                                next_frame,
+                            )
+                        } else if fixed_worker_scratch == 2 {
+                            reencode_gif_literal_worker_fixed::<16_384, 16_384>(
+                                data,
+                                metadata,
+                                frame_layout,
+                                output_address,
+                                next_frame,
+                            )
+                        } else {
+                            reencode_gif_literal_worker(
+                                data,
+                                metadata,
+                                frame_layout,
+                                output_address,
+                                next_frame,
+                            )
+                        }
+                    })
+                })
+                .collect();
+            for handle in handles {
+                handle
+                    .join()
+                    .map_err(|_| "Parallel GIF transcoder panicked".to_string())??;
+            }
+            Ok::<_, String>(())
+        })?;
+        output[output_length - 1] = 0x3b;
+        Ok(())
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn reencoded_frame_literal_size(
+    metadata: &GifMetadata,
+    frame: &FrameMetadata,
+) -> Result<usize, String> {
+    let color_count = checked_palette_color_count(frame.palette_size)?;
+    let pixel_count = usize::from(frame.width)
+        .checked_mul(usize::from(frame.height))
+        .ok_or_else(|| "Frame size overflow".to_string())?;
+    let min_code_size = (log2_pow2(color_count) as u8).max(2);
+    let lzw_length = literal_lzw_block_size(pixel_count, min_code_size)?;
+    let gce_length =
+        usize::from(frame.delay != 0 || frame.disposal != 0 || frame.transparent_index.is_some())
+            * 8;
+    let uses_global_palette = metadata.global_palette_offset == Some(frame.palette_offset)
+        && metadata.global_palette_size == frame.palette_size;
+    let palette_length = if uses_global_palette {
+        0
+    } else {
+        color_count
+            .checked_mul(3)
+            .ok_or_else(|| "Palette size overflow".to_string())?
+    };
+    gce_length
+        .checked_add(10)
+        .and_then(|length| length.checked_add(palette_length))
+        .and_then(|length| length.checked_add(lzw_length))
+        .ok_or_else(|| "Reencoded GIF size overflow".to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn literal_lzw_block_size(pixel_count: usize, min_code_size: u8) -> Result<usize, String> {
+    let code_size = usize::from(min_code_size) + 1;
+    let literals_per_clear = (1usize << min_code_size) - 2;
+    let clear_count = pixel_count.div_ceil(literals_per_clear);
+    let code_count = pixel_count
+        .checked_add(clear_count)
+        .and_then(|count| count.checked_add(1))
+        .ok_or_else(|| "Reencoded GIF size overflow".to_string())?;
+    let compressed_length = code_count
+        .checked_mul(code_size)
+        .and_then(|bits| bits.checked_add(7))
+        .map(|bits| bits / 8)
+        .ok_or_else(|| "Reencoded GIF size overflow".to_string())?;
+    let lzw_length = compressed_length
+        .checked_add(compressed_length.div_ceil(255))
+        .and_then(|length| length.checked_add(2))
+        .ok_or_else(|| "Reencoded GIF size overflow".to_string())?;
+    Ok(lzw_length)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn write_reencoded_gif_header(
+    data: &[u8],
+    metadata: &GifMetadata,
+    loop_count: i32,
+    capacity: usize,
+) -> Result<Vec<u8>, String> {
+    if loop_count < -1 || loop_count > i32::from(u16::MAX) {
+        return Err("Loop count invalid".to_string());
+    }
+    let mut output = Vec::with_capacity(capacity);
+    write_reencoded_gif_header_to(&mut output, data, metadata, loop_count)?;
+    Ok(output)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn write_reencoded_gif_header_to(
+    output: &mut Vec<u8>,
+    data: &[u8],
+    metadata: &GifMetadata,
+    loop_count: i32,
+) -> Result<(), String> {
+    if loop_count < -1 || loop_count > i32::from(u16::MAX) {
+        return Err("Loop count invalid".to_string());
+    }
+    output.extend_from_slice(b"GIF89a");
+    push_u16_le(output, metadata.width);
+    push_u16_le(output, metadata.height);
+    output.extend_from_slice(&data[10..13]);
+    if let Some(global_palette_offset) = metadata.global_palette_offset {
+        let global_palette_length = metadata
+            .global_palette_size
+            .checked_mul(3)
+            .ok_or_else(|| "Global palette size overflow".to_string())?;
+        let global_palette_end = checked_add(
+            global_palette_offset,
+            global_palette_length,
+            data.len(),
+            "global color table",
+        )?;
+        output.extend_from_slice(&data[global_palette_offset..global_palette_end]);
+    }
+    write_loop_extension(output, loop_count);
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn write_reencoded_frame_literal_to(
+    output: &mut Vec<u8>,
+    data: &[u8],
+    metadata: &GifMetadata,
+    frame: &FrameMetadata,
+    indices: &[u8],
+    compressed_scratch: &mut Vec<u8>,
+) -> Result<(), String> {
+    if frame.palette_size == 0 {
+        return Err("GIF frame has no color table".to_string());
+    }
+    let color_count = checked_palette_color_count(frame.palette_size)?;
+    let palette_length = color_count
+        .checked_mul(3)
+        .ok_or_else(|| "Palette size overflow".to_string())?;
+    let palette_end = checked_add(
+        frame.palette_offset,
+        palette_length,
+        data.len(),
+        "frame color table",
+    )?;
+    let expected_indices = usize::from(frame.width)
+        .checked_mul(usize::from(frame.height))
+        .ok_or_else(|| "Frame size overflow".to_string())?;
+    if indices.len() != expected_indices {
+        return Err("Decoded frame length does not match dimensions".to_string());
+    }
+
+    let uses_global_palette = metadata.global_palette_offset == Some(frame.palette_offset)
+        && metadata.global_palette_size == frame.palette_size;
+    write_reencoded_frame_header(output, frame, color_count, !uses_global_palette);
+    if !uses_global_palette {
+        output.extend_from_slice(&data[frame.palette_offset..palette_end]);
+    }
+    let min_code_size = (log2_pow2(color_count) as u8).max(2);
+    let direct_output = indices.len() >= 100_000;
+    if direct_output {
+        encode_indexed_literal_lzw_direct_to(output, indices, min_code_size, color_count)
+    } else {
+        encode_indexed_literal_lzw_to(
+            output,
+            indices,
+            min_code_size,
+            color_count,
+            compressed_scratch,
+        )
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn write_reencoded_frame_header(
+    output: &mut Vec<u8>,
+    frame: &FrameMetadata,
+    color_count: usize,
+    write_local_palette: bool,
+) {
+    if frame.delay != 0 || frame.disposal != 0 || frame.transparent_index.is_some() {
+        output.extend_from_slice(&[
+            0x21,
+            0xf9,
+            0x04,
+            ((frame.disposal & 0x07) << 2)
+                | if frame.transparent_index.is_some() {
+                    0x01
+                } else {
+                    0x00
+                },
+        ]);
+        push_u16_le(output, frame.delay);
+        output.push(frame.transparent_index.unwrap_or(0));
+        output.push(0);
+    }
+
+    output.push(0x2c);
+    push_u16_le(output, frame.x);
+    push_u16_le(output, frame.y);
+    push_u16_le(output, frame.width);
+    push_u16_le(output, frame.height);
+    let color_table_size_bits = (log2_pow2(color_count) as u8 - 1) & 7;
+    output.push(if write_local_palette {
+        0x80 | color_table_size_bits
+    } else {
+        0
+    });
+}
+
 fn encode_indexed_delta_gif_inner(
     index_stream: &[u8],
     width: u16,
@@ -1560,6 +5618,30 @@ fn encode_indexed_delta_gif_inner(
         loop_count,
         true,
         None,
+        false,
+    )
+}
+
+fn encode_indexed_literal_delta_gif_inner(
+    index_stream: &[u8],
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    palette_rgb: &[u32],
+    delays: DelaySource<'_>,
+    loop_count: i32,
+) -> Result<Vec<u8>, String> {
+    encode_indexed_gif_inner_with_rects(
+        index_stream,
+        width,
+        height,
+        frame_count,
+        palette_rgb,
+        delays,
+        loop_count,
+        true,
+        None,
+        true,
     )
 }
 
@@ -1573,6 +5655,7 @@ fn encode_indexed_gif_inner_with_rects(
     loop_count: i32,
     deltas: bool,
     transparent_index: Option<u8>,
+    literal: bool,
 ) -> Result<Vec<u8>, String> {
     if !deltas {
         return encode_indexed_gif_inner(
@@ -1619,7 +5702,9 @@ fn encode_indexed_gif_inner_with_rects(
     let mut output = Vec::with_capacity(
         13 + palette_bytes + 20 + frame_count.saturating_mul(estimated_frame_bytes) + 1,
     );
-    let mut lzw_tables = LzwEncodeTables::new();
+    let mut lzw_tables = (!literal).then(LzwEncodeTables::new);
+    let mut rect_scratch = Vec::new();
+    let mut compressed_scratch = Vec::new();
 
     write_indexed_gif_header(&mut output, width, height, palette_rgb, color_count);
     write_loop_extension(&mut output, loop_count);
@@ -1638,26 +5723,55 @@ fn encode_indexed_gif_inner_with_rects(
                     delay,
                     transparent_index,
                 );
-                encode_indexed_lzw_rect_to(
-                    &mut output,
-                    frame,
-                    rect.y * canvas_width + rect.x,
-                    rect.width,
-                    rect.height,
-                    canvas_width,
-                    min_code_size,
-                    color_count,
-                    &mut lzw_tables,
-                )?;
+                if literal {
+                    rect_scratch.clear();
+                    let rect_length = rect.width * rect.height;
+                    if rect_scratch.capacity() < rect_length {
+                        rect_scratch.reserve(rect_length - rect_scratch.capacity());
+                    }
+                    for row in 0..rect.height {
+                        let start = (rect.y + row) * canvas_width + rect.x;
+                        rect_scratch.extend_from_slice(&frame[start..start + rect.width]);
+                    }
+                    encode_indexed_literal_lzw_to(
+                        &mut output,
+                        &rect_scratch,
+                        min_code_size,
+                        color_count,
+                        &mut compressed_scratch,
+                    )?;
+                } else {
+                    encode_indexed_lzw_rect_to(
+                        &mut output,
+                        frame,
+                        rect.y * canvas_width + rect.x,
+                        rect.width,
+                        rect.height,
+                        canvas_width,
+                        min_code_size,
+                        color_count,
+                        lzw_tables.as_mut().unwrap(),
+                    )?;
+                }
             } else {
                 write_indexed_gif_frame_header(&mut output, 0, 0, 1, 1, delay, transparent_index);
-                encode_indexed_lzw_to_with_tables(
-                    &mut output,
-                    &frame[..1],
-                    min_code_size,
-                    color_count,
-                    &mut lzw_tables,
-                )?;
+                if literal {
+                    encode_indexed_literal_lzw_to(
+                        &mut output,
+                        &frame[..1],
+                        min_code_size,
+                        color_count,
+                        &mut compressed_scratch,
+                    )?;
+                } else {
+                    encode_indexed_lzw_to_with_tables(
+                        &mut output,
+                        &frame[..1],
+                        min_code_size,
+                        color_count,
+                        lzw_tables.as_mut().unwrap(),
+                    )?;
+                }
             }
         } else {
             write_indexed_gif_frame_header(
@@ -1669,13 +5783,23 @@ fn encode_indexed_gif_inner_with_rects(
                 delay,
                 transparent_index,
             );
-            encode_indexed_lzw_to_with_tables(
-                &mut output,
-                frame,
-                min_code_size,
-                color_count,
-                &mut lzw_tables,
-            )?;
+            if literal {
+                encode_indexed_literal_lzw_to(
+                    &mut output,
+                    frame,
+                    min_code_size,
+                    color_count,
+                    &mut compressed_scratch,
+                )?;
+            } else {
+                encode_indexed_lzw_to_with_tables(
+                    &mut output,
+                    frame,
+                    min_code_size,
+                    color_count,
+                    lzw_tables.as_mut().unwrap(),
+                )?;
+            }
         }
         previous_frame = Some(frame);
     }
@@ -1811,6 +5935,291 @@ fn encode_indexed_lzw_inner(
     let mut output = Vec::with_capacity(index_stream.len() / 2 + 16);
     encode_indexed_lzw_to(&mut output, index_stream, min_code_size, color_count)?;
     Ok(output)
+}
+
+fn encode_indexed_literal_lzw_to(
+    output: &mut Vec<u8>,
+    index_stream: &[u8],
+    min_code_size: u8,
+    color_count: usize,
+    compressed: &mut Vec<u8>,
+) -> Result<(), String> {
+    if min_code_size < 2 || min_code_size > 8 {
+        return Err(format!("Invalid LZW minimum code size {min_code_size}"));
+    }
+    if color_count == 0 || color_count > 256 {
+        return Err("Invalid color count".to_string());
+    }
+    if index_stream.is_empty() {
+        return Err("Indexed pixel stream is empty".to_string());
+    }
+    let code_size = usize::from(min_code_size) + 1;
+    let literals_per_clear = (1usize << min_code_size) - 2;
+    let estimated_bytes = index_stream
+        .len()
+        .saturating_mul(code_size)
+        .saturating_mul(literals_per_clear + 1)
+        / literals_per_clear
+        / 8
+        + 8;
+    compressed.clear();
+    if compressed.capacity() < estimated_bytes {
+        compressed.reserve(estimated_bytes - compressed.capacity());
+    }
+    encode_indexed_literal_codes_raw(compressed, index_stream, min_code_size, color_count)?;
+    output.push(min_code_size);
+    for block in compressed.chunks(255) {
+        output.push(block.len() as u8);
+        output.extend_from_slice(block);
+    }
+    output.push(0);
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn encode_indexed_literal_lzw_direct_to(
+    output: &mut Vec<u8>,
+    index_stream: &[u8],
+    min_code_size: u8,
+    color_count: usize,
+) -> Result<(), String> {
+    output.push(min_code_size);
+    let compressed_start = output.len();
+    encode_indexed_literal_codes_raw(output, index_stream, min_code_size, color_count)?;
+    let compressed_length = output.len() - compressed_start;
+    let block_count = compressed_length.div_ceil(255);
+    let final_length = output
+        .len()
+        .checked_add(block_count + 1)
+        .ok_or_else(|| "Encoded GIF size overflow".to_string())?;
+    output.resize(final_length, 0);
+    for block in (0..block_count).rev() {
+        let source_start = compressed_start + block * 255;
+        let length = (compressed_length - block * 255).min(255);
+        let destination_start = compressed_start + block * 256;
+        output.copy_within(source_start..source_start + length, destination_start + 1);
+        output[destination_start] = length as u8;
+    }
+    Ok(())
+}
+
+fn encode_indexed_literal_codes_raw(
+    output: &mut Vec<u8>,
+    index_stream: &[u8],
+    min_code_size: u8,
+    color_count: usize,
+) -> Result<(), String> {
+    if min_code_size < 2 || min_code_size > 8 {
+        return Err(format!("Invalid LZW minimum code size {min_code_size}"));
+    }
+    if color_count == 0 || color_count > 256 {
+        return Err("Invalid color count".to_string());
+    }
+    if index_stream.is_empty() {
+        return Err("Indexed pixel stream is empty".to_string());
+    }
+    let clear = 1usize << min_code_size;
+    let eoi = clear + 1;
+    let code_size = usize::from(min_code_size) + 1;
+    // Reset before a literal-only decoder dictionary would require wider codes.
+    let literals_per_clear = clear - 2;
+    let mut bits = 0u64;
+    let mut bit_count = 0usize;
+
+    if min_code_size == 2 {
+        return encode_two_bit_literal_codes(output, index_stream, color_count);
+    }
+    if min_code_size == 8 && color_count == 256 {
+        return encode_nine_bit_literal_codes(output, index_stream);
+    }
+    if color_count < 256
+        && index_stream
+            .iter()
+            .any(|&pixel| usize::from(pixel) >= color_count)
+    {
+        return Err("Pixel index out of range".to_string());
+    }
+    if min_code_size == 6 && color_count == 64 {
+        return encode_seven_bit_literal_codes(output, index_stream);
+    }
+    for literals in index_stream.chunks(literals_per_clear) {
+        emit_raw_lzw_code(output, &mut bits, &mut bit_count, code_size, clear);
+        for &pixel in literals {
+            emit_raw_lzw_code(
+                output,
+                &mut bits,
+                &mut bit_count,
+                code_size,
+                usize::from(pixel),
+            );
+        }
+    }
+    emit_raw_lzw_code(output, &mut bits, &mut bit_count, code_size, eoi);
+    while bit_count > 0 {
+        output.push((bits & 0xff) as u8);
+        bits >>= 8;
+        bit_count = bit_count.saturating_sub(8);
+    }
+    Ok(())
+}
+
+fn encode_seven_bit_literal_codes(output: &mut Vec<u8>, index_stream: &[u8]) -> Result<(), String> {
+    let mut bits = 0u64;
+    let mut bit_count = 0usize;
+    for literals in index_stream.chunks(62) {
+        bits |= 64u64 << bit_count;
+        bit_count += 7;
+        while bit_count >= 8 {
+            output.push(bits as u8);
+            bits >>= 8;
+            bit_count -= 8;
+        }
+        let mut groups = literals.chunks_exact(8);
+        for group in &mut groups {
+            let packed = u64::from(group[0])
+                | (u64::from(group[1]) << 7)
+                | (u64::from(group[2]) << 14)
+                | (u64::from(group[3]) << 21)
+                | (u64::from(group[4]) << 28)
+                | (u64::from(group[5]) << 35)
+                | (u64::from(group[6]) << 42)
+                | (u64::from(group[7]) << 49);
+            bits |= packed << bit_count;
+            bit_count += 56;
+            output.extend_from_slice(&(bits as u64).to_le_bytes()[..7]);
+            bits >>= 56;
+            bit_count -= 56;
+        }
+        for &pixel in groups.remainder() {
+            bits |= u64::from(pixel) << bit_count;
+            bit_count += 7;
+            while bit_count >= 8 {
+                output.push(bits as u8);
+                bits >>= 8;
+                bit_count -= 8;
+            }
+        }
+    }
+    bits |= 65u64 << bit_count;
+    bit_count += 7;
+    while bit_count > 0 {
+        output.push(bits as u8);
+        bits >>= 8;
+        bit_count = bit_count.saturating_sub(8);
+    }
+    Ok(())
+}
+
+fn encode_nine_bit_literal_codes(output: &mut Vec<u8>, index_stream: &[u8]) -> Result<(), String> {
+    let mut bits = 0u128;
+    let mut bit_count = 0usize;
+    for literals in index_stream.chunks(254) {
+        bits |= 256u128 << bit_count;
+        bit_count += 9;
+        while bit_count >= 8 {
+            output.push(bits as u8);
+            bits >>= 8;
+            bit_count -= 8;
+        }
+        let mut groups = literals.chunks_exact(8);
+        for group in &mut groups {
+            let packed = u128::from(group[0])
+                | (u128::from(group[1]) << 9)
+                | (u128::from(group[2]) << 18)
+                | (u128::from(group[3]) << 27)
+                | (u128::from(group[4]) << 36)
+                | (u128::from(group[5]) << 45)
+                | (u128::from(group[6]) << 54)
+                | (u128::from(group[7]) << 63);
+            bits |= packed << bit_count;
+            bit_count += 72;
+            output.extend_from_slice(&(bits as u64).to_le_bytes());
+            bits >>= 64;
+            bit_count -= 64;
+            if bit_count >= 8 {
+                output.push(bits as u8);
+                bits >>= 8;
+                bit_count -= 8;
+            }
+        }
+        for &pixel in groups.remainder() {
+            bits |= u128::from(pixel) << bit_count;
+            bit_count += 9;
+            while bit_count >= 8 {
+                output.push(bits as u8);
+                bits >>= 8;
+                bit_count -= 8;
+            }
+        }
+    }
+    bits |= 257u128 << bit_count;
+    bit_count += 9;
+    while bit_count > 0 {
+        output.push(bits as u8);
+        bits >>= 8;
+        bit_count = bit_count.saturating_sub(8);
+    }
+    Ok(())
+}
+
+fn encode_two_bit_literal_codes(
+    output: &mut Vec<u8>,
+    index_stream: &[u8],
+    color_count: usize,
+) -> Result<(), String> {
+    let mut bits = 0u64;
+    let mut bit_count = 0usize;
+    let mut index = 0usize;
+    while index + 1 < index_stream.len() {
+        let first = usize::from(index_stream[index]);
+        let second = usize::from(index_stream[index + 1]);
+        if first >= color_count || second >= color_count {
+            return Err("Pixel index out of range".to_string());
+        }
+        // Each reset group is CLEAR, literal, literal: three 3-bit codes.
+        bits |= ((4 | (first << 3) | (second << 6)) as u64) << bit_count;
+        bit_count += 9;
+        if bit_count >= 32 {
+            output.extend_from_slice(&(bits as u32).to_le_bytes());
+            bits >>= 32;
+            bit_count -= 32;
+        }
+        index += 2;
+    }
+    if index < index_stream.len() {
+        let pixel = usize::from(index_stream[index]);
+        if pixel >= color_count {
+            return Err("Pixel index out of range".to_string());
+        }
+        bits |= ((4 | (pixel << 3)) as u64) << bit_count;
+        bit_count += 6;
+    }
+    // EOI is code 5 at the unchanged 3-bit width.
+    bits |= 5u64 << bit_count;
+    bit_count += 3;
+    while bit_count > 0 {
+        output.push((bits & 0xff) as u8);
+        bits >>= 8;
+        bit_count = bit_count.saturating_sub(8);
+    }
+    Ok(())
+}
+
+#[inline]
+fn emit_raw_lzw_code(
+    output: &mut Vec<u8>,
+    bits: &mut u64,
+    bit_count: &mut usize,
+    code_size: usize,
+    code: usize,
+) {
+    *bits |= (code as u64) << *bit_count;
+    *bit_count += code_size;
+    if *bit_count >= 32 {
+        output.extend_from_slice(&(*bits as u32).to_le_bytes());
+        *bits >>= 32;
+        *bit_count -= 32;
+    }
 }
 
 fn encode_indexed_lzw_to(
@@ -2135,21 +6544,25 @@ fn build_palette_u32(
     frame: &FrameMetadata,
     format: PixelFormat,
 ) -> Result<Vec<u32>, String> {
-    let mut palette = vec![0u32; frame.palette_size];
-
-    for (index, color) in palette.iter_mut().enumerate() {
-        let palette_offset = frame
-            .palette_offset
-            .checked_add(index * 3)
-            .ok_or_else(|| "Palette offset overflow".to_string())?;
-        let end = checked_add(palette_offset, 3, data.len(), "palette color")?;
-        let r = u32::from(data[palette_offset]);
-        let g = u32::from(data[palette_offset + 1]);
-        let b = u32::from(data[end - 1]);
-        *color = match format {
+    let palette_bytes = frame
+        .palette_size
+        .checked_mul(3)
+        .ok_or_else(|| "Palette size overflow".to_string())?;
+    let palette_end = checked_add(
+        frame.palette_offset,
+        palette_bytes,
+        data.len(),
+        "palette color table",
+    )?;
+    let mut palette = Vec::with_capacity(frame.palette_size);
+    for color in data[frame.palette_offset..palette_end].chunks_exact(3) {
+        let r = u32::from(color[0]);
+        let g = u32::from(color[1]);
+        let b = u32::from(color[2]);
+        palette.push(match format {
             PixelFormat::Rgba => r | (g << 8) | (b << 16) | (255 << 24),
             PixelFormat::Bgra => b | (g << 8) | (r << 16) | (255 << 24),
-        };
+        });
     }
 
     Ok(palette)
@@ -2206,34 +6619,67 @@ fn blit_indices_to_canvas_u32(
     let frame_height = usize::from(frame.height);
     let frame_x = usize::from(frame.x);
     let frame_y = usize::from(frame.y);
-    let transparent_index = frame.transparent_index;
-    let mut src = 0usize;
-
-    for y in 0..frame_height {
-        let mut dst = (frame_y + y)
-            .checked_mul(canvas_width)
-            .and_then(|row| row.checked_add(frame_x))
-            .ok_or_else(|| "Frame destination offset overflow".to_string())?;
-
-        for _ in 0..frame_width {
-            let index = *indices
-                .get(src)
-                .ok_or_else(|| "Decoded index buffer is too short".to_string())?;
-            src += 1;
-
-            if Some(index) != transparent_index {
-                let color = palette
-                    .get(usize::from(index))
-                    .ok_or_else(|| format!("Palette index {index} exceeds palette size"))?;
-                let pixel = canvas
-                    .get_mut(dst)
-                    .ok_or_else(|| "Frame destination exceeds canvas bounds".to_string())?;
-                *pixel = *color;
+    let frame_pixels = frame_width
+        .checked_mul(frame_height)
+        .ok_or_else(|| "Decoded frame size overflow".to_string())?;
+    if indices.len() < frame_pixels {
+        return Err("Decoded index buffer is too short".to_string());
+    }
+    let frame_right = frame_x
+        .checked_add(frame_width)
+        .ok_or_else(|| "Frame destination offset overflow".to_string())?;
+    let frame_bottom = frame_y
+        .checked_add(frame_height)
+        .ok_or_else(|| "Frame destination offset overflow".to_string())?;
+    if frame_right > canvas_width || canvas_width == 0 || frame_bottom > canvas.len() / canvas_width
+    {
+        return Err("Frame destination exceeds canvas bounds".to_string());
+    }
+    let full_byte_palette = palette.len() == 256;
+    match frame.transparent_index {
+        None => {
+            for y in 0..frame_height {
+                let source = y * frame_width;
+                let source_row = &indices[source..source + frame_width];
+                let destination = (frame_y + y) * canvas_width + frame_x;
+                let destination_row = &mut canvas[destination..destination + frame_width];
+                if full_byte_palette {
+                    for (pixel, &index) in destination_row.iter_mut().zip(source_row) {
+                        *pixel = unsafe { *palette.get_unchecked(usize::from(index)) };
+                    }
+                    continue;
+                }
+                for (pixel, &index) in destination_row.iter_mut().zip(source_row) {
+                    *pixel = *palette
+                        .get(usize::from(index))
+                        .ok_or_else(|| format!("Palette index {index} exceeds palette size"))?;
+                }
             }
-            dst += 1;
+        }
+        Some(transparent_index) => {
+            for y in 0..frame_height {
+                let source = y * frame_width;
+                let source_row = &indices[source..source + frame_width];
+                let destination = (frame_y + y) * canvas_width + frame_x;
+                let destination_row = &mut canvas[destination..destination + frame_width];
+                if full_byte_palette {
+                    for (pixel, &index) in destination_row.iter_mut().zip(source_row) {
+                        if index != transparent_index {
+                            *pixel = unsafe { *palette.get_unchecked(usize::from(index)) };
+                        }
+                    }
+                    continue;
+                }
+                for (pixel, &index) in destination_row.iter_mut().zip(source_row) {
+                    if index != transparent_index {
+                        *pixel = *palette
+                            .get(usize::from(index))
+                            .ok_or_else(|| format!("Palette index {index} exceeds palette size"))?;
+                    }
+                }
+            }
         }
     }
-
     Ok(())
 }
 
@@ -2305,13 +6751,17 @@ fn write_palette_pixel(
     Ok(())
 }
 
-fn collect_image_data(data: &[u8], data_offset: usize) -> Result<Vec<u8>, String> {
+fn collect_image_data_into(
+    data: &[u8],
+    data_offset: usize,
+    image_data: &mut Vec<u8>,
+) -> Result<(), String> {
     if data_offset >= data.len() {
         return Err("Image data is missing an LZW minimum code size".to_string());
     }
 
     let mut offset = data_offset + 1;
-    let mut image_data = Vec::new();
+    image_data.clear();
     loop {
         if offset >= data.len() {
             return Err("Truncated image data".to_string());
@@ -2319,7 +6769,7 @@ fn collect_image_data(data: &[u8], data_offset: usize) -> Result<Vec<u8>, String
         let length = usize::from(data[offset]);
         offset += 1;
         if length == 0 {
-            return Ok(image_data);
+            return Ok(());
         }
         let end = checked_add(offset, length, data.len(), "image data")?;
         image_data.extend_from_slice(&data[offset..end]);
@@ -2327,38 +6777,94 @@ fn collect_image_data(data: &[u8], data_offset: usize) -> Result<Vec<u8>, String
     }
 }
 
-fn lzw_decode_to_indices(
+#[cfg(not(target_arch = "wasm32"))]
+fn collect_image_data_into_fixed<'a>(
+    data: &[u8],
+    data_offset: usize,
+    image_data: &'a mut [std::mem::MaybeUninit<u8>],
+) -> Result<&'a [u8], String> {
+    if data_offset >= data.len() {
+        return Err("Image data is missing an LZW minimum code size".to_string());
+    }
+
+    let mut offset = data_offset + 1;
+    let mut output_len = 0usize;
+    loop {
+        if offset >= data.len() {
+            return Err("Truncated image data".to_string());
+        }
+        let length = usize::from(data[offset]);
+        offset += 1;
+        if length == 0 {
+            return Ok(unsafe {
+                std::slice::from_raw_parts(image_data.as_ptr().cast::<u8>(), output_len)
+            });
+        }
+        let end = checked_add(offset, length, data.len(), "image data")?;
+        let output_end = output_len
+            .checked_add(length)
+            .ok_or_else(|| "Image data size overflow".to_string())?;
+        if output_end > image_data.len() {
+            return Err("Fixed image data buffer is too short".to_string());
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                data.as_ptr().add(offset),
+                image_data.as_mut_ptr().add(output_len).cast::<u8>(),
+                length,
+            );
+        }
+        output_len = output_end;
+        offset = end;
+    }
+}
+
+fn lzw_decode_to_indices_direct(
     min_code_size: u8,
     image_data: &[u8],
-    output_len: usize,
-) -> Result<Vec<u8>, String> {
+    output: &mut [u8],
+) -> Result<(), String> {
+    let mut scratch = LzwStackScratch::default();
+    lzw_decode_to_indices_direct_with_scratch(min_code_size, image_data, output, &mut scratch)
+}
+
+fn lzw_decode_to_indices_direct_with_scratch(
+    min_code_size: u8,
+    image_data: &[u8],
+    output: &mut [u8],
+    scratch: &mut LzwStackScratch,
+) -> Result<(), String> {
     if min_code_size > 11 {
         return Err(format!("Invalid LZW minimum code size {min_code_size}"));
     }
-
     let clear = 1usize << min_code_size;
     let eoi = clear + 1;
     let mut next_code = eoi + 1;
     let mut code_size = usize::from(min_code_size) + 1;
     let mut code_mask = (1usize << code_size) - 1;
 
-    let mut prefix = [0u16; 4096];
-    let mut suffix = [0u8; 4096];
-    let mut first_byte = [0u8; 4096];
-    for i in 0..clear {
-        first_byte[i] = i as u8;
-    }
+    let prefix = &mut scratch.prefix;
+    let suffix = &mut scratch.suffix;
+    let string_length = &mut scratch.string_length;
 
-    let mut output = vec![0; output_len];
     let mut output_index = 0usize;
-    let mut stack = [0u8; 4096];
 
     let mut q = 0usize;
     let mut bits = 0usize;
     let mut bit_count = 0usize;
     let mut prev_code: Option<usize> = None;
+    let mut prev_first = 0u8;
+    let mut prev_length = 0u16;
 
     loop {
+        #[cfg(target_pointer_width = "64")]
+        if bit_count < code_size && image_data.len() - q >= 4 {
+            let word =
+                unsafe { std::ptr::read_unaligned(image_data.as_ptr().add(q).cast::<u32>()) };
+            bits |= usize::try_from(u32::from_le(word)).unwrap() << bit_count;
+            bit_count += 32;
+            q += 4;
+        }
         while bit_count < code_size && q < image_data.len() {
             bits |= usize::from(image_data[q]) << bit_count;
             bit_count += 8;
@@ -2378,9 +6884,372 @@ fn lzw_decode_to_indices(
             code_size = usize::from(min_code_size) + 1;
             code_mask = (1usize << code_size) - 1;
             prev_code = None;
-            for i in 0..clear {
-                first_byte[i] = i as u8;
+            prev_length = 0;
+            continue;
+        }
+
+        if code == eoi {
+            break;
+        }
+
+        let mut cur = code;
+        let append_first = cur >= next_code;
+        if append_first {
+            if cur != next_code {
+                return Err("Invalid LZW dictionary code".to_string());
             }
+            let Some(prev) = prev_code else {
+                return Err("Invalid first LZW dictionary code".to_string());
+            };
+            cur = prev;
+        }
+        let base_length = if append_first {
+            usize::from(prev_length)
+        } else if cur < clear {
+            1
+        } else {
+            usize::from(unsafe { string_length.get_unchecked(cur).assume_init() })
+        };
+        let decoded_length = base_length + usize::from(append_first);
+        let decoded_end = output_index + decoded_length;
+        if decoded_end > output.len() {
+            return Err("LZW decoded output exceeds frame dimensions".to_string());
+        }
+
+        let output_address = output.as_mut_ptr();
+        let mut write_position = decoded_end;
+        if append_first {
+            write_position -= 1;
+            unsafe {
+                output_address.add(write_position).write(prev_first);
+            }
+        }
+        while cur >= clear {
+            write_position -= 1;
+            unsafe {
+                output_address
+                    .add(write_position)
+                    .write(suffix.get_unchecked(cur).assume_init());
+            }
+            cur = usize::from(unsafe { prefix.get_unchecked(cur).assume_init() });
+        }
+        let out_first = cur as u8;
+        write_position -= 1;
+        unsafe {
+            output_address.add(write_position).write(out_first);
+        }
+        debug_assert_eq!(write_position, output_index);
+        output_index = decoded_end;
+
+        if let Some(prev) = prev_code {
+            if next_code < 4096 {
+                unsafe {
+                    prefix.get_unchecked_mut(next_code).write(prev as u16);
+                    suffix.get_unchecked_mut(next_code).write(out_first);
+                }
+                unsafe {
+                    string_length
+                        .get_unchecked_mut(next_code)
+                        .write(prev_length + 1);
+                }
+                next_code += 1;
+
+                if next_code >= code_mask + 1 && code_size < 12 {
+                    code_size += 1;
+                    code_mask = (1usize << code_size) - 1;
+                }
+            }
+        }
+
+        prev_code = Some(code);
+        prev_first = out_first;
+        prev_length = decoded_length as u16;
+    }
+
+    Ok(())
+}
+
+#[inline(always)]
+unsafe fn copy_lzw_dictionary_string(
+    source: *const u8,
+    destination: *mut u8,
+    length: usize,
+    inline_limit: usize,
+) {
+    if inline_limit > 16 {
+        if length <= inline_limit {
+            for offset in 0..length {
+                destination.add(offset).write(*source.add(offset));
+            }
+        } else {
+            std::ptr::copy_nonoverlapping(source, destination, length);
+        }
+        return;
+    }
+    match length {
+        0 => {}
+        1 => destination.write(*source),
+        2 => destination
+            .cast::<u16>()
+            .write_unaligned(source.cast::<u16>().read_unaligned()),
+        3 => {
+            destination
+                .cast::<u16>()
+                .write_unaligned(source.cast::<u16>().read_unaligned());
+            destination.add(2).write(*source.add(2));
+        }
+        4 => destination
+            .cast::<u32>()
+            .write_unaligned(source.cast::<u32>().read_unaligned()),
+        5 => {
+            destination
+                .cast::<u32>()
+                .write_unaligned(source.cast::<u32>().read_unaligned());
+            destination.add(4).write(*source.add(4));
+        }
+        6 => {
+            destination
+                .cast::<u32>()
+                .write_unaligned(source.cast::<u32>().read_unaligned());
+            destination
+                .add(4)
+                .cast::<u16>()
+                .write_unaligned(source.add(4).cast::<u16>().read_unaligned());
+        }
+        7 => {
+            destination
+                .cast::<u32>()
+                .write_unaligned(source.cast::<u32>().read_unaligned());
+            destination
+                .add(4)
+                .cast::<u16>()
+                .write_unaligned(source.add(4).cast::<u16>().read_unaligned());
+            destination.add(6).write(*source.add(6));
+        }
+        8 => destination
+            .cast::<u64>()
+            .write_unaligned(source.cast::<u64>().read_unaligned()),
+        _ if length <= inline_limit => {
+            for offset in 0..length {
+                destination.add(offset).write(*source.add(offset));
+            }
+        }
+        _ => std::ptr::copy_nonoverlapping(source, destination, length),
+    }
+}
+
+fn lzw_decode_to_indices_copy_with_scratch(
+    min_code_size: u8,
+    image_data: &[u8],
+    output: &mut [u8],
+    scratch: &mut LzwStackScratch,
+) -> Result<(), String> {
+    if min_code_size > 11 {
+        return Err(format!("Invalid LZW minimum code size {min_code_size}"));
+    }
+    let clear = 1usize << min_code_size;
+    let eoi = clear + 1;
+    let mut next_code = eoi + 1;
+    let mut code_size = usize::from(min_code_size) + 1;
+    let mut code_mask = (1usize << code_size) - 1;
+    let string_length = &mut scratch.string_length;
+    let string_start = &mut scratch.string_start;
+    let inline_copy_limit = if output.len() <= 20_000 { 32 } else { 16 };
+
+    let mut output_index = 0usize;
+    let mut q = 0usize;
+    let mut bits = 0usize;
+    let mut bit_count = 0usize;
+    let mut have_previous = false;
+    let mut previous_start = 0usize;
+    let mut previous_length = 0usize;
+    let mut previous_first = 0u8;
+
+    loop {
+        #[cfg(target_pointer_width = "64")]
+        if bit_count < code_size && image_data.len() - q >= 4 {
+            let word =
+                unsafe { std::ptr::read_unaligned(image_data.as_ptr().add(q).cast::<u32>()) };
+            bits |= usize::try_from(u32::from_le(word)).unwrap() << bit_count;
+            bit_count += 32;
+            q += 4;
+        }
+        while bit_count < code_size && q < image_data.len() {
+            bits |= usize::from(image_data[q]) << bit_count;
+            bit_count += 8;
+            q += 1;
+        }
+        if bit_count < code_size {
+            break;
+        }
+
+        let code = bits & code_mask;
+        bits >>= code_size;
+        bit_count -= code_size;
+        if code == clear {
+            next_code = eoi + 1;
+            code_size = usize::from(min_code_size) + 1;
+            code_mask = (1usize << code_size) - 1;
+            have_previous = false;
+            continue;
+        }
+        if code == eoi {
+            break;
+        }
+
+        let current_start = output_index;
+        let (decoded_length, out_first) = if code < clear {
+            if output_index >= output.len() {
+                return Err("LZW decoded output exceeds frame dimensions".to_string());
+            }
+            let literal = code as u8;
+            output[output_index] = literal;
+            output_index += 1;
+            (1usize, literal)
+        } else if code < next_code {
+            let decoded_length =
+                usize::from(unsafe { string_length.get_unchecked(code).assume_init() });
+            let source_start =
+                usize::try_from(unsafe { string_start.get_unchecked(code).assume_init() }).unwrap();
+            let source_end = source_start + decoded_length;
+            let decoded_end = output_index + decoded_length;
+            if source_end > current_start || decoded_end > output.len() {
+                return Err("LZW dictionary string exceeds decoded output".to_string());
+            }
+            let out_first = unsafe { *output.get_unchecked(source_start) };
+            unsafe {
+                copy_lzw_dictionary_string(
+                    output.as_ptr().add(source_start),
+                    output.as_mut_ptr().add(output_index),
+                    decoded_length,
+                    inline_copy_limit,
+                );
+            }
+            output_index = decoded_end;
+            (decoded_length, out_first)
+        } else if code == next_code && have_previous {
+            let decoded_length = previous_length + 1;
+            let decoded_end = output_index + decoded_length;
+            let previous_end = previous_start + previous_length;
+            if previous_end > current_start || decoded_end > output.len() {
+                return Err("LZW dictionary string exceeds decoded output".to_string());
+            }
+            unsafe {
+                copy_lzw_dictionary_string(
+                    output.as_ptr().add(previous_start),
+                    output.as_mut_ptr().add(output_index),
+                    previous_length,
+                    inline_copy_limit,
+                );
+                output
+                    .as_mut_ptr()
+                    .add(output_index + previous_length)
+                    .write(previous_first);
+            }
+            output_index = decoded_end;
+            (decoded_length, previous_first)
+        } else {
+            return Err("Invalid LZW dictionary code".to_string());
+        };
+
+        if have_previous && next_code < 4096 {
+            let dictionary_length = previous_length + 1;
+            unsafe {
+                string_start
+                    .get_unchecked_mut(next_code)
+                    .write(previous_start as u32);
+                string_length
+                    .get_unchecked_mut(next_code)
+                    .write(dictionary_length as u16);
+            }
+            next_code += 1;
+            if next_code >= code_mask + 1 && code_size < 12 {
+                code_size += 1;
+                code_mask = (1usize << code_size) - 1;
+            }
+        }
+        previous_start = current_start;
+        previous_length = decoded_length;
+        previous_first = out_first;
+        have_previous = true;
+    }
+    Ok(())
+}
+
+struct LzwStackScratch {
+    prefix: [std::mem::MaybeUninit<u16>; 4096],
+    suffix: [std::mem::MaybeUninit<u8>; 4096],
+    stack: [std::mem::MaybeUninit<u8>; 4096],
+    string_length: [std::mem::MaybeUninit<u16>; 4096],
+    string_start: [std::mem::MaybeUninit<u32>; 4096],
+}
+
+impl Default for LzwStackScratch {
+    fn default() -> Self {
+        Self {
+            prefix: [std::mem::MaybeUninit::uninit(); 4096],
+            suffix: [std::mem::MaybeUninit::uninit(); 4096],
+            stack: [std::mem::MaybeUninit::uninit(); 4096],
+            string_length: [std::mem::MaybeUninit::uninit(); 4096],
+            string_start: [std::mem::MaybeUninit::uninit(); 4096],
+        }
+    }
+}
+
+fn lzw_decode_to_indices_stack_with_scratch(
+    min_code_size: u8,
+    image_data: &[u8],
+    output: &mut [u8],
+    scratch: &mut LzwStackScratch,
+) -> Result<(), String> {
+    if min_code_size > 11 {
+        return Err(format!("Invalid LZW minimum code size {min_code_size}"));
+    }
+    let clear = 1usize << min_code_size;
+    let eoi = clear + 1;
+    let mut next_code = eoi + 1;
+    let mut code_size = usize::from(min_code_size) + 1;
+    let mut code_mask = (1usize << code_size) - 1;
+
+    let prefix = &mut scratch.prefix;
+    let suffix = &mut scratch.suffix;
+    let stack = &mut scratch.stack;
+
+    let mut output_index = 0usize;
+    let mut q = 0usize;
+    let mut bits = 0usize;
+    let mut bit_count = 0usize;
+    let mut prev_code: Option<usize> = None;
+    let mut prev_first = 0u8;
+
+    loop {
+        #[cfg(target_pointer_width = "64")]
+        if bit_count < code_size && bit_count <= 32 && image_data.len().saturating_sub(q) >= 4 {
+            let word =
+                unsafe { std::ptr::read_unaligned(image_data.as_ptr().add(q).cast::<u32>()) };
+            bits |= usize::try_from(u32::from_le(word)).unwrap() << bit_count;
+            bit_count += 32;
+            q += 4;
+        }
+        while bit_count < code_size && q < image_data.len() {
+            bits |= usize::from(image_data[q]) << bit_count;
+            bit_count += 8;
+            q += 1;
+        }
+
+        if bit_count < code_size {
+            break;
+        }
+
+        let code = bits & code_mask;
+        bits >>= code_size;
+        bit_count -= code_size;
+
+        if code == clear {
+            next_code = eoi + 1;
+            code_size = usize::from(min_code_size) + 1;
+            code_mask = (1usize << code_size) - 1;
+            prev_code = None;
             continue;
         }
 
@@ -2393,42 +7262,60 @@ fn lzw_decode_to_indices(
 
         if cur < clear {
             out_first = cur as u8;
-            write_index(&mut output, &mut output_index, out_first);
+            if output_index >= output.len() {
+                return Err("LZW decoded output exceeds frame dimensions".to_string());
+            }
+            unsafe {
+                output.as_mut_ptr().add(output_index).write(out_first);
+            }
+            output_index += 1;
         } else {
             let mut sp = 0usize;
-            if cur >= next_code {
+            if cur > next_code {
+                return Err("Invalid LZW dictionary code".to_string());
+            }
+            if cur == next_code {
                 let Some(prev) = prev_code else {
-                    break;
+                    return Err("Invalid first LZW dictionary code".to_string());
                 };
-                out_first = first_byte[prev];
-                stack[sp] = out_first;
+                stack[sp].write(prev_first);
                 sp += 1;
                 cur = prev;
-            } else {
-                out_first = first_byte[cur];
             }
 
             while cur >= clear {
                 if sp >= stack.len() {
                     return Err("LZW decode stack overflow".to_string());
                 }
-                stack[sp] = suffix[cur];
+                stack[sp].write(unsafe { suffix.get_unchecked(cur).assume_init() });
                 sp += 1;
-                cur = usize::from(prefix[cur]);
+                cur = usize::from(unsafe { prefix.get_unchecked(cur).assume_init() });
             }
 
-            write_index(&mut output, &mut output_index, cur as u8);
+            out_first = cur as u8;
+            if output.len().saturating_sub(output_index) < sp + 1 {
+                return Err("LZW decoded output exceeds frame dimensions".to_string());
+            }
+            unsafe {
+                output.as_mut_ptr().add(output_index).write(out_first);
+            }
+            output_index += 1;
             while sp > 0 {
                 sp -= 1;
-                write_index(&mut output, &mut output_index, stack[sp]);
+                unsafe {
+                    output
+                        .as_mut_ptr()
+                        .add(output_index)
+                        .write(stack.get_unchecked(sp).assume_init());
+                }
+                output_index += 1;
             }
         }
 
         if let Some(prev) = prev_code {
             if next_code < 4096 {
-                prefix[next_code] = prev as u16;
-                suffix[next_code] = out_first;
-                first_byte[next_code] = first_byte[prev];
+                prefix[next_code].write(prev as u16);
+                suffix[next_code].write(out_first);
                 next_code += 1;
 
                 if next_code >= code_mask + 1 && code_size < 12 {
@@ -2439,17 +7326,10 @@ fn lzw_decode_to_indices(
         }
 
         prev_code = Some(code);
+        prev_first = out_first;
     }
 
-    Ok(output)
-}
-
-#[inline]
-fn write_index(output: &mut [u8], output_index: &mut usize, value: u8) {
-    if *output_index < output.len() {
-        output[*output_index] = value;
-        *output_index += 1;
-    }
+    Ok(())
 }
 
 fn skip_sub_blocks(data: &[u8], mut offset: usize, context: &str) -> Result<usize, String> {
@@ -2835,6 +7715,7 @@ mod tests {
             0,
             false,
             TRANSPARENT_ALPHA_THRESHOLD,
+            false,
         )
         .unwrap();
         let metadata = parse_metadata(&encoded).unwrap();
@@ -2868,6 +7749,7 @@ mod tests {
             0,
             true,
             TRANSPARENT_ALPHA_THRESHOLD,
+            false,
         )
         .unwrap();
         let metadata = parse_metadata(&encoded).unwrap();
@@ -2903,6 +7785,7 @@ mod tests {
             -1,
             false,
             TRANSPARENT_ALPHA_THRESHOLD,
+            false,
         )
         .unwrap();
         let metadata = parse_metadata(&encoded).unwrap();

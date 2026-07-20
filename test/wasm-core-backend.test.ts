@@ -205,6 +205,7 @@ describe("Rust/Wasm core decode backend", () => {
 			delay: 3,
 			backend: "native",
 			delta: true,
+			compression: "fast",
 		});
 		const reader = new GifReader(encoded);
 
@@ -250,8 +251,8 @@ describe("Rust/Wasm core decode backend", () => {
 		const width = 2;
 		const height = 2;
 		const frames = new Uint8Array([
-			255, 0, 0, 255, 255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255,
-			0, 255, 0, 255, 0, 0, 255, 255, 255, 0, 0, 255, 255, 0, 0, 255,
+			255, 0, 0, 255, 255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 0, 255, 0,
+			255, 0, 0, 255, 255, 255, 0, 0, 255, 255, 0, 0, 255,
 		]);
 
 		const encoded = encodeRgbaGifFrames({
@@ -273,6 +274,71 @@ describe("Rust/Wasm core decode backend", () => {
 		expect(second).toStrictEqual(frames.subarray(16));
 	});
 
+	maybeTest("encodes pixel-perfect fast-mode indexed and RGBA GIFs", () => {
+		const indexedFrames = new Uint8Array([0, 1, 2, 3, 3, 2, 1, 0]);
+		const palette = [0x000000, 0xffffff, 0xff0000, 0x00ff00];
+		const indexedGif = encodeIndexedGifFrames({
+			width: 2,
+			height: 2,
+			frames: indexedFrames,
+			palette,
+			delay: [3, 7],
+			compression: "fast",
+			backend: "native",
+		});
+		const rgbaFrames = new Uint8Array([
+			0, 0, 0, 255, 255, 255, 255, 255, 255, 0, 0, 255, 0, 255, 0, 255, 0, 255,
+			0, 255, 255, 0, 0, 255, 255, 255, 255, 255, 0, 0, 0, 255,
+		]);
+		const rgbaGif = encodeRgbaGifFrames({
+			width: 2,
+			height: 2,
+			frames: rgbaFrames,
+			palette,
+			delay: [3, 7],
+			compression: "fast",
+			backend: "native",
+		});
+
+		for (const encoded of [indexedGif, rgbaGif]) {
+			const reader = new GifReader(encoded);
+			expect(reader.numFrames()).toBe(2);
+			for (let frame = 0; frame < 2; frame++) {
+				const decoded = new Uint8Array(16);
+				reader.decodeAndBlitFrameRGBA(frame, decoded);
+				expect(decoded).toStrictEqual(
+					rgbaFrames.subarray(frame * 16, (frame + 1) * 16),
+				);
+				expect(reader.frameInfo(frame).delay).toBe(frame === 0 ? 3 : 7);
+			}
+		}
+	});
+
+	maybeTest(
+		"fast RGBA mode rejects colors and alpha GIF cannot preserve",
+		() => {
+			expect(() =>
+				encodeRgbaGifFrames({
+					width: 1,
+					height: 1,
+					frames: new Uint8Array([1, 2, 3, 128]),
+					compression: "fast",
+					backend: "native",
+				}),
+			).toThrow(/alpha values of exactly 0 or 255/);
+			expect(() =>
+				encodeRgbaGifFrames({
+					width: 1,
+					height: 1,
+					palette: [0x000000, 0xffffff],
+					frames: new Uint8Array([1, 2, 3, 255]),
+					compression: "fast",
+					backend: "native",
+				}),
+			).toThrow(/outside the supplied palette/);
+		},
+	);
+
 	maybeTest("encodes RGBA transparency through the Wasm wrapper", () => {
 		const encoded = encodeRgbaGifFrames({
 			width: 2,
@@ -290,31 +356,34 @@ describe("Rust/Wasm core decode backend", () => {
 		prepared.dispose();
 	});
 
-	maybeTest("encodes custom RGBA alpha thresholds through the Wasm wrapper", () => {
-		const encoded = encodeRgbaGifFrames({
-			width: 2,
-			height: 1,
-			palette: [0xff0000, 0x0000ff],
-			frames: new Uint8Array([255, 0, 0, 64, 0, 0, 255, 255]),
-			alphaThreshold: 32,
-			backend: "native",
-		});
-		const reader = new GifReader(encoded);
-		const prepared = reader.preparePlayback();
+	maybeTest(
+		"encodes custom RGBA alpha thresholds through the Wasm wrapper",
+		() => {
+			const encoded = encodeRgbaGifFrames({
+				width: 2,
+				height: 1,
+				palette: [0xff0000, 0x0000ff],
+				frames: new Uint8Array([255, 0, 0, 64, 0, 0, 255, 255]),
+				alphaThreshold: 32,
+				backend: "native",
+			});
+			const reader = new GifReader(encoded);
+			const prepared = reader.preparePlayback();
 
-		expect(reader.frameInfo(0).transparent_index).toBeNull();
-		expect(Array.from(prepared.getFrameBytes(0)!)).toStrictEqual([
-			255, 0, 0, 255, 0, 0, 255, 255,
-		]);
-		prepared.dispose();
-	});
+			expect(reader.frameInfo(0).transparent_index).toBeNull();
+			expect(Array.from(prepared.getFrameBytes(0)!)).toStrictEqual([
+				255, 0, 0, 255, 0, 0, 255, 255,
+			]);
+			prepared.dispose();
+		},
+	);
 
 	maybeTest("encodes RGBA delta GIFs through the Wasm wrapper", () => {
 		const width = 3;
 		const height = 2;
 		const frame0 = new Uint8Array([
-			255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255,
-			255, 0, 0, 255, 255, 0, 0, 255,
+			255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0,
+			255, 255, 0, 0, 255,
 		]);
 		const frame1 = frame0.slice();
 		frame1.set([0, 255, 0, 255], 8);
@@ -329,6 +398,7 @@ describe("Rust/Wasm core decode backend", () => {
 			palette: [0xff0000, 0x00ff00],
 			backend: "native",
 			delta: true,
+			compression: "fast",
 		});
 		const reader = new GifReader(encoded);
 		const decoded = new Uint8Array(width * height * 4);

@@ -9,6 +9,25 @@ import {
 // Unit tests focused on GifWriter's encoding-related utilities
 
 describe("GifWriter encoding utilities", () => {
+	test("keeps mutable frame reuse correct", () => {
+		const palette = [0x000000, 0xffffff];
+		const frame = new Uint8Array([0, 0, 0, 0]);
+		const buf = new Uint8Array(256);
+		const writer = new GifWriter(buf, 2, 2, { palette });
+
+		writer.addFrame(0, 0, 2, 2, frame);
+		frame.fill(1);
+		writer.addFrame(0, 0, 2, 2, frame);
+
+		const reader = new GifReader(buf.slice(0, writer.end()));
+		const pixels = new Uint8Array(16);
+		reader.decodeAndBlitFrameRGBA(1, pixels);
+		expect(Array.from(pixels)).toStrictEqual([
+			255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+			255,
+		]);
+	});
+
 	test("allows adding frames after calling end", () => {
 		const palette = [0x000000, 0xffffff];
 		const buf = new Uint8Array(100);
@@ -272,8 +291,8 @@ describe("GifWriter encoding utilities", () => {
 		const width = 2;
 		const height = 2;
 		const frames = new Uint8Array([
-			255, 0, 0, 255, 255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255,
-			0, 255, 0, 255, 0, 0, 255, 255, 255, 0, 0, 255, 255, 0, 0, 255,
+			255, 0, 0, 255, 255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 0, 255, 0,
+			255, 0, 0, 255, 255, 255, 0, 0, 255, 255, 0, 0, 255,
 		]);
 		const gif = encodeRgbaGifFrames({
 			width,
@@ -408,8 +427,8 @@ describe("GifWriter encoding utilities", () => {
 		const width = 3;
 		const height = 2;
 		const frame0 = new Uint8Array([
-			255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255,
-			255, 0, 0, 255, 255, 0, 0, 255,
+			255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0,
+			255, 255, 0, 0, 255,
 		]);
 		const frame1 = frame0.slice();
 		frame1.set([0, 255, 0, 255], 8);

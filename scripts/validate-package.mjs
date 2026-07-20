@@ -20,6 +20,7 @@ const run = (command, args, options = {}) =>
 		cwd: consumerDir,
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "pipe"],
+		env: { ...process.env, npm_config_dry_run: "false" },
 		...options,
 	});
 
@@ -50,7 +51,11 @@ try {
 			temporaryRoot,
 			"--json",
 		],
-		{ cwd: root, encoding: "utf8" },
+		{
+			cwd: root,
+			encoding: "utf8",
+			env: { ...process.env, npm_config_dry_run: "false" },
+		},
 	);
 	const packResult = parsePackResult(packJson);
 	if (!packResult?.filename) {
@@ -64,6 +69,74 @@ try {
 		JSON.stringify({ name: "wtfgif-package-test", private: true }, null, 2),
 	);
 	run("npm", ["install", "--ignore-scripts", tarball]);
+
+	writeFileSync(
+		join(consumerDir, "consumer.mts"),
+		`
+			import {
+				GifReader,
+				GifWriter,
+				type Frame,
+				type FrameOptions,
+				type GifBinary,
+				type GifOptions,
+			} from "wtfgif";
+
+			const output: number[] = new Array(256).fill(0);
+			const options: GifOptions = { palette: [0, 0xffffff], loop: 0 };
+			const frameOptions: FrameOptions = { delay: 4 };
+			const writer = new GifWriter(output, 1, 1, options);
+			writer.addFrame(0, 0, 1, 1, [0], frameOptions);
+			const gif: GifBinary = output.slice(0, writer.end());
+			const reader = new GifReader(gif);
+			const pixels: number[] = new Array(4).fill(0);
+			reader.decodeAndBlitFrameRGBA(0, pixels);
+			const frame: Frame = reader.frameInfo(0);
+			void frame;
+		`,
+	);
+	writeFileSync(
+		join(consumerDir, "consumer.cts"),
+		`
+			import {
+				GifReader,
+				GifWriter,
+				type Frame,
+				type GifBinary,
+			} from "wtfgif";
+
+			const output: GifBinary = new Array(256).fill(0);
+			const writer = new GifWriter(output, 1, 1, {
+				palette: [0, 0xffffff],
+			});
+			writer.addFrame(0, 0, 1, 1, [1]);
+			const reader = new GifReader(output);
+			const frame: Frame = reader.frameInfo(0);
+			void frame;
+		`,
+	);
+	writeFileSync(
+		join(consumerDir, "tsconfig.json"),
+		JSON.stringify(
+			{
+				compilerOptions: {
+					module: "NodeNext",
+					moduleResolution: "NodeNext",
+					noEmit: true,
+					strict: true,
+					target: "ES2020",
+				},
+				include: ["consumer.mts", "consumer.cts"],
+			},
+			null,
+			2,
+		),
+	);
+	run(process.execPath, [
+		join(root, "node_modules", "typescript", "bin", "tsc"),
+		"-p",
+		"tsconfig.json",
+	]);
 
 	const commonJsResult = JSON.parse(
 		run("node", [
@@ -99,6 +172,49 @@ try {
 	) {
 		throw new Error(
 			`CommonJS package validation failed: ${JSON.stringify(commonJsResult)}`,
+		);
+	}
+
+	const omggifDropInResult = JSON.parse(
+		run("node", [
+			"-e",
+			`
+				const { GifReader, GifWriter } = require("wtfgif");
+				const output = new Array(256).fill(0);
+				const writer = new GifWriter(output, 2, 2, {
+					loop: 0,
+					palette: [0, 0xffffff],
+				});
+				writer.addFrame(0, 0, 2, 2, [0, 1, 1, 0], {
+					delay: 7,
+					disposal: 1,
+				});
+				const gif = output.slice(0, writer.end());
+				const reader = new GifReader(gif);
+				const pixels = new Array(16).fill(0);
+				reader.decodeAndBlitFrameRGBA(0, pixels);
+				process.stdout.write(JSON.stringify({
+					width: reader.width,
+					height: reader.height,
+					frames: reader.numFrames(),
+					loop: reader.loopCount(),
+					delay: reader.frameInfo(0).delay,
+					pixels,
+				}));
+			`,
+		]),
+	);
+	if (
+		omggifDropInResult.width !== 2 ||
+		omggifDropInResult.height !== 2 ||
+		omggifDropInResult.frames !== 1 ||
+		omggifDropInResult.loop !== 0 ||
+		omggifDropInResult.delay !== 7 ||
+		omggifDropInResult.pixels.join(",") !==
+			"0,0,0,255,255,255,255,255,255,255,255,255,0,0,0,255"
+	) {
+		throw new Error(
+			`omggif-style package validation failed: ${JSON.stringify(omggifDropInResult)}`,
 		);
 	}
 
@@ -176,7 +292,7 @@ try {
 	}
 
 	console.log(
-		"Packaged CommonJS, Node ESM, browser global, and browser Wasm validation passed.",
+		"Packaged omggif-style CommonJS, Node ESM, browser global, and browser Wasm validation passed.",
 	);
 } finally {
 	rmSync(temporaryRoot, { recursive: true, force: true });

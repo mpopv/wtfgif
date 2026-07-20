@@ -1,9 +1,9 @@
 # wtfgif
 
-A fast, TypeScript-friendly GIF decoder and encoder for Node and browsers. It is
-compatible with the core [omggif](https://www.npmjs.com/package/omggif)
-`GifReader` and `GifWriter` style, and also includes simpler helpers for common
-app tasks like "make frames from a GIF" and "make a GIF from frames".
+A fast, TypeScript-ready GIF decoder and encoder for Node and browsers. Its
+`GifReader` and `GifWriter` are drop-in replacements for the core
+[omggif](https://www.npmjs.com/package/omggif) API, with additional helpers for
+common app tasks like "make frames from a GIF" and "make a GIF from frames".
 
 ## Installation
 
@@ -13,18 +13,42 @@ npm install wtfgif
 
 Node ESM automatic Wasm loading requires Node `20.16+` or `22.3+`.
 
+### Migrating from omggif
+
+Change the package name. Existing named imports and CommonJS destructuring stay
+the same:
+
+```diff
+- import { GifReader, GifWriter } from "omggif";
++ import { GifReader, GifWriter } from "wtfgif";
+```
+
+```diff
+- const { GifReader, GifWriter } = require("omggif");
++ const { GifReader, GifWriter } = require("wtfgif");
+```
+
+The compatibility API accepts the same practical buffer shapes: plain arrays,
+`Uint8Array`, `Uint8ClampedArray` decode targets, and Node `Buffer` objects.
+wtfgif additionally returns `null` from `loopCount()` when a GIF has no loop
+extension, matching omggif's runtime behavior.
+
 ## Import
 
 ```ts
 import {
 	GifReader,
 	GifWriter,
+	decodeGifFramesRgba,
 	encodeRgbaGifFrames,
 	encodeIndexedGifFrames,
+	reencodeGifPixelPerfect,
+	setNativeAddonModule,
 } from "wtfgif";
 ```
 
-There is no default export. Browser builds also expose `window.wtfgif`.
+There is no default export. When the main bundle runs in a browser window, it
+also exposes `window.wtfgif`.
 
 ## Plain English Concepts
 
@@ -59,7 +83,7 @@ console.log(reader.width, reader.height);
 console.log(reader.numFrames());
 console.log(reader.loopCount()); // null means the GIF has no loop extension
 
-reader.returnToPool();
+reader.dispose();
 ```
 
 ### Make Frames From A GIF
@@ -84,10 +108,41 @@ for (let i = 0; i < reader.numFrames(); i++) {
 }
 
 prepared.dispose();
-reader.returnToPool();
+reader.dispose();
 ```
 
 Each frame is `reader.width * reader.height * 4` bytes.
+
+`returnToPool()` remains as a compatibility alias for `dispose()`. It no longer
+retains readers or decoder tables between jobs.
+
+### Experimental Pixel-Perfect GIF Reencoding
+
+The experimental Node native addon can freshly decode and reencode every image
+descriptor while preserving its rectangle, local palette, transparency,
+disposal, delay, and loop count:
+
+```ts
+import {
+	reencodeGifPixelPerfect,
+	setNativeAddonModule,
+} from "wtfgif";
+
+setNativeAddonModule(nativeAddon);
+const reencoded = reencodeGifPixelPerfect(sourceGif);
+```
+
+This is a real LZW reencode, not a source-byte copy. It supports GIFs whose
+animation uses multiple local palettes, unlike an RGBA encoder constrained to
+one global 256-color palette. Fast literal compression produces larger files in
+exchange for one-off speed.
+
+The native addon is an injectable research prototype, not part of the portable
+1.0.0 package and not a prebuilt npm binary. In this repository, build it with
+`npm run build:native:prototype` and load
+`native/build/wtfgif_native.node`. `decodeGifFramesRgba()` exposes the matching
+one-call GIF-to-owned-RGBA-frame path. Browser and portable Node usage continues
+to use the packaged Wasm implementation.
 
 ### Make A GIF From Normal RGBA Frames
 
@@ -134,8 +189,16 @@ const gif = encodeRgbaGifFrames({
 	height,
 	frames,
 	palette: [0x000000, 0xffffff, 0xff0000],
+	compression: "fast",
 });
 ```
+
+`compression: "fast"` uses a literal LZW stream that avoids GIF dictionary
+searches. It is pixel-perfect: decoded RGBA bytes are unchanged. The tradeoff is
+a larger GIF. Fast RGBA mode rejects partial alpha, colors outside a supplied
+palette, and inputs that need more than 256 exact palette entries instead of
+silently quantizing them. Omit the option or use `"balanced"` for smaller files
+and nearest-color fallback.
 
 If you do not pass a palette, wtfgif builds one when possible. If the frames use
 more than 256 colors, it falls back to a simple 256-color palette.
@@ -183,8 +246,12 @@ const gif = encodeIndexedGifFrames({
 	palette,
 	delay: 10,
 	loop: 0,
+	compression: "fast",
 });
 ```
+
+Fast indexed mode preserves every palette index exactly and trades file size for
+one-off encoding speed.
 
 `delay` can also be an array or `Uint16Array` with one delay per frame.
 
@@ -244,12 +311,14 @@ Parses GIF metadata and prepares the decoder.
 const reader = new GifReader(data);
 ```
 
-- `data`: `Uint8Array`
-- `usePooling`: optional boolean, default `true`. Reuses decoder work buffers.
+- `data`: plain array, `Uint8Array`, or Node `Buffer`.
+- `usePooling`: retained for source compatibility but ignored. Each reader owns
+  fresh decoder work buffers.
 
 Static constructors:
 
-- `GifReader.createPooled(data)` creates a pooled reader.
+- `GifReader.createPooled(data)` is a compatibility alias that creates a fresh
+  reader.
 - `GifReader.createUnpooled(data)` creates a reader without pooled buffers.
 
 Properties:
@@ -274,7 +343,7 @@ Methods:
 | `preparePlayback(options?)` | Prepares visible animation frames for fast playback. |
 | `prepareFrames(options?)` | Lower-level prepared-frame API. |
 | `prepareFramesAsync(options?)` | Promise wrapper around `prepareFrames()`. |
-| `dispose()` | Returns pooled buffers and frees reader-owned temporary state. |
+| `dispose()` | Frees reader-owned temporary state. |
 | `returnToPool()` | Alias for `dispose()`. |
 
 `frameInfo(index)` returns:
@@ -290,8 +359,8 @@ type FrameInfo = {
 	transparent_index: number | null;
 	interlaced: boolean;
 	has_local_palette: boolean;
-	palette_offset: number;
-	palette_size: number;
+	palette_offset: number | null;
+	palette_size: number | null;
 	data_offset: number;
 	data_length: number;
 	min_code_size: number;
@@ -300,8 +369,8 @@ type FrameInfo = {
 
 ### `preparePlayback(options?)` and `prepareFrames(options?)`
 
-These APIs prepare frames once so repeated playback, scrubbing, and copying are
-cheap.
+These APIs materialize the requested frames for one job. Calls do not reuse a
+prior prepared result.
 
 Options:
 
@@ -325,7 +394,8 @@ type PrepareFramesOptions = {
   `"javascript"` forces JS; `"native"` requires Wasm.
 - `deltas`: store only changed areas for mostly static animations when possible.
 - `dedupe`: reuse identical frame pixel buffers.
-- `cache`: controls the internal prepared-frame storage shape.
+- `cache`: legacy option name that controls the prepared-frame storage shape;
+  it does not reuse results across calls.
 - `composited`: whether frames should represent the full visible animation
   state. `preparePlayback()` always sets this to `true`.
 
@@ -368,7 +438,8 @@ type PreparedGifPlayer = {
 ### `new GifWriter(buffer, width, height, options?)`
 
 Low-level GIF writer compatible with the omggif style. Use this when you want to
-stream frames into a caller-owned output buffer.
+stream frames into a caller-owned output buffer. The output can be a plain
+array, `Uint8Array`, or Node `Buffer`.
 
 ```ts
 const out = new Uint8Array(1024 * 1024);
@@ -437,6 +508,7 @@ const gif = encodeRgbaGifFrames({
 	backend,
 	delta,
 	alphaThreshold,
+	compression,
 });
 ```
 
@@ -454,6 +526,7 @@ type EncodeRgbaGifFramesOptions = {
 	backend?: "auto" | "javascript" | "native";
 	delta?: boolean;
 	alphaThreshold?: number;
+	compression?: "balanced" | "fast";
 };
 ```
 
@@ -470,6 +543,9 @@ type EncodeRgbaGifFramesOptions = {
 - `delta`: use the mostly-static-frame path.
 - `alphaThreshold`: alpha values below this become transparent. Defaults to
   `128`.
+- `compression`: `"balanced"` (default) performs normal GIF LZW compression.
+  `"fast"` emits a larger literal stream and enforces exact GIF-representable
+  colors and binary alpha.
 
 If the packaged Wasm core is available, wtfgif uses it automatically. Otherwise
 it uses the JavaScript encoder.
@@ -490,6 +566,7 @@ const gif = encodeIndexedGifFrames({
 	loop,
 	backend,
 	delta,
+	compression,
 });
 ```
 
@@ -506,6 +583,7 @@ type EncodeIndexedGifFramesOptions = {
 	loop?: number | null;
 	backend?: "auto" | "javascript" | "native";
 	delta?: boolean;
+	compression?: "balanced" | "fast";
 };
 ```
 
@@ -513,6 +591,8 @@ Every pixel value must be a valid index into `palette`. `delay` can be one delay
 for every frame, or one delay per frame, in hundredths of a second. `backend`
 uses the same `"auto"`, `"javascript"`, and `"native"` behavior as the RGBA
 helper. Returns a `Uint8Array` containing the complete GIF.
+`compression: "fast"` preserves the indices exactly while favoring speed over
+compressed size. Delta encoding currently uses balanced compression.
 
 ### Wasm Backend Helpers
 
@@ -560,6 +640,12 @@ The browser build and `.wasm` asset are also exported as `wtfgif/wasm-web` and
 
 wtfgif exports these public TypeScript types:
 
+- `Frame`
+- `FrameInfo`
+- `FrameOptions`
+- `GifBinary`
+- `GifOptions`
+- `GifPixelBuffer`
 - `EncodeIndexedGifFramesBackend`
 - `EncodeIndexedGifFramesOptions`
 - `EncodeRgbaGifFramesOptions`
@@ -585,8 +671,10 @@ wtfgif exports these public TypeScript types:
 
 - `npm run build` builds the library and type definitions.
 - `npm test` runs tests against omggif behavior.
-- `npm run bench` compares common decode and encode paths against omggif.
+- `npm run bench` runs the fresh-process benchmark, including the experimental
+  native prototype.
 - `npm run check` runs lint, typecheck, tests, build, and package dry-run.
+- [BENCHMARKS.md](BENCHMARKS.md) records benchmark scope and current results.
 
 ## Contributing
 

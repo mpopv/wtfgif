@@ -49,9 +49,9 @@ const loadWasmCoreModule = (): WasmCoreModule | null => {
 	}
 
 	const loaded =
-		tryRequire("wtfgif/wasm-core") ??
 		tryRequire("../../crates/wtfgif-core/pkg/wtfgif_core.js") ??
-		tryRequire("../crates/wtfgif-core/pkg/wtfgif_core.js");
+		tryRequire("../crates/wtfgif-core/pkg/wtfgif_core.js") ??
+		tryRequire("wtfgif/wasm-core");
 	cachedWasmCoreModule = asWasmCoreModule(loaded);
 	return cachedWasmCoreModule;
 };

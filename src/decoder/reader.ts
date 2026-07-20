@@ -1,7 +1,9 @@
 import {
   FrameInfo,
+  GifBinary,
   GifDecodeBackend,
   GifDecodeBackendStatus,
+  GifPixelBuffer,
   PreparedFrameBackendPreference,
   PooledDecoderTables,
   PreparedFrameCacheMode,
@@ -18,14 +20,7 @@ import { concatSubBlocks } from "../utils/subblocks";
 import { readNetscapeLoopCount } from "../utils/netscape";
 import {
   createDecoderTables,
-  getPooledDecoderTables,
-  returnDecoderTablesToPool,
 } from "./pool";
-
-// Reusable buffer for interlaced frame pixels. Size grows dynamically based on
-// requested frame dimensions to avoid allocating a large fixed array upfront.
-let moduleReusableFramePixels = new Uint8Array(0);
-let moduleFramePixelsInUse = false;
 
 type NormalizedPrepareFramesOptions = PrepareFramesOptions & {
   format: PreparedFrameFormat;
@@ -47,10 +42,6 @@ type ChangedRect = {
 // moved to types.ts
 
 export class GifReader {
-  private static lastPooledBuf: Uint8Array | null = null;
-  private static lastPooledReader: GifReader | null = null;
-  private static readerPool = new WeakMap<Uint8Array, GifReader[]>();
-
   private buf!: Uint8Array;
   private width_!: number;
   private height_!: number;
@@ -61,28 +52,21 @@ export class GifReader {
   private frames!: FrameInfo[];
   private loop_count!: number | null;
 
-  // Pooled decoder tables for reuse across instances
+  // Decoder scratch tables owned by this one reader/job.
   private pooledTables!: PooledDecoderTables | null;
-  private gifHash!: string;
-  private usePooling!: boolean;
-  private returnedToPool!: boolean;
 
   // Aliases for easier access
   private decTable!: Int32Array;
   private stack!: Uint8Array;
   private firstByte!: Int16Array;
-  private out32Cache!: WeakMap<Uint8Array, Uint32Array> | null;
-
-  private preparedFramesCache!: Map<string, PreparedGifFrames>;
-  private preparedOut32Cache!: WeakMap<Uint8Array, Uint32Array>;
-
+  private activePreparedFrames!: Set<PreparedGifFrames>;
   private static decodeBackend: GifDecodeBackend | null = null;
 
-  static createPooled(buf: Uint8Array): GifReader {
-    return new GifReader(buf, true);
+  static createPooled(buf: GifBinary): GifReader {
+    return new GifReader(buf, false);
   }
 
-  static createUnpooled(buf: Uint8Array): GifReader {
+  static createUnpooled(buf: GifBinary): GifReader {
     return new GifReader(buf, false);
   }
 
@@ -103,25 +87,9 @@ export class GifReader {
     }
   }
 
-  constructor(buf: Uint8Array, usePooling: boolean = true) {
-    if (usePooling) {
-      const lastPooledReader = GifReader.lastPooledReader;
-      if (lastPooledReader && GifReader.lastPooledBuf === buf) {
-        GifReader.lastPooledBuf = null;
-        GifReader.lastPooledReader = null;
-        lastPooledReader.returnedToPool = false;
-        return lastPooledReader;
-      }
-
-      const pooledReaders = GifReader.readerPool.get(buf);
-      const pooledReader = pooledReaders?.pop();
-      if (pooledReader) {
-        pooledReader.returnedToPool = false;
-        return pooledReader;
-      }
-    }
-
-    this.buf = buf;
+  constructor(buf: GifBinary, _usePooling: boolean = false) {
+    const data = buf instanceof Uint8Array ? buf : Uint8Array.from(buf);
+    this.buf = data;
     this.width_ = 0;
     this.height_ = 0;
     this.globalPaletteOffset = null;
@@ -129,19 +97,14 @@ export class GifReader {
     this.frames = [];
     this.loop_count = null;
     this.pooledTables = null;
-    this.usePooling = usePooling;
-    this.gifHash = usePooling ? "pooled" : "";
-    this.returnedToPool = false;
     this.decTable = new Int32Array(0);
     this.stack = new Uint8Array(0);
     this.firstByte = new Int16Array(0);
-    this.out32Cache = null;
-    this.preparedFramesCache = new Map();
-    this.preparedOut32Cache = new WeakMap();
+    this.activePreparedFrames = new Set();
 
     let p = 0;
     const readByte = (): number => {
-      const value = buf[p++];
+      const value = data[p++];
       if (value === undefined) {
         throw new Error("Unexpected end of GIF data.");
       }
@@ -151,22 +114,22 @@ export class GifReader {
 
     // Header: GIF87a / GIF89a
     if (
-      buf[p++] !== GIF.G ||
-      buf[p++] !== GIF.I ||
-      buf[p++] !== GIF.F ||
-      buf[p++] !== GIF._8 ||
-      ((buf[p++]! + 1) & 0xfd) !== GIF._8 ||
-      buf[p++] !== GIF.A
+      data[p++] !== GIF.G ||
+      data[p++] !== GIF.I ||
+      data[p++] !== GIF.F ||
+      data[p++] !== GIF._8 ||
+      ((data[p++]! + 1) & 0xfd) !== GIF._8 ||
+      data[p++] !== GIF.A
     ) {
       throw new Error("Invalid GIF 87a/89a header.");
     }
 
-    const width = (buf[p++]! | (buf[p++]! << 8)) >>> 0;
-    const height = (buf[p++]! | (buf[p++]! << 8)) >>> 0;
+    const width = (data[p++]! | (data[p++]! << 8)) >>> 0;
+    const height = (data[p++]! | (data[p++]! << 8)) >>> 0;
     this.width_ = width;
     this.height_ = height;
 
-    const pf0 = buf[p++]!; // packed fields
+    const pf0 = data[p++]!; // packed fields
     const gctFlag = (pf0 >>> 7) & 1;
     const gctSizeBits = pf0 & 0x7;
     const gctColors = 1 << (gctSizeBits + 1);
@@ -192,7 +155,7 @@ export class GifReader {
           const label = readByte();
           switch (label) {
             case GIF.APPLICATION: {
-              const netscape = readNetscapeLoopCount(buf, p);
+              const netscape = readNetscapeLoopCount(data, p);
               if (netscape) {
                 this.loop_count = netscape.loopCount;
                 p = netscape.nextPos;
@@ -208,7 +171,7 @@ export class GifReader {
               break;
             }
             case GIF.GCE: {
-              if (readByte() !== 0x4 || buf[p + 4] !== 0)
+              if (readByte() !== 0x4 || data[p + 4] !== 0)
                 throw new Error("Invalid graphics extension block.");
               const pf1 = readByte();
               delay = readUint16();
@@ -270,15 +233,15 @@ export class GifReader {
             width: w,
             height: h,
             has_local_palette,
-            palette_offset: palette_offset ?? 0,
-            palette_size: palette_size ?? 0,
+            palette_offset,
+            palette_size,
             data_offset, // keep for compatibility
             data_length: p - data_offset,
             transparent_index,
             interlaced: interlace,
             delay,
             disposal,
-            min_code_size: buf[data_offset]! | 0,
+            min_code_size: data[data_offset]! | 0,
           });
 
           // Reset GCE state for next frame
@@ -436,13 +399,10 @@ export class GifReader {
   private ensureDecoderTables(): void {
     if (this.pooledTables) return;
 
-    this.pooledTables = this.usePooling
-      ? getPooledDecoderTables(this.gifHash)
-      : createDecoderTables();
+    this.pooledTables = createDecoderTables();
     this.decTable = this.pooledTables.decTable;
     this.stack = this.pooledTables.stack;
     this.firstByte = this.pooledTables.firstByte;
-    this.out32Cache = this.pooledTables.out32Cache;
   }
 
   private getFrameCodes(frame: FrameInfo): Uint8Array {
@@ -458,6 +418,10 @@ export class GifReader {
     frame: FrameInfo,
     order: "rgba" | "bgra"
   ): Uint32Array {
+    if (frame.palette_offset === null || frame.palette_size === null) {
+      throw new Error("GIF frame has no color palette.");
+    }
+
     if (order === "rgba") {
       frame.pal32rgba ??= buildPal32(
         this.buf,
@@ -525,12 +489,12 @@ export class GifReader {
     return indexData;
   }
 
-  /* Public API mirrors omggif: BGRA and RGBA outputs (Uint8Array). */
-  decodeAndBlitFrameBGRA(frameNum: number, pixels: Uint8Array) {
-    this.decodeAndBlitFrame32(frameNum, pixels, "bgra");
+  /* Public API mirrors omggif, including plain arrays and clamped arrays. */
+  decodeAndBlitFrameBGRA(frameNum: number, pixels: GifPixelBuffer): void {
+    this.decodeAndBlitCompatibleFrame(frameNum, pixels, "bgra");
   }
-  decodeAndBlitFrameRGBA(frameNum: number, pixels: Uint8Array) {
-    this.decodeAndBlitFrame32(frameNum, pixels, "rgba");
+  decodeAndBlitFrameRGBA(frameNum: number, pixels: GifPixelBuffer): void {
+    this.decodeAndBlitCompatibleFrame(frameNum, pixels, "rgba");
   }
 
   /* Transferable-friendly API: decode into an ArrayBuffer that can be transferred between workers */
@@ -577,34 +541,27 @@ export class GifReader {
   }
 
   prepareFrames(options: PrepareFramesOptions = {}): PreparedGifFrames {
-    const normalized = this.normalizePrepareFramesOptions(options);
-    const frameIndices = this.normalizeFrameIndices(normalized.frameIndices);
-    const cacheKey = this.getPreparedFramesCacheKey(normalized, frameIndices);
-    const cached = this.preparedFramesCache.get(cacheKey);
-    if (cached) {
-      return cached;
-    }
+    this.clearFrameCaches();
+    try {
+      const normalized = this.normalizePrepareFramesOptions(options);
+      const frameIndices = this.normalizeFrameIndices(normalized.frameIndices);
 
-    if (normalized.backend !== "javascript") {
-      const backendResult = this.prepareFramesWithBackend(normalized);
-      if (backendResult) {
-        const prepared = this.createBackendPreparedFramesResult(
-          backendResult,
-          cacheKey
-        );
-        this.preparedFramesCache.set(cacheKey, prepared);
-        return prepared;
+      if (normalized.backend !== "javascript") {
+        const backendResult = this.prepareFramesWithBackend(normalized);
+        if (backendResult) {
+          return this.createBackendPreparedFramesResult(backendResult);
+        }
+        if (normalized.backend === "native") {
+          throw new Error("Native GIF decode backend is not available.");
+        }
       }
-      if (normalized.backend === "native") {
-        throw new Error("Native GIF decode backend is not available.");
-      }
-    }
 
-    const prepared = normalized.composited
-      ? this.prepareCompositedFrames(normalized, frameIndices, cacheKey)
-      : this.prepareUncompositedFrames(normalized, frameIndices, cacheKey);
-    this.preparedFramesCache.set(cacheKey, prepared);
-    return prepared;
+      return normalized.composited
+        ? this.prepareCompositedFrames(normalized, frameIndices)
+        : this.prepareUncompositedFrames(normalized, frameIndices);
+    } finally {
+      this.clearFrameCaches();
+    }
   }
 
   async prepareFramesAsync(
@@ -662,37 +619,6 @@ export class GifReader {
     return normalized;
   }
 
-  private getPreparedFramesCacheKey(
-    options: NormalizedPrepareFramesOptions,
-    frameIndices: readonly number[]
-  ): string {
-    return [
-      options.format,
-      options.composited ? "1" : "0",
-      options.cache,
-      options.backend === "javascript"
-        ? "javascript"
-        : this.getActiveDecodeBackendName(),
-      options.deltas ? "d1" : "d0",
-      options.dedupe,
-      options.maxBytes ?? -1,
-      frameIndices.join(","),
-    ].join("|");
-  }
-
-  private getActiveDecodeBackendName(): string {
-    const backend = GifReader.decodeBackend;
-    if (!backend || !backend.prepareFrames) {
-      return "javascript";
-    }
-
-    try {
-      return backend.isAvailable() ? backend.name : "javascript";
-    } catch {
-      return "javascript";
-    }
-  }
-
   private prepareFramesWithBackend(
     options: NormalizedPrepareFramesOptions
   ): PreparedGifFrames | null {
@@ -716,29 +642,28 @@ export class GifReader {
   }
 
   private createBackendPreparedFramesResult(
-    prepared: PreparedGifFrames,
-    cacheKey: string
+    prepared: PreparedGifFrames
   ): PreparedGifFrames {
     const disposeBackendResult = prepared.dispose;
     let disposed = false;
-
-    return {
+    const result: PreparedGifFrames = {
       ...prepared,
       dispose: () => {
         if (disposed) {
           return;
         }
         disposed = true;
-        this.preparedFramesCache.delete(cacheKey);
+        this.activePreparedFrames.delete(result);
         disposeBackendResult();
       },
     };
+    this.activePreparedFrames.add(result);
+    return result;
   }
 
   private prepareCompositedFrames(
     options: NormalizedPrepareFramesOptions,
-    frameIndices: readonly number[],
-    cacheKey: string
+    frameIndices: readonly number[]
   ): PreparedGifFrames {
     const requested = new Set(frameIndices);
     const maxFrame = frameIndices.length > 0 ? Math.max(...frameIndices) : -1;
@@ -844,15 +769,13 @@ export class GifReader {
       true,
       frames,
       byteLength,
-      options.maxBytes ?? null,
-      cacheKey
+      options.maxBytes ?? null
     );
   }
 
   private prepareUncompositedFrames(
     options: NormalizedPrepareFramesOptions,
-    frameIndices: readonly number[],
-    cacheKey: string
+    frameIndices: readonly number[]
   ): PreparedGifFrames {
     const frames: PreparedGifFrame[] = [];
     let byteLength = 0;
@@ -912,8 +835,7 @@ export class GifReader {
       false,
       frames,
       byteLength,
-      options.maxBytes ?? null,
-      cacheKey
+      options.maxBytes ?? null
     );
   }
 
@@ -922,15 +844,14 @@ export class GifReader {
     composited: boolean,
     frames: PreparedGifFrame[],
     byteLength: number,
-    maxBytes: number | null,
-    cacheKey: string
+    maxBytes: number | null
   ): PreparedGifFrames {
     const byIndex = new Array<PreparedGifFrame | undefined>(this.frames.length);
     for (const frame of frames) {
       byIndex[frame.index] = frame;
     }
 
-    return {
+    const result: PreparedGifFrames = {
       width: this.width_,
       height: this.height_,
       format,
@@ -956,11 +877,13 @@ export class GifReader {
       createPlayer: (target?: Uint8Array | Uint32Array) =>
         this.createPreparedPlayer(byIndex, target),
       dispose: () => {
-        this.preparedFramesCache.delete(cacheKey);
+        this.activePreparedFrames.delete(result);
         byIndex.length = 0;
         frames.length = 0;
       },
     };
+    this.activePreparedFrames.add(result);
+    return result;
   }
 
   private createPreparedPlayer(
@@ -1151,16 +1074,11 @@ export class GifReader {
       throw new Error("Pixel buffer byteOffset must be aligned to 4 bytes.");
     }
 
-    let target32 = this.preparedOut32Cache.get(target);
-    if (!target32) {
-      target32 = new Uint32Array(
-        target.buffer,
-        target.byteOffset,
-        requiredPixels
-      );
-      this.preparedOut32Cache.set(target, target32);
-    }
-    return target32;
+    return new Uint32Array(
+      target.buffer,
+      target.byteOffset,
+      requiredPixels
+    );
   }
 
   private applyFrameDisposal(
@@ -1285,7 +1203,7 @@ export class GifReader {
   ): void {
     if (maxBytes !== undefined && nextByteLength > maxBytes) {
       throw new Error(
-        `Prepared frame cache exceeds maxBytes (${nextByteLength} > ${maxBytes}).`
+        `Prepared frame output exceeds maxBytes (${nextByteLength} > ${maxBytes}).`
       );
     }
   }
@@ -1341,23 +1259,16 @@ export class GifReader {
 
   /* Return decoder tables to pool for reuse (call when done with this GifReader) */
   dispose(): void {
-    const preparedFrames = Array.from(new Set(this.preparedFramesCache.values()));
-    this.preparedFramesCache.clear();
-    for (const prepared of preparedFrames) {
+    for (const prepared of Array.from(this.activePreparedFrames)) {
       prepared.dispose();
     }
-    this.preparedOut32Cache = new WeakMap();
+    this.activePreparedFrames.clear();
     this.clearFrameCaches();
 
-    if (this.pooledTables && this.usePooling) {
-      returnDecoderTablesToPool(this.pooledTables);
-      this.pooledTables = null;
-    }
-
+    this.pooledTables = null;
     this.decTable = new Int32Array(0);
     this.stack = new Uint8Array(0);
     this.firstByte = new Int16Array(0);
-    this.out32Cache = null;
   }
 
   private clearFrameCaches(): void {
@@ -1376,27 +1287,7 @@ export class GifReader {
 
   /* Alias for dispose() to match expected pooling API */
   returnToPool(): void {
-    if (!this.usePooling || this.returnedToPool) {
-      return;
-    }
-
-    if (!GifReader.lastPooledReader) {
-      this.returnedToPool = true;
-      GifReader.lastPooledBuf = this.buf;
-      GifReader.lastPooledReader = this;
-      return;
-    }
-
-    let pooledReaders = GifReader.readerPool.get(this.buf);
-    if (!pooledReaders) {
-      pooledReaders = [];
-      GifReader.readerPool.set(this.buf, pooledReaders);
-    }
-
-    if (pooledReaders.length < 8) {
-      this.returnedToPool = true;
-      pooledReaders.push(this);
-    }
+    this.dispose();
   }
 
   /* Get statistics about decoder table pool usage */
@@ -1406,12 +1297,11 @@ export class GifReader {
     hits: number;
     misses: number;
   } {
-    // Simple stats tracking - in real implementation you'd track hits/misses
     return {
       available: 0,
       totalCreated: 0,
-      hits: 0, // Would need to track in getPooledDecoderTables
-      misses: 0, // Would need to track in getPooledDecoderTables
+      hits: 0,
+      misses: 0,
     };
   }
 
@@ -1424,39 +1314,63 @@ export class GifReader {
     if (frameNum < 0 || frameNum >= this.frames.length)
       throw new Error("Frame index out of range.");
 
-    this.ensureDecoderTables();
+    this.clearFrameCaches();
+    try {
+      this.ensureDecoderTables();
 
-    // Reuse a cached Uint32 view for this pixels buffer
-    const out32Cache = this.out32Cache!;
-    let out32 = out32Cache.get(pixels);
-    if (!out32) {
-      out32 = new Uint32Array(
+      const out32 = new Uint32Array(
         pixels.buffer,
         pixels.byteOffset,
         pixels.byteLength >>> 2
       );
-      out32Cache.set(pixels, out32);
+
+      const frame = this.frames[frameNum]!;
+      const pal32 = this.getFramePalette(frame, order);
+      const trans = frame.transparent_index ?? 256;
+      this.lzwDecodeToPixels(
+        this.buf,
+        frame.data_offset,
+        out32,
+        this.width_,
+        frame,
+        pal32,
+        trans
+      );
+    } finally {
+      this.clearFrameCaches();
+    }
+  }
+
+  private decodeAndBlitCompatibleFrame(
+    frameNum: number,
+    pixels: GifPixelBuffer,
+    order: "rgba" | "bgra",
+  ): void {
+    let typedPixels: Uint8Array | null = null;
+    if (pixels instanceof Uint8Array) {
+      typedPixels = pixels;
+    } else if (pixels instanceof Uint8ClampedArray) {
+      typedPixels = new Uint8Array(
+        pixels.buffer,
+        pixels.byteOffset,
+        pixels.byteLength,
+      );
     }
 
-    const frame = this.frames[frameNum]!;
-    const cachedColors = order === "rgba" ? frame.rgbaColors : frame.bgraColors;
-    if (cachedColors || frame.indices || (frame.decodeCount ?? 0) > 0) {
-      this.blitFrameColors(frame, out32, this.width_, order);
+    if (
+      typedPixels &&
+      (typedPixels.byteOffset & 3) === 0 &&
+      (typedPixels.byteLength & 3) === 0
+    ) {
+      this.decodeAndBlitFrame32(frameNum, typedPixels, order);
       return;
     }
 
-    frame.decodeCount = 1;
-    const pal32 = this.getFramePalette(frame, order);
-    const trans = frame.transparent_index ?? 256;
-    this.lzwDecodeToPixels(
-      this.buf,
-      frame.data_offset,
-      out32,
-      this.width_,
-      frame,
-      pal32,
-      trans
-    );
+    const compatible = Uint8Array.from(pixels);
+    this.decodeAndBlitFrame32(frameNum, compatible, order);
+    for (let i = 0; i < compatible.length; i++) {
+      pixels[i] = compatible[i]!;
+    }
   }
 
   private getFrameColors(
@@ -1574,58 +1488,6 @@ export class GifReader {
     }
 
     return colors;
-  }
-
-  private blitFrameColors(
-    frame: FrameInfo,
-    out32: Uint32Array,
-    canvasWidth: number,
-    order: "rgba" | "bgra"
-  ): void {
-    const colors = this.getFrameColors(frame, order, canvasWidth);
-    const spans = frame.opaqueSpans;
-
-    if (spans) {
-      for (let i = 0; i < spans.length; i += 3) {
-        const dst = spans[i]!;
-        const length = spans[i + 1]!;
-        const src = spans[i + 2]!;
-        if (length >= 8) {
-          out32.set(colors.subarray(src, src + length), dst);
-        } else {
-          for (let j = 0; j < length; j++) {
-            out32[dst + j] = colors[src + j]!;
-          }
-        }
-      }
-      return;
-    }
-
-    const positions = frame.opaquePositions;
-    if (positions) {
-      for (let i = 0; i < colors.length; i++) {
-        out32[positions[i]!] = colors[i]!;
-      }
-      return;
-    }
-
-    const fw = frame.width | 0;
-    const fh = frame.height | 0;
-    let src = 0;
-    let dst = ((frame.y | 0) * canvasWidth + (frame.x | 0)) | 0;
-
-    if ((frame.x | 0) === 0 && fw === canvasWidth) {
-      out32.set(colors, dst);
-      return;
-    }
-
-    const rowStride = canvasWidth - fw;
-    for (let y = 0; y < fh; y++) {
-      for (let x = 0; x < fw; x++) {
-        out32[dst++] = colors[src++]!;
-      }
-      dst += rowStride;
-    }
   }
 
   private blitFrameIndicesToCanvas(
@@ -1909,21 +1771,9 @@ export class GifReader {
       }
     } else {
       // INTERLACED PATH: Use pass-loops with inline pixel positioning
-      // First decode all pixels into a temporary buffer (reuse module-level array)
+      // First decode all pixels into a job-local temporary buffer.
       const frameSize = fw * fh;
-      let framePixels: Uint8Array;
-
-      if (!moduleFramePixelsInUse) {
-        // Grow reusable buffer if needed
-        if (frameSize > moduleReusableFramePixels.length) {
-          moduleReusableFramePixels = new Uint8Array(frameSize);
-        }
-        moduleFramePixelsInUse = true;
-        framePixels = moduleReusableFramePixels.subarray(0, frameSize);
-      } else {
-        // Fallback to allocation if reusable array is currently in use
-        framePixels = new Uint8Array(frameSize);
-      }
+      const framePixels = new Uint8Array(frameSize);
 
       let pixelIndex = 0;
 
@@ -2031,11 +1881,6 @@ export class GifReader {
             dst32++;
           }
         }
-      }
-
-      // Release module-level array if we were using it
-      if (framePixels.buffer === moduleReusableFramePixels.buffer) {
-        moduleFramePixelsInUse = false;
       }
     }
 

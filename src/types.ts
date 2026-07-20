@@ -59,6 +59,42 @@ export interface WasmCoreModule {
 		delays: Uint16Array,
 		loopCount: number,
 	) => Uint8Array;
+	encode_indexed_literal_gif?: (
+		indexStream: Uint8Array,
+		width: number,
+		height: number,
+		frameCount: number,
+		paletteRgb: Uint32Array,
+		delay: number,
+		loopCount: number,
+	) => Uint8Array;
+	encode_indexed_literal_gif_with_delays?: (
+		indexStream: Uint8Array,
+		width: number,
+		height: number,
+		frameCount: number,
+		paletteRgb: Uint32Array,
+		delays: Uint16Array,
+		loopCount: number,
+	) => Uint8Array;
+	encode_indexed_literal_delta_gif?: (
+		indexStream: Uint8Array,
+		width: number,
+		height: number,
+		frameCount: number,
+		paletteRgb: Uint32Array,
+		delay: number,
+		loopCount: number,
+	) => Uint8Array;
+	encode_indexed_literal_delta_gif_with_delays?: (
+		indexStream: Uint8Array,
+		width: number,
+		height: number,
+		frameCount: number,
+		paletteRgb: Uint32Array,
+		delays: Uint16Array,
+		loopCount: number,
+	) => Uint8Array;
 	encode_indexed_delta_gif?: (
 		indexStream: Uint8Array,
 		width: number,
@@ -98,17 +134,78 @@ export interface WasmCoreModule {
 		deltas: boolean,
 		alphaThreshold: number,
 	) => Uint8Array;
+	encode_rgba_literal_gif?: (
+		rgbaStream: Uint8Array,
+		width: number,
+		height: number,
+		frameCount: number,
+		paletteRgb: Uint32Array,
+		delay: number,
+		loopCount: number,
+	) => Uint8Array;
+	encode_rgba_literal_gif_with_options?: (
+		rgbaStream: Uint8Array,
+		width: number,
+		height: number,
+		frameCount: number,
+		paletteRgb: Uint32Array,
+		delays: Uint16Array,
+		loopCount: number,
+		alphaThreshold: number,
+	) => Uint8Array;
+	encode_rgba_literal_delta_gif?: (
+		rgbaStream: Uint8Array,
+		width: number,
+		height: number,
+		frameCount: number,
+		paletteRgb: Uint32Array,
+		delay: number,
+		loopCount: number,
+	) => Uint8Array;
+	encode_rgba_literal_delta_gif_with_options?: (
+		rgbaStream: Uint8Array,
+		width: number,
+		height: number,
+		frameCount: number,
+		paletteRgb: Uint32Array,
+		delays: Uint16Array,
+		loopCount: number,
+		alphaThreshold: number,
+	) => Uint8Array;
 }
 
 export interface PooledDecoderTables {
 	decTable: Int32Array;
 	stack: Uint8Array;
 	firstByte: Int16Array;
-	out32Cache: WeakMap<Uint8Array, Uint32Array>;
-	hash: string;
 }
 
+/**
+ * The byte-container contract used by omggif.
+ *
+ * Arrays, Uint8Array instances, and Node Buffers all satisfy this interface.
+ */
+export interface GifBinary {
+	readonly length: number;
+	[index: number]: number;
+}
+
+export type GifPixelBuffer = number[] | Uint8Array | Uint8ClampedArray;
+
 export type PaletteRGB = number[]; // array of 24-bit 0xRRGGBB
+
+export interface GifOptions {
+	background?: number;
+	loop?: number | null;
+	palette?: PaletteRGB | null;
+}
+
+export interface FrameOptions {
+	delay?: number;
+	disposal?: number;
+	palette?: PaletteRGB | null;
+	transparent?: number | null;
+}
 
 export type PreparedFrameFormat = "rgba" | "bgra";
 
@@ -196,20 +293,24 @@ export interface GifDecodeBackend {
 	) => PreparedGifFrames | null;
 }
 
-export type FrameInfo = {
+/** Frame metadata compatible with omggif's public Frame type. */
+export interface Frame {
 	x: number;
 	y: number;
 	width: number;
 	height: number;
 	has_local_palette: boolean;
-	palette_offset: number;
-	palette_size: number;
+	palette_offset: number | null;
+	palette_size: number | null;
 	data_offset: number;
 	data_length: number;
 	transparent_index: number | null;
 	interlaced: boolean;
 	delay: number;
 	disposal: number;
+}
+
+export type FrameInfo = Frame & {
 	min_code_size: number;
 	codes?: Uint8Array;
 	indices?: Uint8Array;
