@@ -75,6 +75,7 @@ try {
 		`
 			import {
 				compileGif,
+				encodeRgbaGifFrames,
 				GifReader,
 				GifWriter,
 				retimeGifPixelPerfect,
@@ -84,6 +85,8 @@ try {
 				type GifBinary,
 				type GifFrameDelays,
 				type GifOptions,
+				type GifPaletteMode,
+				type GifQuantizationMode,
 			} from "wtfgif";
 
 			const output: number[] = new Array(256).fill(0);
@@ -104,6 +107,17 @@ try {
 			void retimed;
 			const frame: Frame = reader.frameInfo(0);
 			void frame;
+			const quantization: GifQuantizationMode = "quality";
+			const paletteMode: GifPaletteMode = "local";
+			const rgbaGif = encodeRgbaGifFrames({
+				width: 1,
+				height: 1,
+				frames: Uint8Array.of(1, 2, 3, 255),
+				compression: "fast",
+				quantization,
+				paletteMode,
+			});
+			void rgbaGif;
 		`,
 	);
 	writeFileSync(
@@ -170,11 +184,30 @@ try {
 				const reader = new wtfgif.GifReader(gif);
 				const retimedReader = new wtfgif.GifReader(retimed);
 				const boomerangReader = new wtfgif.GifReader(boomerang);
+				const rgba = new Uint8Array(300 * 4);
+				for (let pixel = 0; pixel < 300; pixel++) {
+					const offset = pixel * 4;
+					rgba[offset] = pixel & 255;
+					rgba[offset + 1] = (pixel >> 8) & 255;
+					rgba[offset + 2] = (pixel * 17) & 255;
+					rgba[offset + 3] = 255;
+				}
+				const arbitrary = wtfgif.encodeRgbaGifFrames({
+					width: 300,
+					height: 1,
+					frames: rgba,
+					compression: "fast",
+					quantization: "quality",
+					paletteMode: "local",
+					backend: "wasm",
+				});
+				const arbitraryReader = new wtfgif.GifReader(arbitrary);
 				const result = {
 					available: status.available,
 					frames: reader.numFrames(),
 					retimedDelay: retimedReader.frameInfo(0).delay,
 					boomerangFrames: boomerangReader.numFrames(),
+					arbitraryFrames: arbitraryReader.numFrames(),
 					hasCompiledApi:
 						typeof wtfgif.compileGif === "function" &&
 						typeof wtfgif.retimeGifPixelPerfect === "function" &&
@@ -188,6 +221,7 @@ try {
 				reader.dispose();
 				retimedReader.dispose();
 				boomerangReader.dispose();
+				arbitraryReader.dispose();
 				process.stdout.write(JSON.stringify(result));
 			`,
 		]),
@@ -197,6 +231,7 @@ try {
 		commonJsResult.frames !== 1 ||
 		commonJsResult.retimedDelay !== 13 ||
 		commonJsResult.boomerangFrames !== 2 ||
+		commonJsResult.arbitraryFrames !== 1 ||
 		!commonJsResult.hasCompiledApi ||
 		!commonJsResult.hasCompatibilityApi
 	) {
@@ -309,6 +344,25 @@ try {
 				const remuxed = wtfgif.remuxGifPixelPerfect(source);
 				const before = wtfgif.decodeGifFramesRgba(source);
 				const after = wtfgif.decodeGifFramesRgba(remuxed);
+				const rgba = new Uint8Array(300 * 4);
+				for (let pixel = 0; pixel < 300; pixel++) {
+					const offset = pixel * 4;
+					rgba[offset] = pixel & 255;
+					rgba[offset + 1] = (pixel >> 8) & 255;
+					rgba[offset + 2] = (pixel * 17) & 255;
+					rgba[offset + 3] = 255;
+				}
+				const arbitrary = wtfgif.decodeGifFramesRgba(
+					wtfgif.encodeRgbaGifFrames({
+						width: 300,
+						height: 1,
+						frames: rgba,
+						compression: "fast",
+						quantization: "quality",
+						paletteMode: "local",
+						backend: "wasm",
+					}),
+				);
 				process.stdout.write(JSON.stringify({
 					available: status.available,
 					initialized: wtfgif.getWasmStatus().initialized,
@@ -319,6 +373,10 @@ try {
 						before.pixels.every(
 							(value, index) => value === after.pixels[index],
 						),
+					arbitraryRgba:
+						arbitrary.width === 300 &&
+						arbitrary.height === 1 &&
+						arbitrary.frameCount === 1,
 				}));
 			`,
 		]),
@@ -326,7 +384,8 @@ try {
 	if (
 		!browserWasmResult.available ||
 		!browserWasmResult.initialized ||
-		!browserWasmResult.pixelPerfect
+		!browserWasmResult.pixelPerfect ||
+		!browserWasmResult.arbitraryRgba
 	) {
 		throw new Error(
 			`Browser Wasm package validation failed: ${JSON.stringify(browserWasmResult)}`,

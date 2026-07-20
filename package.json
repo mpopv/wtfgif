@@ -1,6 +1,6 @@
 {
   "name": "wtfgif",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "main": "dist/index.cjs",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -70,6 +70,7 @@
     "bench:decode": "npm run build && node scripts/bench-drop-in.mjs decode",
     "bench:drop-in": "npm run build && node scripts/bench-drop-in.mjs",
     "bench:encode": "npm run build && node scripts/bench-drop-in.mjs encode",
+    "bench:rgba": "npm run build && node scripts/bench-rgba.mjs",
     "bench:in-process": "npm run build && npm run build:native:prototype && node scripts/bench.mjs",
     "bench:makeemoji-retime": "npm run build && node scripts/bench-makeemoji-retime.mjs",
     "build:native:prototype": "node scripts/build-native-prototype.mjs",

@@ -2,6 +2,21 @@
 
 All notable changes to wtfgif are documented here.
 
+## 1.4.0 - 2026-07-20
+
+- Decouple RGBA quantization from LZW compression with explicit `exact`,
+  `fast`, and `quality` modes.
+- Add fused arbitrary-RGBA Wasm encoding with fixed RGB332 or adaptive
+  median-cut palette generation.
+- Add global and per-frame local palette modes. Local exact palettes preserve
+  independently representable frames even when their combined colors exceed
+  256.
+- Preserve the existing fast-mode default: callers must explicitly opt into
+  lossy quantization rather than silently losing colors.
+- Validate arbitrary-RGBA encoding in JavaScript, WebAssembly, Cloudflare
+  Workers, and Vercel Edge, with end-to-end RGBA benchmarks and quality
+  measurements.
+
 ## 1.3.0 - 2026-07-19
 
 - Add separately optimized, pixel-perfect `GifWriter` encode and `GifReader`

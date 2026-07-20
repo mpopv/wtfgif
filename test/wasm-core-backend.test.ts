@@ -315,6 +315,65 @@ describe("Rust/Wasm core decode backend", () => {
 	});
 
 	maybeTest(
+		"quantizes arbitrary RGBA with independent compression and palette modes",
+		() => {
+			const width = 16;
+			const height = 16;
+			const frameBytes = width * height * 4;
+			const frames = new Uint8Array(frameBytes * 2);
+			for (let value = 0; value < 256; value++) {
+				const first = value * 4;
+				frames[first] = value;
+				frames[first + 1] = (value * 3) & 0xff;
+				frames[first + 3] = 255;
+				const second = frameBytes + value * 4;
+				frames[second + 1] = value;
+				frames[second + 2] = (value * 5 + 1) & 0xff;
+				frames[second + 3] = 255;
+			}
+
+			const fastGlobal = encodeRgbaGifFrames({
+				width,
+				height,
+				frames,
+				compression: "fast",
+				quantization: "fast",
+				backend: "native",
+			});
+			const qualityGlobal = encodeRgbaGifFrames({
+				width,
+				height,
+				frames,
+				compression: "fast",
+				quantization: "quality",
+				backend: "native",
+			});
+			const exactLocal = encodeRgbaGifFrames({
+				width,
+				height,
+				frames,
+				compression: "fast",
+				quantization: "exact",
+				paletteMode: "local",
+				backend: "native",
+			});
+
+			expect(new GifReader(fastGlobal).numFrames()).toBe(2);
+			expect(new GifReader(qualityGlobal).numFrames()).toBe(2);
+			const localReader = new GifReader(exactLocal);
+			expect(localReader.numFrames()).toBe(2);
+			for (let frame = 0; frame < 2; frame++) {
+				const decoded = new Uint8Array(frameBytes);
+				localReader.decodeAndBlitFrameRGBA(frame, decoded);
+				expect(decoded).toStrictEqual(
+					frames.subarray(frame * frameBytes, (frame + 1) * frameBytes),
+				);
+				expect(localReader.frameInfo(frame).disposal).toBe(2);
+			}
+		},
+	);
+
+	maybeTest(
 		"fast RGBA mode rejects colors and alpha GIF cannot preserve",
 		() => {
 			expect(() =>

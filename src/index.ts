@@ -121,6 +121,8 @@ export type {
 	EncodeRgbaGifFramesOptions,
 	GifCompressionMode,
 	GifFrameDelay,
+	GifPaletteMode,
+	GifQuantizationMode,
 	IndexedGifFrame,
 	IndexedGifFrames,
 	RgbaGifFrame,

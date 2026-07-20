@@ -42,6 +42,40 @@ enum PixelFormat {
     Bgra,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RgbaQuantization {
+    Exact,
+    Fast,
+    Quality,
+}
+
+impl RgbaQuantization {
+    fn from_u8(value: u8) -> Result<Self, String> {
+        match value {
+            0 => Ok(Self::Exact),
+            1 => Ok(Self::Fast),
+            2 => Ok(Self::Quality),
+            _ => Err("Invalid RGBA quantization mode".to_string()),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RgbaPaletteMode {
+    Global,
+    Local,
+}
+
+impl RgbaPaletteMode {
+    fn from_u8(value: u8) -> Result<Self, String> {
+        match value {
+            0 => Ok(Self::Global),
+            1 => Ok(Self::Local),
+            _ => Err("Invalid RGBA palette mode".to_string()),
+        }
+    }
+}
+
 const COMPOSITED_DELTA_MAGIC: u32 = 0x3144_4757;
 const COMPOSITED_DELTA_VERSION: u32 = 1;
 const COMPOSITED_DELTA_HEADER_LEN: usize = 4;
@@ -1134,6 +1168,42 @@ pub fn encode_rgba_gif_with_options(
         deltas,
         alpha_threshold,
         false,
+    )
+    .map_err(|message| JsValue::from_str(&message))
+}
+
+#[wasm_bindgen]
+pub fn encode_rgba_gif_advanced(
+    rgba_stream: &[u8],
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    palette_rgb: &[u32],
+    delays: &[u16],
+    loop_count: i32,
+    deltas: bool,
+    alpha_threshold: u8,
+    literal: bool,
+    quantization: u8,
+    palette_mode: u8,
+) -> Result<Vec<u8>, JsValue> {
+    let quantization =
+        RgbaQuantization::from_u8(quantization).map_err(|message| JsValue::from_str(&message))?;
+    let palette_mode =
+        RgbaPaletteMode::from_u8(palette_mode).map_err(|message| JsValue::from_str(&message))?;
+    encode_rgba_gif_advanced_inner(
+        rgba_stream,
+        width,
+        height,
+        frame_count,
+        palette_rgb,
+        DelaySource::PerFrame(delays),
+        loop_count,
+        deltas,
+        alpha_threshold,
+        literal,
+        quantization,
+        palette_mode,
     )
     .map_err(|message| JsValue::from_str(&message))
 }
@@ -4269,6 +4339,196 @@ impl<'a> PaletteMapper<'a> {
     }
 }
 
+fn encode_rgba_gif_advanced_inner(
+    rgba_stream: &[u8],
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    palette_rgb: &[u32],
+    delays: DelaySource<'_>,
+    loop_count: i32,
+    deltas: bool,
+    alpha_threshold: u8,
+    literal: bool,
+    quantization: RgbaQuantization,
+    palette_mode: RgbaPaletteMode,
+) -> Result<Vec<u8>, String> {
+    validate_rgba_stream(
+        rgba_stream,
+        width,
+        height,
+        frame_count,
+        delays,
+        loop_count,
+    )?;
+
+    if palette_mode == RgbaPaletteMode::Local {
+        if !palette_rgb.is_empty() {
+            return Err("Local palette mode cannot use a caller-supplied global palette".to_string());
+        }
+        if deltas {
+            return Err("Local palette mode does not support delta frames".to_string());
+        }
+        return encode_rgba_local_palette_gif_inner(
+            rgba_stream,
+            width,
+            height,
+            frame_count,
+            delays,
+            loop_count,
+            alpha_threshold,
+            literal,
+            quantization,
+        );
+    }
+
+    let (palette, indexed, transparent_index) =
+        index_rgba_frames_with_quantization(
+            rgba_stream,
+            palette_rgb,
+            alpha_threshold,
+            quantization,
+        )?;
+    encode_indexed_gif_inner_with_rects(
+        &indexed,
+        width,
+        height,
+        frame_count,
+        &palette,
+        delays,
+        loop_count,
+        deltas,
+        transparent_index,
+        literal,
+    )
+}
+
+fn validate_rgba_stream(
+    rgba_stream: &[u8],
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    delays: DelaySource<'_>,
+    loop_count: i32,
+) -> Result<(), String> {
+    if width == 0 || height == 0 {
+        return Err("Width/Height invalid".to_string());
+    }
+    if frame_count == 0 {
+        return Err("Frame count must be greater than zero".to_string());
+    }
+    if loop_count < -1 || loop_count > i32::from(u16::MAX) {
+        return Err("Loop count invalid".to_string());
+    }
+    delays.validate(frame_count)?;
+
+    let expected_len = usize::from(width)
+        .checked_mul(usize::from(height))
+        .and_then(|pixels| pixels.checked_mul(frame_count))
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| "RGBA frame stream overflow".to_string())?;
+    if rgba_stream.len() != expected_len {
+        return Err("RGBA frame stream length does not match dimensions".to_string());
+    }
+    Ok(())
+}
+
+fn encode_rgba_local_palette_gif_inner(
+    rgba_stream: &[u8],
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    delays: DelaySource<'_>,
+    loop_count: i32,
+    alpha_threshold: u8,
+    literal: bool,
+    quantization: RgbaQuantization,
+) -> Result<Vec<u8>, String> {
+    let frame_pixels = usize::from(width)
+        .checked_mul(usize::from(height))
+        .ok_or_else(|| "Frame size overflow".to_string())?;
+    let frame_bytes = frame_pixels
+        .checked_mul(4)
+        .ok_or_else(|| "RGBA frame size overflow".to_string())?;
+    let mut output = Vec::with_capacity(
+        13 + 20 + frame_count.saturating_mul(frame_pixels.saturating_mul(2) + 800) + 1,
+    );
+    output.extend_from_slice(b"GIF89a");
+    push_u16_le(&mut output, width);
+    push_u16_le(&mut output, height);
+    output.extend_from_slice(&[0, 0, 0]);
+    write_loop_extension(&mut output, loop_count);
+
+    let mut lzw_tables = (!literal).then(LzwEncodeTables::new);
+    let mut compressed_scratch = Vec::new();
+    for (frame_index, frame) in rgba_stream.chunks_exact(frame_bytes).enumerate() {
+        let (palette, indexed, transparent_index) =
+            index_rgba_frames_with_quantization(frame, &[], alpha_threshold, quantization)?;
+        let color_count = checked_palette_color_count(palette.len())?;
+        write_local_palette_frame_header(
+            &mut output,
+            width,
+            height,
+            delays.get(frame_index),
+            transparent_index,
+            &palette,
+            color_count,
+        );
+        let min_code_size = (log2_pow2(color_count) as u8).max(2);
+        if literal {
+            encode_indexed_literal_lzw_to(
+                &mut output,
+                &indexed,
+                min_code_size,
+                color_count,
+                &mut compressed_scratch,
+            )?;
+        } else {
+            encode_indexed_lzw_to_with_tables(
+                &mut output,
+                &indexed,
+                min_code_size,
+                color_count,
+                lzw_tables.as_mut().unwrap(),
+            )?;
+        }
+    }
+    output.push(0x3b);
+    Ok(output)
+}
+
+fn write_local_palette_frame_header(
+    output: &mut Vec<u8>,
+    width: u16,
+    height: u16,
+    delay: u16,
+    transparent_index: Option<u8>,
+    palette: &[u32],
+    color_count: usize,
+) {
+    output.extend_from_slice(&[
+        0x21,
+        0xf9,
+        0x04,
+        (if transparent_index.is_some() { 0x01 } else { 0x00 }) | (2 << 2),
+    ]);
+    push_u16_le(output, delay);
+    output.push(transparent_index.unwrap_or(0));
+    output.push(0);
+
+    output.push(0x2c);
+    output.extend_from_slice(&[0, 0, 0, 0]);
+    push_u16_le(output, width);
+    push_u16_le(output, height);
+    output.push(0x80 | ((log2_pow2(color_count) as u8 - 1) & 7));
+    for index in 0..color_count {
+        let rgb = palette.get(index).copied().unwrap_or(0);
+        output.push(((rgb >> 16) & 0xff) as u8);
+        output.push(((rgb >> 8) & 0xff) as u8);
+        output.push((rgb & 0xff) as u8);
+    }
+}
+
 fn encode_rgba_gif_inner(
     rgba_stream: &[u8],
     width: u16,
@@ -4487,6 +4747,267 @@ fn index_rgba_frames(
     }
 
     Ok(index_rgba_frames_332(rgba_stream, alpha_threshold))
+}
+
+fn index_rgba_frames_with_quantization(
+    rgba_stream: &[u8],
+    palette_rgb: &[u32],
+    alpha_threshold: u8,
+    quantization: RgbaQuantization,
+) -> Result<(Vec<u32>, Vec<u8>, Option<u8>), String> {
+    if !palette_rgb.is_empty() {
+        checked_palette_color_count(palette_rgb.len())?;
+        return index_rgba_frames_to_palette(
+            rgba_stream,
+            palette_rgb,
+            alpha_threshold,
+            quantization == RgbaQuantization::Exact,
+        );
+    }
+
+    if let Some(exact) = try_index_rgba_frames_exact(
+        rgba_stream,
+        alpha_threshold,
+        quantization == RgbaQuantization::Exact,
+    )? {
+        return Ok(exact);
+    }
+    match quantization {
+        RgbaQuantization::Exact => Err(
+            "Exact GIF quantization requires at most 256 colors and binary alpha".to_string(),
+        ),
+        RgbaQuantization::Fast => Ok(index_rgba_frames_332(rgba_stream, alpha_threshold)),
+        RgbaQuantization::Quality => {
+            Ok(index_rgba_frames_median_cut(rgba_stream, alpha_threshold))
+        }
+    }
+}
+
+const QUALITY_HISTOGRAM_BITS: usize = 5;
+const QUALITY_HISTOGRAM_SIDE: usize = 1 << QUALITY_HISTOGRAM_BITS;
+const QUALITY_HISTOGRAM_LEN: usize =
+    QUALITY_HISTOGRAM_SIDE * QUALITY_HISTOGRAM_SIDE * QUALITY_HISTOGRAM_SIDE;
+
+#[derive(Clone, Copy, Default)]
+struct RgbHistogramBin {
+    count: u64,
+    red: u64,
+    green: u64,
+    blue: u64,
+}
+
+#[derive(Clone)]
+struct QuantizedColor {
+    histogram_index: usize,
+    count: u64,
+    red: u8,
+    green: u8,
+    blue: u8,
+}
+
+struct QuantizedColorBox {
+    colors: Vec<QuantizedColor>,
+    weight: u64,
+    red_range: u8,
+    green_range: u8,
+    blue_range: u8,
+}
+
+impl QuantizedColorBox {
+    fn new(colors: Vec<QuantizedColor>) -> Self {
+        let mut color_box = Self {
+            colors,
+            weight: 0,
+            red_range: 0,
+            green_range: 0,
+            blue_range: 0,
+        };
+        color_box.refresh();
+        color_box
+    }
+
+    fn refresh(&mut self) {
+        self.weight = self.colors.iter().map(|color| color.count).sum();
+        if self.colors.is_empty() {
+            self.red_range = 0;
+            self.green_range = 0;
+            self.blue_range = 0;
+            return;
+        }
+        let mut min_red = u8::MAX;
+        let mut min_green = u8::MAX;
+        let mut min_blue = u8::MAX;
+        let mut max_red = 0;
+        let mut max_green = 0;
+        let mut max_blue = 0;
+        for color in &self.colors {
+            min_red = min_red.min(color.red);
+            min_green = min_green.min(color.green);
+            min_blue = min_blue.min(color.blue);
+            max_red = max_red.max(color.red);
+            max_green = max_green.max(color.green);
+            max_blue = max_blue.max(color.blue);
+        }
+        self.red_range = max_red - min_red;
+        self.green_range = max_green - min_green;
+        self.blue_range = max_blue - min_blue;
+    }
+
+    fn score(&self) -> u128 {
+        let range = u64::from(
+            self.red_range
+                .max(self.green_range)
+                .max(self.blue_range),
+        );
+        u128::from(self.weight) * u128::from(range * range)
+    }
+
+    fn split(mut self) -> Result<(Self, Self), Self> {
+        if self.colors.len() < 2 {
+            return Err(self);
+        }
+        if self.red_range >= self.green_range && self.red_range >= self.blue_range {
+            self.colors.sort_unstable_by_key(|color| color.red);
+        } else if self.green_range >= self.blue_range {
+            self.colors.sort_unstable_by_key(|color| color.green);
+        } else {
+            self.colors.sort_unstable_by_key(|color| color.blue);
+        }
+
+        let midpoint = (self.weight + 1) / 2;
+        let mut accumulated = 0u64;
+        let mut split_index = 1usize;
+        for (index, color) in self.colors.iter().enumerate() {
+            accumulated = accumulated.saturating_add(color.count);
+            if accumulated >= midpoint {
+                split_index = (index + 1).min(self.colors.len() - 1);
+                break;
+            }
+        }
+        let right = self.colors.split_off(split_index);
+        Ok((Self::new(self.colors), Self::new(right)))
+    }
+
+    fn representative(&self) -> u32 {
+        let mut red = 0u128;
+        let mut green = 0u128;
+        let mut blue = 0u128;
+        let mut count = 0u128;
+        for color in &self.colors {
+            let weight = u128::from(color.count);
+            red += u128::from(color.red) * weight;
+            green += u128::from(color.green) * weight;
+            blue += u128::from(color.blue) * weight;
+            count += weight;
+        }
+        if count == 0 {
+            return 0;
+        }
+        let red = ((red + count / 2) / count) as u32;
+        let green = ((green + count / 2) / count) as u32;
+        let blue = ((blue + count / 2) / count) as u32;
+        (red << 16) | (green << 8) | blue
+    }
+}
+
+fn quality_histogram_index(red: u8, green: u8, blue: u8) -> usize {
+    (usize::from(red >> (8 - QUALITY_HISTOGRAM_BITS)) << (QUALITY_HISTOGRAM_BITS * 2))
+        | (usize::from(green >> (8 - QUALITY_HISTOGRAM_BITS)) << QUALITY_HISTOGRAM_BITS)
+        | usize::from(blue >> (8 - QUALITY_HISTOGRAM_BITS))
+}
+
+fn index_rgba_frames_median_cut(
+    rgba_stream: &[u8],
+    alpha_threshold: u8,
+) -> (Vec<u32>, Vec<u8>, Option<u8>) {
+    let has_transparent_pixels =
+        rgba_stream_has_transparent_pixels(rgba_stream, alpha_threshold);
+    let opaque_color_limit = if has_transparent_pixels { 255 } else { 256 };
+    let mut histogram = vec![RgbHistogramBin::default(); QUALITY_HISTOGRAM_LEN];
+    for pixel in rgba_stream.chunks_exact(4) {
+        if pixel[3] < alpha_threshold {
+            continue;
+        }
+        let bin = &mut histogram[quality_histogram_index(pixel[0], pixel[1], pixel[2])];
+        bin.count += 1;
+        bin.red += u64::from(pixel[0]);
+        bin.green += u64::from(pixel[1]);
+        bin.blue += u64::from(pixel[2]);
+    }
+
+    let mut colors = Vec::new();
+    for (histogram_index, bin) in histogram.iter().enumerate() {
+        if bin.count == 0 {
+            continue;
+        }
+        colors.push(QuantizedColor {
+            histogram_index,
+            count: bin.count,
+            red: ((bin.red + bin.count / 2) / bin.count) as u8,
+            green: ((bin.green + bin.count / 2) / bin.count) as u8,
+            blue: ((bin.blue + bin.count / 2) / bin.count) as u8,
+        });
+    }
+
+    let mut boxes = if colors.is_empty() {
+        Vec::new()
+    } else {
+        vec![QuantizedColorBox::new(colors)]
+    };
+    while boxes.len() < opaque_color_limit {
+        let Some((split_index, _)) = boxes
+            .iter()
+            .enumerate()
+            .filter(|(_, color_box)| color_box.colors.len() > 1)
+            .max_by_key(|(_, color_box)| color_box.score())
+        else {
+            break;
+        };
+        let color_box = boxes.swap_remove(split_index);
+        match color_box.split() {
+            Ok((left, right)) => {
+                boxes.push(left);
+                boxes.push(right);
+            }
+            Err(unsplit) => {
+                boxes.push(unsplit);
+                break;
+            }
+        }
+    }
+    boxes.sort_unstable_by_key(QuantizedColorBox::representative);
+
+    let mut palette = Vec::with_capacity(boxes.len() + usize::from(has_transparent_pixels));
+    let mut histogram_to_palette = vec![0u8; QUALITY_HISTOGRAM_LEN];
+    for (palette_index, color_box) in boxes.iter().enumerate() {
+        palette.push(color_box.representative());
+        for color in &color_box.colors {
+            histogram_to_palette[color.histogram_index] = palette_index as u8;
+        }
+    }
+
+    let transparent_index = if has_transparent_pixels {
+        let index = palette.len() as u8;
+        palette.push(0);
+        Some(index)
+    } else {
+        None
+    };
+    if palette.is_empty() {
+        palette.push(0);
+    }
+
+    let mut indexed = Vec::with_capacity(rgba_stream.len() / 4);
+    for pixel in rgba_stream.chunks_exact(4) {
+        if pixel[3] < alpha_threshold {
+            indexed.push(transparent_index.unwrap_or(0));
+        } else {
+            indexed.push(
+                histogram_to_palette[quality_histogram_index(pixel[0], pixel[1], pixel[2])],
+            );
+        }
+    }
+    (palette, indexed, transparent_index)
 }
 
 fn try_index_rgba_frames_exact(
@@ -6045,16 +6566,29 @@ fn encode_indexed_gif_inner_with_rects(
     literal: bool,
 ) -> Result<Vec<u8>, String> {
     if !deltas {
-        return encode_indexed_gif_inner(
-            index_stream,
-            width,
-            height,
-            frame_count,
-            palette_rgb,
-            delays,
-            loop_count,
-            transparent_index,
-        );
+        return if literal {
+            encode_indexed_literal_gif_inner(
+                index_stream,
+                width,
+                height,
+                frame_count,
+                palette_rgb,
+                delays,
+                loop_count,
+                transparent_index,
+            )
+        } else {
+            encode_indexed_gif_inner(
+                index_stream,
+                width,
+                height,
+                frame_count,
+                palette_rgb,
+                delays,
+                loop_count,
+                transparent_index,
+            )
+        };
     }
 
     if width == 0 || height == 0 {
@@ -8525,5 +9059,146 @@ mod tests {
                 .len(),
             257
         );
+    }
+
+    #[test]
+    fn advanced_fast_compression_quantizes_arbitrary_rgba() {
+        let mut rgba = Vec::new();
+        for value in 0..1024u16 {
+            rgba.extend_from_slice(&[
+                (value & 0xff) as u8,
+                ((value * 5) & 0xff) as u8,
+                ((value * 11) & 0xff) as u8,
+                255,
+            ]);
+        }
+
+        let encoded = encode_rgba_gif_advanced_inner(
+            &rgba,
+            32,
+            32,
+            1,
+            &[],
+            DelaySource::Constant(3),
+            0,
+            false,
+            TRANSPARENT_ALPHA_THRESHOLD,
+            true,
+            RgbaQuantization::Fast,
+            RgbaPaletteMode::Global,
+        )
+        .unwrap();
+        let metadata = parse_metadata(&encoded).unwrap();
+
+        assert_eq!(metadata.global_palette_size, 256);
+        assert_eq!(metadata.frames.len(), 1);
+        assert_eq!(metadata.frames[0].delay, 3);
+        assert_eq!(
+            decode_frame_indices_inner(&encoded, &metadata.frames[0])
+                .unwrap()
+                .len(),
+            1024
+        );
+    }
+
+    #[test]
+    fn quality_quantization_improves_rgb_error_over_fast_quantization() {
+        let mut rgba = Vec::new();
+        for y in 0..64u16 {
+            for x in 0..64u16 {
+                rgba.extend_from_slice(&[
+                    (x * 255 / 63) as u8,
+                    (y * 255 / 63) as u8,
+                    ((x * 3 + y * 5) & 0xff) as u8,
+                    255,
+                ]);
+            }
+        }
+
+        let (fast_palette, fast_indices, _) =
+            index_rgba_frames_with_quantization(
+                &rgba,
+                &[],
+                TRANSPARENT_ALPHA_THRESHOLD,
+                RgbaQuantization::Fast,
+            )
+            .unwrap();
+        let (quality_palette, quality_indices, _) =
+            index_rgba_frames_with_quantization(
+                &rgba,
+                &[],
+                TRANSPARENT_ALPHA_THRESHOLD,
+                RgbaQuantization::Quality,
+            )
+            .unwrap();
+        let error = |palette: &[u32], indices: &[u8]| -> u64 {
+            rgba.chunks_exact(4)
+                .zip(indices)
+                .map(|(pixel, index)| {
+                    let color = palette[usize::from(*index)];
+                    let red = ((color >> 16) & 0xff) as i32;
+                    let green = ((color >> 8) & 0xff) as i32;
+                    let blue = (color & 0xff) as i32;
+                    let dr = i32::from(pixel[0]) - red;
+                    let dg = i32::from(pixel[1]) - green;
+                    let db = i32::from(pixel[2]) - blue;
+                    (dr * dr + dg * dg + db * db) as u64
+                })
+                .sum()
+        };
+
+        assert!(
+            error(&quality_palette, &quality_indices)
+                < error(&fast_palette, &fast_indices)
+        );
+    }
+
+    #[test]
+    fn local_palette_mode_preserves_independent_exact_frame_colors() {
+        let mut rgba = Vec::new();
+        for frame in 0..2u16 {
+            for value in 0..256u16 {
+                rgba.extend_from_slice(&[
+                    value as u8,
+                    ((value * 3 + frame * 17) & 0xff) as u8,
+                    ((value * 7 + frame * 29) & 0xff) as u8,
+                    255,
+                ]);
+            }
+        }
+
+        let encoded = encode_rgba_gif_advanced_inner(
+            &rgba,
+            16,
+            16,
+            2,
+            &[],
+            DelaySource::PerFrame(&[4, 9]),
+            0,
+            false,
+            TRANSPARENT_ALPHA_THRESHOLD,
+            true,
+            RgbaQuantization::Exact,
+            RgbaPaletteMode::Local,
+        )
+        .unwrap();
+        let metadata = parse_metadata(&encoded).unwrap();
+
+        assert_eq!(metadata.global_palette_size, 0);
+        assert_eq!(metadata.frames.len(), 2);
+        assert!(metadata.frames.iter().all(|frame| frame.has_local_palette));
+        assert_eq!(metadata.frames[0].delay, 4);
+        assert_eq!(metadata.frames[1].delay, 9);
+        assert!(metadata.frames.iter().all(|frame| frame.disposal == 2));
+        for frame_index in 0..metadata.frames.len() {
+            let decoded =
+                decode_frame_pixels_inner(&encoded, &metadata, frame_index, PixelFormat::Rgba)
+                    .unwrap();
+            let expected_start = frame_index * 16 * 16 * 4;
+            assert_eq!(
+                decoded,
+                rgba[expected_start..expected_start + 16 * 16 * 4]
+            );
+        }
     }
 }

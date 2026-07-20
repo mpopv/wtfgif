@@ -210,6 +210,20 @@ export interface WasmCoreModule {
 		loopCount: number,
 		alphaThreshold: number,
 	) => Uint8Array;
+	encode_rgba_gif_advanced?: (
+		rgbaStream: Uint8Array,
+		width: number,
+		height: number,
+		frameCount: number,
+		paletteRgb: Uint32Array,
+		delays: Uint16Array,
+		loopCount: number,
+		deltas: boolean,
+		alphaThreshold: number,
+		literal: boolean,
+		quantization: number,
+		paletteMode: number,
+	) => Uint8Array;
 }
 
 export interface PooledDecoderTables {

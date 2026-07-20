@@ -456,4 +456,118 @@ describe("GifWriter encoding utilities", () => {
 		reader.decodeAndBlitFrameRGBA(1, decoded);
 		expect(decoded).toStrictEqual(frame1);
 	});
+
+	test("fast compression can quantize arbitrary full-color RGBA", () => {
+		const width = 300;
+		const frames = new Uint8Array(width * 4);
+		for (let x = 0; x < width; x++) {
+			const offset = x * 4;
+			frames[offset] = x & 0xff;
+			frames[offset + 1] = (x >> 8) & 0xff;
+			frames[offset + 2] = (x * 17) & 0xff;
+			frames[offset + 3] = 255;
+		}
+
+		const gif = encodeRgbaGifFrames({
+			width,
+			height: 1,
+			frames,
+			compression: "fast",
+			quantization: "fast",
+			backend: "javascript",
+		});
+		const reader = new GifReader(gif);
+		const decoded = new Uint8Array(frames.length);
+		reader.decodeAndBlitFrameRGBA(0, decoded);
+
+		expect(reader.numFrames()).toBe(1);
+		expect(decoded.some((value) => value !== 0)).toBe(true);
+	});
+
+	test("quality quantization reduces error relative to fixed fast quantization", () => {
+		const width = 64;
+		const height = 64;
+		const frames = new Uint8Array(width * height * 4);
+		for (let y = 0; y < height; y++) {
+			for (let x = 0; x < width; x++) {
+				const offset = (y * width + x) * 4;
+				frames[offset] = Math.round((x * 255) / (width - 1));
+				frames[offset + 1] = Math.round((y * 255) / (height - 1));
+				frames[offset + 2] = (x * 3 + y * 5) & 0xff;
+				frames[offset + 3] = 255;
+			}
+		}
+		const encode = (quantization: "fast" | "quality") =>
+			encodeRgbaGifFrames({
+				width,
+				height,
+				frames,
+				compression: "fast",
+				quantization,
+				backend: "javascript",
+			});
+		const error = (gif: Uint8Array) => {
+			const reader = new GifReader(gif);
+			const decoded = new Uint8Array(frames.length);
+			reader.decodeAndBlitFrameRGBA(0, decoded);
+			let squaredError = 0;
+			for (let offset = 0; offset < frames.length; offset += 4) {
+				for (let channel = 0; channel < 3; channel++) {
+					const difference =
+						frames[offset + channel]! - decoded[offset + channel]!;
+					squaredError += difference * difference;
+				}
+			}
+			return squaredError;
+		};
+
+		expect(error(encode("quality"))).toBeLessThan(error(encode("fast")));
+	});
+
+	test("local exact palettes preserve independently indexed frames", () => {
+		const width = 16;
+		const height = 16;
+		const frameBytes = width * height * 4;
+		const frames = new Uint8Array(frameBytes * 2);
+		for (let value = 0; value < 256; value++) {
+			const first = value * 4;
+			frames[first] = value;
+			frames[first + 3] = 255;
+			const second = frameBytes + value * 4;
+			frames[second + 1] = value;
+			frames[second + 2] = 1;
+			frames[second + 3] = 255;
+		}
+
+		expect(() =>
+			encodeRgbaGifFrames({
+				width,
+				height,
+				frames,
+				compression: "fast",
+				quantization: "exact",
+				backend: "javascript",
+			}),
+		).toThrow(/at most 256/);
+
+		const gif = encodeRgbaGifFrames({
+			width,
+			height,
+			frames,
+			compression: "fast",
+			quantization: "exact",
+			paletteMode: "local",
+			backend: "javascript",
+		});
+		const reader = new GifReader(gif);
+		expect(reader.numFrames()).toBe(2);
+		for (let frame = 0; frame < 2; frame++) {
+			const decoded = new Uint8Array(frameBytes);
+			reader.decodeAndBlitFrameRGBA(frame, decoded);
+			expect(decoded).toStrictEqual(
+				frames.subarray(frame * frameBytes, (frame + 1) * frameBytes),
+			);
+			expect(reader.frameInfo(frame).disposal).toBe(2);
+		}
+	});
 });
