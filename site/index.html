@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta
+			name="description"
+			content="Race omggif against wtfgif's pixel-perfect Rust/WebAssembly GIF remuxer in your browser."
+		/>
+		<meta name="theme-color" content="#0a0a0a" />
+		<title>wtfgif Grand Prix — race omggif in your browser</title>
+		<link rel="icon" href="./gifs/partyparrot.gif" type="image/gif" />
+		<link rel="stylesheet" href="./styles.css" />
+	</head>
+	<body>
+		<div class="noise" aria-hidden="true"></div>
+
+		<header class="masthead">
+			<a class="wordmark" href="./" aria-label="wtfgif Grand Prix home">
+				<span>WTF</span><span>GIF</span>
+			</a>
+			<p class="eyebrow">Rust + WebAssembly / pixel-perfect</p>
+			<a
+				class="github-link"
+				href="https://github.com/mpopv/wtfgif"
+				target="_blank"
+				rel="noreferrer"
+			>
+				Source ↗
+			</a>
+		</header>
+
+		<main>
+			<section class="hero" aria-labelledby="page-title">
+				<div class="hero-copy">
+					<p class="kicker">The browser GIF grand prix</p>
+					<h1 id="page-title">SAME PIXELS.<br /><em>ABSURDLY</em> FASTER.</h1>
+					<p class="lede">
+						Pick a real GIF. Run both engines on this device. Then verify every
+						decoded pixel—not a screenshot, not a checksum shortcut.
+					</p>
+				</div>
+				<div class="record">
+					<span class="record-value">609.73×</span>
+					<span class="record-label">geometric mean<br />31 fresh processes</span>
+				</div>
+			</section>
+
+			<section class="raceway" aria-labelledby="race-title">
+				<div class="race-toolbar">
+					<div>
+						<p class="section-number">01 / live race</p>
+						<h2 id="race-title">Choose your contender</h2>
+					</div>
+					<div class="wasm-status" id="wasm-status" data-state="loading">
+						<span class="status-light" aria-hidden="true"></span>
+						<span id="wasm-status-text">Preparing Rust/Wasm…</span>
+					</div>
+				</div>
+
+				<div class="fixture-strip" id="fixture-strip" aria-label="Test GIFs"></div>
+
+				<div class="arena" id="arena">
+					<div class="preview-stage">
+						<div class="preview-meta">
+							<span id="fixture-name">Loading fixture…</span>
+							<span id="fixture-meta"></span>
+						</div>
+						<div class="preview-frame">
+							<img id="fixture-preview" alt="" />
+							<div class="countdown" id="countdown" aria-live="assertive"></div>
+						</div>
+						<p class="proof-badge">
+							<span>Recorded proof</span>
+							<strong id="proof-speed">—</strong>
+							<small>faster than omggif</small>
+						</p>
+					</div>
+
+					<div class="timing-board">
+						<div class="lane lane-omg" data-lane="omggif">
+							<div class="lane-heading">
+								<div>
+									<span class="lane-number">A</span>
+									<h3>omggif</h3>
+									<p>decode + fresh recompress</p>
+								</div>
+								<strong class="lane-time" id="omg-time">—</strong>
+							</div>
+							<div class="track" aria-hidden="true">
+								<div class="track-fill" id="omg-track"></div>
+							</div>
+							<p class="lane-verdict" id="omg-verdict">Waiting on the grid</p>
+						</div>
+
+						<div class="versus" aria-hidden="true">VS</div>
+
+						<div class="lane lane-wtf" data-lane="wtfgif">
+							<div class="lane-heading">
+								<div>
+									<span class="lane-number">B</span>
+									<h3>wtfgif</h3>
+									<p>validate + preserve compressed pixels</p>
+								</div>
+								<strong class="lane-time" id="wtf-time">—</strong>
+							</div>
+							<div class="track" aria-hidden="true">
+								<div class="track-fill" id="wtf-track"></div>
+							</div>
+							<p class="lane-verdict" id="wtf-verdict">Rust/Wasm warming up</p>
+						</div>
+
+						<div class="result-callout" id="result-callout" aria-live="polite">
+							<span class="result-prefix">Ready when you are</span>
+							<strong id="live-speed">RACE!</strong>
+							<span id="pixel-verdict">Outputs will be verified pixel by pixel.</span>
+						</div>
+
+						<button class="race-button" id="race-button" type="button" disabled>
+							<span>Run the race</span>
+							<span aria-hidden="true">→</span>
+						</button>
+						<p class="race-note">
+							Fetch and one-time Wasm setup are outside the clock. Engines are
+							timed sequentially to avoid CPU contention; order alternates each
+							race. Sub-frame operations repeat automatically until the browser
+							timer has enough resolution.
+						</p>
+					</div>
+				</div>
+			</section>
+
+			<section class="method" aria-labelledby="method-title">
+				<div class="method-heading">
+					<p class="section-number">02 / what is being proved</p>
+					<h2 id="method-title">No visual hand-waving.</h2>
+				</div>
+				<div class="method-grid">
+					<article>
+						<span>1</span>
+						<h3>Same input</h3>
+						<p>Both engines receive the exact same bytes from the selected GIF.</p>
+					</article>
+					<article>
+						<span>2</span>
+						<h3>Honest clock</h3>
+						<p>
+							omggif freshly recompresses. wtfgif validates and remuxes the
+							already-valid LZW payload.
+						</p>
+					</article>
+					<article>
+						<span>3</span>
+						<h3>Every pixel</h3>
+						<p>
+							After timing, Rust decodes source and outputs to full RGBA frame
+							streams. A single mismatched byte fails.
+						</p>
+					</article>
+				</div>
+				<p class="method-footnote">
+					This is a same-result race, not a same-algorithm race. For true-cold,
+					fresh-recompression, fixture data, and commands, read the
+					<a
+						href="https://github.com/mpopv/wtfgif/blob/master/BENCHMARKS.md"
+						target="_blank"
+						rel="noreferrer"
+						>benchmark methodology ↗</a
+					>.
+				</p>
+			</section>
+		</main>
+
+		<footer>
+			<p>wtfgif / make GIF work feel instantaneous</p>
+			<code>npm install wtfgif</code>
+		</footer>
+
+		<script type="module" src="./app.js"></script>
+	</body>
+</html>

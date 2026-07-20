@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version:
+          - 20.16.0
+          - 22
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+      - run: npm ci
+      - run: rustup toolchain install stable --profile minimal --no-self-update
+      - run: rustup default stable
+      - run: command -v wasm-pack >/dev/null || cargo install wasm-pack --locked
+      - run: npm run check
+      - run: npm run test:wasm-core

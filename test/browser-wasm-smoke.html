@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<link rel="icon" href="data:," />
+		<title>wtfgif browser Wasm smoke test</title>
+	</head>
+	<body>
+		<main>
+			<h1>wtfgif browser Wasm smoke test</h1>
+			<output id="result">running</output>
+			<output id="benchmark"></output>
+		</main>
+		<script type="module">
+			import {
+				compileGif,
+				decodeGifFramesRgba,
+				GifReader,
+				encodeIndexedGifFrames,
+				getWasmStatus,
+				initializeWasmGlobally,
+				installWasmCoreBackend,
+				remuxGifPixelPerfect,
+			} from "../dist/index.mjs";
+
+			const result = document.querySelector("#result");
+			const benchmark = document.querySelector("#benchmark");
+			try {
+				await initializeWasmGlobally();
+				const backend = installWasmCoreBackend();
+				const realGif = new Uint8Array(
+					await (
+						await fetch("./gifs/NODDERS-2x.gif")
+					).arrayBuffer(),
+				);
+				const started = performance.now();
+				const realRemuxed = remuxGifPixelPerfect(realGif);
+				const realRetimed = compileGif(realGif)
+					.withDelays(11)
+					.toUint8Array();
+				const elapsedMs = performance.now() - started;
+				const realBefore = decodeGifFramesRgba(realGif);
+				const realAfter = decodeGifFramesRgba(realRemuxed);
+				const realRetimedFrames = decodeGifFramesRgba(realRetimed);
+				const realPixelPerfect =
+					realBefore.width === realAfter.width &&
+					realBefore.height === realAfter.height &&
+					realBefore.frameCount === realAfter.frameCount &&
+					realBefore.pixels.every(
+						(value, index) => value === realAfter.pixels[index],
+					) &&
+					realBefore.pixels.every(
+						(value, index) => value === realRetimedFrames.pixels[index],
+					);
+				if (!realPixelPerfect) {
+					throw new Error("Real GIF remux changed decoded pixels");
+				}
+				const gif = encodeIndexedGifFrames({
+					width: 2,
+					height: 2,
+					frames: new Uint8Array([0, 1, 1, 0]),
+					palette: [0, 0xffffff],
+					backend: "rust",
+				});
+				const reencoded = remuxGifPixelPerfect(gif);
+				const reader = new GifReader(gif);
+				const reencodedReader = new GifReader(reencoded);
+				const sourcePixels = new Uint8Array(16);
+				const reencodedPixels = new Uint8Array(16);
+				reader.decodeAndBlitFrameRGBA(0, sourcePixels);
+				reencodedReader.decodeAndBlitFrameRGBA(0, reencodedPixels);
+				const passed =
+					backend.available &&
+					getWasmStatus().initialized &&
+					reader.numFrames() === 1 &&
+					reencodedReader.numFrames() === 1 &&
+					sourcePixels.every(
+						(value, index) => value === reencodedPixels[index],
+					) &&
+					window.wtfgif?.GifReader === GifReader &&
+					window.wtfgif?.compileGif === compileGif &&
+					window.wtfgif?.remuxGifPixelPerfect ===
+						remuxGifPixelPerfect;
+				reader.dispose();
+				reencodedReader.dispose();
+				result.textContent = passed ? "PASS" : "FAIL";
+				result.dataset.backend = backend.name;
+				result.dataset.realGifMilliseconds = elapsedMs.toFixed(3);
+				benchmark.textContent = `NODDERS pixel-perfect remux: ${elapsedMs.toFixed(3)} ms`;
+			} catch (error) {
+				result.textContent = "FAIL";
+				result.dataset.error =
+					error instanceof Error ? error.message : String(error);
+				console.error(error);
+			}
+		</script>
+	</body>
+</html>

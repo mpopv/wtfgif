@@ -1,0 +1,125 @@
+{
+  "name": "wtfgif",
+  "version": "1.2.0",
+  "main": "dist/index.cjs",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "engines": {
+    "node": "^20.16.0 || >=22.3.0"
+  },
+  "files": [
+    "dist",
+    "BENCHMARKS.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md"
+  ],
+  "sideEffects": [
+    "./dist/index.cjs",
+    "./dist/index.mjs"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs"
+    },
+    "./wasm-core": {
+      "types": "./dist/wasm-core/wtfgif_core.d.ts",
+      "browser": {
+        "types": "./dist/wasm-web/wtfgif_core.d.ts",
+        "import": "./dist/wasm-web/wtfgif_core.js",
+        "default": "./dist/wasm-web/wtfgif_core.js"
+      },
+      "node": {
+        "types": "./dist/wasm-core/wtfgif_core.d.ts",
+        "import": "./dist/wasm-core/wtfgif_core.js",
+        "require": "./dist/wasm-core/wtfgif_core.js"
+      },
+      "import": "./dist/wasm-web/wtfgif_core.js",
+      "require": "./dist/wasm-core/wtfgif_core.js",
+      "default": "./dist/wasm-web/wtfgif_core.js"
+    },
+    "./wasm-core/wasm": {
+      "browser": "./dist/wasm-web/wtfgif_core_bg.wasm",
+      "node": "./dist/wasm-core/wtfgif_core_bg.wasm",
+      "default": "./dist/wasm-web/wtfgif_core_bg.wasm"
+    },
+    "./wasm-web": {
+      "types": "./dist/wasm-web/wtfgif_core.d.ts",
+      "import": "./dist/wasm-web/wtfgif_core.js",
+      "default": "./dist/wasm-web/wtfgif_core.js"
+    },
+    "./wasm-web/wasm": "./dist/wasm-web/wtfgif_core_bg.wasm"
+  },
+  "scripts": {
+		"build": "tsup && tsc -p tsconfig.build.json --emitDeclarationOnly && node scripts/copy-wasm-core.mjs",
+		"build:site": "npm run build && node scripts/build-site.mjs",
+    "build:wasm": "npm run build:wasm:node && npm run build:wasm:web",
+    "build:wasm:node": "wasm-pack build crates/wtfgif-core --target nodejs --out-dir pkg --release",
+    "build:wasm:web": "wasm-pack build crates/wtfgif-core --target web --out-dir pkg-web --release",
+    "typecheck": "tsc -p tsconfig.build.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "test": "vitest run --coverage",
+    "test:wasm-core": "cargo test --manifest-path crates/wtfgif-core/Cargo.toml && npm run validate:wasm-core && vitest run test/wasm-core-backend.test.ts",
+    "test:package": "node scripts/validate-package.mjs",
+    "validate:edge": "node scripts/validate-edge-runtime.mjs",
+    "test:edge": "npm run build:wasm && npm run build && npm run validate:edge",
+    "audit": "npm audit --audit-level=moderate",
+    "lint": "biome lint .",
+    "validate:wasm-core": "npm run build:wasm && node scripts/validate-wasm-core.mjs",
+    "bench": "npm run build && npm run build:native:prototype && node scripts/bench-cold.mjs",
+    "bench:in-process": "npm run build && npm run build:native:prototype && node scripts/bench.mjs",
+    "bench:makeemoji-retime": "npm run build && node scripts/bench-makeemoji-retime.mjs",
+    "build:native:prototype": "node scripts/build-native-prototype.mjs",
+    "bench:native:prototype": "npm run build && npm run build:native:prototype && node scripts/bench-native-prototype.mjs",
+    "check": "npm run lint && npm run typecheck && npm run audit && npm run build:wasm && npm test && npm run build && npm run validate:edge && npm run test:package && npm pack --dry-run",
+    "prepublishOnly": "npm run check",
+    "prepack": "npm run build:wasm",
+    "prepare": "npm run build"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mpopv/wtfgif.git"
+  },
+  "keywords": [
+    "gif",
+    "wtfgif",
+    "omggif",
+    "encoder",
+    "decoder",
+    "performance",
+    "compression",
+    "performant",
+    "fast",
+    "optimized",
+    "drop-in",
+    "replacement",
+    "typescript",
+    "javascript",
+    "node",
+    "browser"
+  ],
+  "author": "Matt Popovich",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/mpopv/wtfgif/issues"
+  },
+  "homepage": "https://github.com/mpopv/wtfgif#readme",
+  "description": "A fast, TypeScript-ready drop-in replacement for omggif with portable JavaScript and WebAssembly backends.",
+  "devDependencies": {
+    "@biomejs/biome": "^2.2.0",
+    "@edge-runtime/vm": "^5.0.0",
+    "@types/node": "^24.2.1",
+    "@types/omggif": "^1.0.5",
+    "@vitest/coverage-v8": "^3.2.7",
+    "esbuild": "0.27.2",
+    "image-q": "2.1.2",
+    "omggif": "^1.0.10",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.2",
+    "vite": "^6.4.3",
+    "vitest": "^3.2.7"
+  }
+}
