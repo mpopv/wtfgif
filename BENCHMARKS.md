@@ -14,7 +14,7 @@ the run.
 Command:
 
 ```bash
-npm run bench
+BENCH_ITERATIONS=31 BENCH_REENCODE_ONLY=1 npm run bench
 ```
 
 31 fresh-process samples per implementation and fixture:
