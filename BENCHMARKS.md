@@ -1,62 +1,65 @@
 # Benchmarks
 
-wtfgif benchmarks encode and decode separately against the same public
-`GifWriter` and `GifReader` APIs from `omggif`.
+The headline benchmark measures the job an image-stitching app actually does:
+ordinary decoded images in, GIF bytes out.
 
-WebAssembly initialization and warmup happen before timed samples, matching an
-app that initializes wtfgif during page load. Reader construction and GIF
-parsing remain inside every timed decode sample.
+```bash
+npm run bench
+```
 
-## Encode
+## Default: arbitrary RGBA images
+
+The committed workload is eight real images from MakeEmoji. Each image was
+aspect-fitted into a transparent 128×128 canvas, then stored as one contiguous
+RGBA fixture at `test/rgba/makeemoji-128x128x8.rgba`.
+
+The clock starts with that RGBA buffer. Both implementations must create a
+palette, map every source pixel, and compress every frame. File loading, image
+decoding, resizing, WebAssembly initialization, warmup, validation, and quality
+measurement are outside timed samples.
+
+Results below are medians from 15 samples after four warmups on an Apple M3 Pro
+with Node.js 22.17.1.
+
+| Profile | Implementation | Median | Speedup | Bytes | PSNR |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Quality | image-q rgbquant + omggif balanced LZW | 93.062 ms | 1.00× | 39,350 | 31.84 dB |
+| Quality | wtfgif quality/global + balanced LZW | 2.985 ms | **31.17×** | 45,730 | 32.71 dB |
+| Turbo | RGB332 mapping + omggif balanced LZW | 5.299 ms | 1.00× | 30,098 | 19.55 dB |
+| Turbo | wtfgif fast/global + literal LZW | 0.282 ms | **18.82×** | 149,601 | 19.55 dB |
+
+Quality compares two practical adaptive global-palette pipelines. They do not
+choose identical pixels, so the table reports source-relative PSNR and output
+bytes alongside speed.
+
+Turbo gives both encoders the identical RGB332 palette and indices. Their
+decoded animations must match byte-for-byte. wtfgif's extra speed comes with a
+4.97× larger file because literal LZW deliberately minimizes encoder work.
+
+Run the optional larger synthetic stress workload with:
+
+```bash
+npm run bench:rgba:stress
+```
+
+## Specialized: already-indexed frames
 
 ```bash
 BENCH_ITERATIONS=300 npm run bench:encode
 ```
 
-The default encode benchmark is a normal 256-color animation: 12 full 128×128
-indexed frames, a global palette, typed output, and `compression: "fast"`.
+This is the direct `GifWriter` contract: 12 full 128×128 frames, a normal
+256-color global palette, typed output, and wtfgif `compression: "fast"`.
 
-| Implementation | Median |
-| --- | ---: |
-| omggif | 17.839 ms |
-| wtfgif | 0.166 ms |
-| **Speedup** | **107.49x** |
+| Implementation | Median | Bytes |
+| --- | ---: | ---: |
+| omggif | 16.827 ms | 163,797 |
+| wtfgif | 0.152 ms | 224,001 |
+| **Speedup** | **110.37×** | **1.37× baseline** |
 
-The benchmark decodes both outputs with omggif and requires exact RGBA equality
-before timing. The omggif and balanced wtfgif outputs are 163,797 bytes. Fast
-wtfgif output is 224,001 bytes, or 1.37x larger.
-
-Use `BENCH_COMPRESSION=balanced` to measure normal LZW compression, or
-`BENCH_COLOR_COUNTS=4,16,256` to run non-default palette sizes.
-
-## Arbitrary RGBA encode
-
-```bash
-BENCH_ITERATIONS=50 npm run bench:rgba
-```
-
-This benchmark starts with deterministic, full-color RGBA frames containing
-more than 256 colors. Its omggif baseline includes the same mandatory RGB332
-pixel mapping performed by wtfgif's `fast` quantizer. Wasm initialization,
-fixture construction, output validation, and quality measurement remain
-outside timed samples.
-
-| Shape | Operation | Median | Speedup | Bytes | PSNR |
-| --- | --- | ---: | ---: | ---: | ---: |
-| 12 × 128×128 | omggif + RGB332 mapping | 15.417 ms | 1.00x | 128,505 | 21.90 dB |
-| 12 × 128×128 | wtfgif fast/global | 0.501 ms | **30.80x** | 224,001 | 21.90 dB |
-| 12 × 128×128 | wtfgif quality/global | 9.408 ms | — | 224,001 | 26.06 dB |
-| 12 × 128×128 | wtfgif quality/local | 33.339 ms | — | 232,449 | 28.58 dB |
-| 10 × 512×512 | omggif + RGB332 mapping | 159.008 ms | 1.00x | 1,231,192 | 21.88 dB |
-| 10 × 512×512 | wtfgif fast/global | 6.554 ms | **24.26x** | 2,973,381 | 21.88 dB |
-| 10 × 512×512 | wtfgif quality/global | 21.241 ms | — | 2,973,381 | 26.02 dB |
-| 10 × 512×512 | wtfgif quality/local | 45.184 ms | — | 2,980,293 | 28.41 dB |
-
-`fast` and `quality` describe palette generation, independently of
-`compression`. Fast LZW produces larger output than balanced LZW. Local
-palettes improve this fixture's color accuracy but repeat quantization and
-palette tables for every frame. Quality rows deliberately omit a speedup
-against the RGB332 baseline because their pixels are not equivalent.
+Both outputs are decoded before timing and must produce exactly the same RGBA
+pixels. This is a real 100× result, but it applies only after palette creation
+and pixel indexing have already happened.
 
 ## Decode
 
@@ -65,18 +68,25 @@ BENCH_GIF_FILTER=GIGACHAD BENCH_ITERATIONS=100 npm run bench:decode
 BENCH_GIF_FILTER=tenor BENCH_ITERATIONS=50 npm run bench:decode
 ```
 
+Reader construction, GIF parsing, and decoding every composited RGBA frame are
+inside each sample. One caller-owned RGBA buffer is reused, matching ordinary
+omggif usage. Every final byte must match omggif before timing.
+
 | Fixture | Shape | omggif | wtfgif | Speedup |
 | --- | ---: | ---: | ---: | ---: |
-| GIGACHAD | 198 × 128×128 | 31.204 ms | 18.632 ms | **1.67x** |
-| tenor | 16 × 498×498 | 37.743 ms | 8.687 ms | **4.34x** |
+| GIGACHAD | 198 × 128×128 | 32.014 ms | 18.050 ms | **1.77×** |
+| tenor | 16 × 498×498 | 37.028 ms | 8.434 ms | **4.39×** |
 
-The decoder reuses one caller-owned RGBA buffer and invokes
-`decodeAndBlitFrameRGBA()` for every frame, exactly like normal omggif usage.
-Before timing, the complete final RGBA buffer must match omggif byte-for-byte.
+## Browser racer
 
-## Reproducing results
+The [live racer](https://mpopv.github.io/wtfgif/) uses the same eight-image
+workload by default and also accepts multiple PNG, JPEG, or WebP uploads. It
+keeps Encode, Decode, and the separate structural remux experiment in distinct
+modes so a remux shortcut can never be mistaken for arbitrary-image encoding.
 
-Times are medians from the reported sample count on the development Mac with
-Node.js 22. Microbenchmarks vary with hardware, power state, Node version, and
-background load. Speedup ratios are more useful than raw milliseconds, but
-neither should be treated as a universal result.
+Browser results vary with device, browser, thermal state, and background load.
+Speedup ratios are generally more useful than raw milliseconds, but neither is
+universal.
+
+The old process-startup diagnostic remains available as `npm run bench:cold`.
+It measures a different contract and is intentionally not the headline race.

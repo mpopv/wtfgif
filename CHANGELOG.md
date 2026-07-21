@@ -16,6 +16,11 @@ All notable changes to wtfgif are documented here.
 - Validate arbitrary-RGBA encoding in JavaScript, WebAssembly, Cloudflare
   Workers, and Vercel Edge, with end-to-end RGBA benchmarks and quality
   measurements.
+- Make the default benchmark and live browser racer measure real static images
+  through palette generation, pixel mapping, and GIF compression. The racer
+  also accepts multiple user images and reports speed, bytes, and quality.
+- Restore the canvas between independent transparent RGBA frames so global-
+  palette output remains compositionally correct across animation playback.
 
 ## 1.3.0 - 2026-07-19
 

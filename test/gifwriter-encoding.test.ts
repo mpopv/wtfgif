@@ -353,6 +353,26 @@ describe("GifWriter encoding utilities", () => {
 		prepared.dispose();
 	});
 
+	test("encodeRgbaGifFrames keeps transparent frames independent", () => {
+		const gif = encodeRgbaGifFrames({
+			width: 2,
+			height: 1,
+			frames: new Uint8Array([
+				255, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255,
+			]),
+			backend: "javascript",
+		});
+		const reader = new GifReader(gif);
+		const prepared = reader.preparePlayback();
+
+		expect(reader.frameInfo(0).disposal).toBe(2);
+		expect(reader.frameInfo(1).disposal).toBe(2);
+		expect(Array.from(prepared.getFrameBytes(1)!)).toStrictEqual([
+			0, 0, 0, 0, 0, 0, 255, 255,
+		]);
+		prepared.dispose();
+	});
+
 	test("encodeRgbaGifFrames lets callers choose the alpha threshold", () => {
 		const frame = new Uint8Array([255, 0, 0, 64, 0, 0, 255, 255]);
 		const defaultGif = encodeRgbaGifFrames({

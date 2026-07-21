@@ -1,373 +1,166 @@
-import { GifReader, GifWriter } from "./vendor/omggif.mjs";
 import {
-	decodeGifFramesRgba,
+	GifReader as OmgGifReader,
+	GifWriter,
+	ImageQ,
+} from "./vendor/omggif.mjs";
+import {
+	encodeRgbaGifFrames,
+	GifReader as WtfGifReader,
 	getFastBackendStatus,
 	initializeWasmGlobally,
 	remuxGifPixelPerfect,
 } from "./vendor/wtfgif.mjs";
 
-const fixtures = [
-	{
-		id: "18d",
-		name: "18d",
-		file: "18d.gif",
-		source: "18d30677-d255-4cc9-9933-c8d35306c1d5.gif",
-		proof: 738.64,
-	},
-	{
-		id: "clap",
-		name: "Clap",
-		file: "clap.gif",
-		source: "Clap-1x.gif",
-		proof: 309.84,
-	},
-	{
-		id: "homer",
-		name: "Homer",
-		file: "homer.gif",
-		source: "Disappear Homer Simpson GIF.gif",
-		proof: 983.53,
-	},
-	{
-		id: "chipmunk",
-		name: "Chipmunk",
-		file: "chipmunk.gif",
-		source: "Dramatic Chipmunk GIF.gif",
-		proof: 768.77,
-	},
-	{
-		id: "gigachad",
-		name: "GIGACHAD",
-		file: "gigachad.gif",
-		source: "GIGACHAD-4x.gif",
-		proof: 607.23,
-	},
-	{
-		id: "nodders",
-		name: "NODDERS",
-		file: "nodders.gif",
-		source: "NODDERS-2x.gif",
-		proof: 512.23,
-	},
-	{
-		id: "proud",
-		name: "Proud",
-		file: "proud.gif",
-		source: "Proud Of You Yes GIF.gif",
-		proof: 681.13,
-	},
-	{
-		id: "catjam",
-		name: "catJAM",
-		file: "catjam.gif",
-		source: "catJAM-3x.gif",
-		proof: 519.37,
-	},
-	{
-		id: "excuseme",
-		name: "excuse me",
-		file: "excuseme.gif",
-		source: "excuseme.gif",
-		proof: 480.06,
-	},
-	{
-		id: "party-blob",
-		name: "party blob",
-		file: "party-blob.gif",
-		source: "party_blob.gif",
-		proof: 955.88,
-	},
-	{
-		id: "partyparrot",
-		name: "partyparrot",
-		file: "partyparrot.gif",
-		source: "partyparrot.gif",
-		proof: 244.09,
-	},
-	{
-		id: "tenor",
-		name: "tenor",
-		file: "tenor.gif",
-		source: "tenor.gif",
-		proof: 1238.09,
-	},
+const BUILT_IN_IMAGES = [
+	["Pogu", "./assets/01-pogu.png"],
+	["Blobcat", "./assets/02-blobcat.png"],
+	["Portrait", "./assets/03-diabeetus.jpg"],
+	["Reaction", "./assets/04-bryce.png"],
+	["Potion", "./assets/05-potion.png"],
+	["Side eye", "./assets/06-sideeye.png"],
+	["Illustration", "./assets/07-bug.png"],
+	["Seahorse", "./assets/08-seahorse.png"],
 ];
 
+const GIF_FIXTURES = [
+	["Homer", "homer.gif"],
+	["GIGACHAD", "gigachad.gif"],
+	["partyparrot", "partyparrot.gif"],
+	["tenor", "tenor.gif"],
+];
+
+const ALPHA_THRESHOLD = Math.trunc(255 * 0.7);
+const ENCODE_SAMPLES = 7;
+const DECODE_SAMPLES = 9;
+
 const elements = {
-	arena: document.querySelector("#arena"),
+	contractDescription: document.querySelector("#contract-description"),
+	contractKicker: document.querySelector("#contract-kicker"),
 	countdown: document.querySelector("#countdown"),
-	fixtureMeta: document.querySelector("#fixture-meta"),
-	fixtureName: document.querySelector("#fixture-name"),
-	fixturePreview: document.querySelector("#fixture-preview"),
+	encodeControls: document.querySelector("#encode-controls"),
 	fixtureStrip: document.querySelector("#fixture-strip"),
+	frameStrip: document.querySelector("#frame-strip"),
+	gifControls: document.querySelector("#gif-controls"),
+	heroLiveStat: document.querySelector("#hero-live-stat"),
+	imageUpload: document.querySelector("#image-upload"),
 	liveSpeed: document.querySelector("#live-speed"),
+	metricBytes: document.querySelector("#metric-bytes"),
+	metricQuality: document.querySelector("#metric-quality"),
+	metricValidation: document.querySelector("#metric-validation"),
+	modeButtons: [...document.querySelectorAll("[data-mode]")],
+	omgDetail: document.querySelector("#omg-detail"),
+	omgLabel: document.querySelector("#omg-label"),
 	omgTime: document.querySelector("#omg-time"),
 	omgTrack: document.querySelector("#omg-track"),
 	omgVerdict: document.querySelector("#omg-verdict"),
+	outputPreview: document.querySelector("#output-preview"),
+	outputPreviewWrap: document.querySelector("#output-preview-wrap"),
 	pixelVerdict: document.querySelector("#pixel-verdict"),
-	proofSpeed: document.querySelector("#proof-speed"),
+	profileButtons: [...document.querySelectorAll("[data-profile]")],
+	profileNote: document.querySelector("#profile-note"),
 	raceButton: document.querySelector("#race-button"),
+	raceNote: document.querySelector("#race-note"),
+	restoreSample: document.querySelector("#restore-sample"),
 	resultCallout: document.querySelector("#result-callout"),
+	sizeSelect: document.querySelector("#size-select"),
+	sourcePreview: document.querySelector("#source-preview"),
 	wasmStatus: document.querySelector("#wasm-status"),
 	wasmStatusText: document.querySelector("#wasm-status-text"),
+	workloadMeta: document.querySelector("#workload-meta"),
+	workloadName: document.querySelector("#workload-name"),
+	wtfDetail: document.querySelector("#wtf-detail"),
+	wtfLabel: document.querySelector("#wtf-label"),
 	wtfTime: document.querySelector("#wtf-time"),
 	wtfTrack: document.querySelector("#wtf-track"),
 	wtfVerdict: document.querySelector("#wtf-verdict"),
 };
 
-let selectedFixture = fixtures[2];
-let selectedBytes = null;
-let raceCount = 0;
-let busy = false;
+const state = {
+	busy: false,
+	encodeFixture: null,
+	gifBytes: null,
+	images: [],
+	mode: "encode",
+	outputUrl: null,
+	profile: "quality",
+	raceCount: 0,
+	selectedGif: GIF_FIXTURES[0],
+	usingBuiltIn: true,
+	wasmReady: false,
+};
 
 const nextFrame = () =>
-	new Promise((resolve) => requestAnimationFrame(() => resolve()));
-
+	new Promise((resolve) => requestAnimationFrame(resolve));
 const sleep = (duration) =>
-	new Promise((resolve) => window.setTimeout(resolve, duration));
+	new Promise((resolve) => setTimeout(resolve, duration));
+
+function median(values) {
+	const sorted = [...values].sort((left, right) => left - right);
+	return sorted[Math.floor(sorted.length / 2)];
+}
 
 function formatBytes(bytes) {
-	if (bytes < 1024) {
-		return `${bytes} B`;
-	}
-	if (bytes < 1024 * 1024) {
-		return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
-	}
+	if (bytes < 1024) return `${bytes} B`;
+	if (bytes < 1024 * 1024)
+		return `${(bytes / 1024).toFixed(bytes < 10_240 ? 1 : 0)} KB`;
 	return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function formatTime(milliseconds) {
-	if (milliseconds < 0.01) {
-		return "<0.01 ms";
-	}
-	if (milliseconds < 1) {
-		return `${milliseconds.toFixed(3)} ms`;
-	}
-	if (milliseconds < 100) {
-		return `${milliseconds.toFixed(2)} ms`;
-	}
+	if (milliseconds < 0.01) return "<0.01 ms";
+	if (milliseconds < 1) return `${milliseconds.toFixed(3)} ms`;
+	if (milliseconds < 100) return `${milliseconds.toFixed(2)} ms`;
 	return `${milliseconds.toFixed(1)} ms`;
 }
 
-function renderFixtureButtons() {
-	const fragment = document.createDocumentFragment();
-	for (const fixture of fixtures) {
-		const button = document.createElement("button");
-		button.className = "fixture-button";
-		button.type = "button";
-		button.dataset.fixture = fixture.id;
-		button.setAttribute(
-			"aria-pressed",
-			String(fixture.id === selectedFixture.id),
-		);
-		button.innerHTML = `
-			<img src="./gifs/${fixture.file}" alt="" loading="lazy" />
-			<span>${fixture.name}</span>
-		`;
-		button.addEventListener("click", () => selectFixture(fixture));
-		fragment.append(button);
+function measure(operation, sampleCount) {
+	let output;
+	for (let warmup = 0; warmup < 2; warmup += 1) output = operation();
+
+	const probeStart = performance.now();
+	output = operation();
+	const probeDuration = Math.max(performance.now() - probeStart, 0.01);
+	const batchSize = Math.max(1, Math.min(64, Math.ceil(14 / probeDuration)));
+	const samples = [];
+	for (let sample = 0; sample < sampleCount; sample += 1) {
+		const started = performance.now();
+		for (let batch = 0; batch < batchSize; batch += 1) output = operation();
+		samples.push((performance.now() - started) / batchSize);
 	}
-	elements.fixtureStrip.append(fragment);
+	return { duration: median(samples), output, batchSize };
 }
 
-async function selectFixture(fixture) {
-	if (busy || fixture.id === selectedFixture.id) {
-		return;
-	}
-	selectedFixture = fixture;
-	selectedBytes = null;
-	for (const button of elements.fixtureStrip.querySelectorAll("button")) {
-		button.setAttribute(
-			"aria-pressed",
-			String(button.dataset.fixture === fixture.id),
-		);
-	}
-	await loadFixture();
-}
-
-function resetRaceBoard() {
+function resetResult() {
 	elements.omgTime.textContent = "—";
 	elements.wtfTime.textContent = "—";
 	elements.omgTrack.style.width = "0%";
 	elements.wtfTrack.style.width = "0%";
 	elements.omgVerdict.textContent = "Waiting on the grid";
-	elements.wtfVerdict.textContent = "Rust/Wasm ready";
+	elements.wtfVerdict.textContent = state.wasmReady
+		? "Rust/Wasm ready"
+		: "Rust/Wasm preparing";
 	elements.liveSpeed.textContent = "RACE!";
-	elements.pixelVerdict.textContent =
-		"Outputs will be verified pixel by pixel.";
+	elements.pixelVerdict.textContent = "Run the race to validate both outputs.";
+	elements.metricBytes.textContent = "—";
+	elements.metricQuality.textContent = "—";
+	elements.metricValidation.textContent = "—";
+	elements.resultCallout.removeAttribute("data-result");
+	elements.outputPreviewWrap.hidden = true;
 }
 
-async function loadFixture() {
-	elements.raceButton.disabled = true;
-	resetRaceBoard();
-	elements.fixtureName.textContent = selectedFixture.name;
-	elements.fixtureMeta.textContent = "Loading…";
-	elements.fixturePreview.alt = `${selectedFixture.name} animated GIF fixture`;
-	elements.fixturePreview.src = `./gifs/${selectedFixture.file}`;
-	elements.proofSpeed.textContent = `${selectedFixture.proof.toLocaleString(
-		undefined,
-		{ minimumFractionDigits: 2, maximumFractionDigits: 2 },
-	)}×`;
-
-	try {
-		const response = await fetch(`./gifs/${selectedFixture.file}`);
-		if (!response.ok) {
-			throw new Error(`GIF fetch failed (${response.status})`);
-		}
-		selectedBytes = new Uint8Array(await response.arrayBuffer());
-		const reader = new GifReader(selectedBytes);
-		elements.fixtureMeta.textContent = `${reader.width}×${reader.height} / ${reader.numFrames()} frames / ${formatBytes(selectedBytes.length)}`;
-		elements.raceButton.disabled = false;
-	} catch (error) {
-		elements.fixtureMeta.textContent = "Fixture failed to load";
-		elements.pixelVerdict.textContent =
-			error instanceof Error ? error.message : String(error);
-	}
+function setOutputPreview(bytes) {
+	if (state.outputUrl) URL.revokeObjectURL(state.outputUrl);
+	state.outputUrl = URL.createObjectURL(
+		new Blob([bytes], { type: "image/gif" }),
+	);
+	elements.outputPreview.src = state.outputUrl;
+	elements.outputPreviewWrap.hidden = false;
 }
 
-function reencodeOmggif(data) {
-	const reader = new GifReader(data);
-	let totalFramePixels = 0;
-	for (let frame = 0; frame < reader.numFrames(); frame += 1) {
-		const info = reader.frameInfo(frame);
-		totalFramePixels += info.width * info.height;
-	}
-
-	const output = new Uint8Array(totalFramePixels * 2 + data.length + 4096);
-	const writer = new GifWriter(output, reader.width, reader.height, {
-		loop: reader.loopCount(),
-	});
-	const rgba = new Uint8Array(reader.width * reader.height * 4);
-	const paletteCache = new Map();
-
-	for (let frame = 0; frame < reader.numFrames(); frame += 1) {
-		const info = reader.frameInfo(frame);
-		const paletteKey = `${info.palette_offset}:${info.palette_size}`;
-		let paletteInfo = paletteCache.get(paletteKey);
-		if (!paletteInfo) {
-			const palette = new Array(info.palette_size);
-			const colorToIndex = new Map();
-			for (let index = 0; index < info.palette_size; index += 1) {
-				const offset = info.palette_offset + index * 3;
-				const color =
-					(data[offset] << 16) |
-					(data[offset + 1] << 8) |
-					data[offset + 2];
-				palette[index] = color;
-				if (!colorToIndex.has(color)) {
-					colorToIndex.set(color, index);
-				}
-			}
-			paletteInfo = { palette, colorToIndex };
-			paletteCache.set(paletteKey, paletteInfo);
-		}
-
-		rgba.fill(0);
-		reader.decodeAndBlitFrameRGBA(frame, rgba);
-		const indices = new Uint8Array(info.width * info.height);
-		let outputIndex = 0;
-		for (let y = 0; y < info.height; y += 1) {
-			let offset = ((info.y + y) * reader.width + info.x) * 4;
-			for (let x = 0; x < info.width; x += 1) {
-				if (rgba[offset + 3] === 0 && info.transparent_index !== null) {
-					indices[outputIndex] = info.transparent_index;
-				} else {
-					const color =
-						(rgba[offset] << 16) |
-						(rgba[offset + 1] << 8) |
-						rgba[offset + 2];
-					const index = paletteInfo.colorToIndex.get(color);
-					if (index === undefined) {
-						throw new Error("Decoded color is absent from the frame palette");
-					}
-					indices[outputIndex] = index;
-				}
-				outputIndex += 1;
-				offset += 4;
-			}
-		}
-
-		writer.addFrame(info.x, info.y, info.width, info.height, indices, {
-			palette: paletteInfo.palette,
-			delay: info.delay,
-			disposal: info.disposal,
-			transparent: info.transparent_index,
-		});
-	}
-
-	return output.slice(0, writer.end());
-}
-
-function measure(operation) {
-	const targetDuration = 35;
-	const maximumIterations = 4096;
-	let iterations = 1;
-	let totalDuration = 0;
-	let output;
-
-	for (;;) {
-		const started = performance.now();
-		for (let iteration = 0; iteration < iterations; iteration += 1) {
-			output = operation();
-		}
-		totalDuration = performance.now() - started;
-		if (
-			totalDuration >= targetDuration ||
-			iterations >= maximumIterations
-		) {
-			break;
-		}
-		const projected = Math.ceil(
-			(iterations * targetDuration) / Math.max(totalDuration, 0.1),
-		);
-		iterations = Math.min(
-			maximumIterations,
-			Math.max(iterations * 2, projected),
-		);
-	}
-
-	return {
-		duration: totalDuration / iterations,
-		iterations,
-		output,
-	};
-}
-
-function decodedCopy(data) {
-	const decoded = decodeGifFramesRgba(data);
-	return {
-		width: decoded.width,
-		height: decoded.height,
-		frameCount: decoded.frameCount,
-		pixels: new Uint8Array(decoded.pixels),
-	};
-}
-
-function assertPixelsEqual(expected, actual, label) {
-	if (
-		expected.width !== actual.width ||
-		expected.height !== actual.height ||
-		expected.frameCount !== actual.frameCount ||
-		expected.pixels.length !== actual.pixels.length
-	) {
-		throw new Error(`${label} changed the animation structure`);
-	}
-	for (let index = 0; index < expected.pixels.length; index += 1) {
-		if (expected.pixels[index] !== actual.pixels[index]) {
-			throw new Error(`${label} changed RGBA byte ${index.toLocaleString()}`);
-		}
-	}
-}
-
-async function verifyOutputs(source, omggifOutput, wtfgifOutput) {
-	const original = decodedCopy(source);
-	await nextFrame();
-	const omggif = decodedCopy(omggifOutput);
-	assertPixelsEqual(original, omggif, "omggif");
-	await nextFrame();
-	const wtfgif = decodedCopy(wtfgifOutput);
-	assertPixelsEqual(original, wtfgif, "wtfgif");
-	return original.pixels.length;
+function animateTracks(omggifDuration, wtfgifDuration) {
+	const longest = Math.max(omggifDuration, wtfgifDuration);
+	elements.omgTrack.style.width = `${Math.max(3, (omggifDuration / longest) * 100)}%`;
+	elements.wtfTrack.style.width = `${Math.max(3, (wtfgifDuration / longest) * 100)}%`;
 }
 
 async function showCountdown() {
@@ -376,112 +169,745 @@ async function showCountdown() {
 		elements.countdown.classList.remove("is-visible");
 		void elements.countdown.offsetWidth;
 		elements.countdown.classList.add("is-visible");
-		await sleep(value === "GO" ? 360 : 470);
+		await sleep(value === "GO" ? 230 : 280);
 	}
 	elements.countdown.classList.remove("is-visible");
 	elements.countdown.textContent = "";
 }
 
-function animateTracks(omggifDuration, wtfgifDuration) {
-	const longest = Math.max(omggifDuration, wtfgifDuration);
-	const omgWidth = Math.max(4, (omggifDuration / longest) * 100);
-	const wtfWidth = Math.max(4, (wtfgifDuration / longest) * 100);
-	elements.omgTrack.style.width = `${omgWidth}%`;
-	elements.wtfTrack.style.width = `${wtfWidth}%`;
+function loadImage(url, name, owned = false) {
+	return new Promise((resolve, reject) => {
+		const image = new Image();
+		image.decoding = "async";
+		image.onload = () => resolve({ image, name, owned, url });
+		image.onerror = () => reject(new Error(`Could not decode ${name}`));
+		image.src = url;
+	});
+}
+
+function releaseOwnedImages() {
+	for (const item of state.images) {
+		if (item.owned) URL.revokeObjectURL(item.url);
+	}
+}
+
+function renderFrameStrip() {
+	elements.frameStrip.replaceChildren();
+	if (state.mode !== "encode") return;
+	state.images.forEach((item, index) => {
+		const frame = document.createElement("div");
+		frame.className = "frame-thumb";
+		frame.style.animationDelay = `${index * 28}ms`;
+		const image = document.createElement("img");
+		image.src = item.url;
+		image.alt = "";
+		const number = document.createElement("span");
+		number.textContent = String(index + 1).padStart(2, "0");
+		frame.append(image, number);
+		elements.frameStrip.append(frame);
+	});
+}
+
+function normalizeImages() {
+	const size = Number(elements.sizeSelect.value);
+	const canvas = document.createElement("canvas");
+	canvas.width = size;
+	canvas.height = size;
+	const context = canvas.getContext("2d", { willReadFrequently: true });
+	context.imageSmoothingEnabled = true;
+	context.imageSmoothingQuality = "high";
+	const frameBytes = size * size * 4;
+	const rgba = new Uint8Array(frameBytes * state.images.length);
+
+	state.images.forEach(({ image }, frame) => {
+		context.clearRect(0, 0, size, size);
+		const scale = Math.min(
+			size / image.naturalWidth,
+			size / image.naturalHeight,
+		);
+		const width = image.naturalWidth * scale;
+		const height = image.naturalHeight * scale;
+		context.drawImage(
+			image,
+			(size - width) / 2,
+			(size - height) / 2,
+			width,
+			height,
+		);
+		rgba.set(context.getImageData(0, 0, size, size).data, frame * frameBytes);
+	});
+
+	state.encodeFixture = {
+		frameCount: state.images.length,
+		height: size,
+		rgba,
+		width: size,
+	};
+	elements.sourcePreview.src = state.images[0]?.url ?? "";
+	elements.workloadName.textContent = state.usingBuiltIn
+		? "Eight real MakeEmoji images"
+		: `${state.images.length} uploaded image${state.images.length === 1 ? "" : "s"}`;
+	elements.workloadMeta.textContent = `${state.images.length} frame${state.images.length === 1 ? "" : "s"} / ${size}×${size} RGBA / ${formatBytes(rgba.length)}`;
+	renderFrameStrip();
+	resetResult();
+	updateRaceAvailability();
+}
+
+async function restoreBuiltInImages() {
+	setBusy(true);
+	try {
+		releaseOwnedImages();
+		state.images = await Promise.all(
+			BUILT_IN_IMAGES.map(([name, url]) => loadImage(url, name)),
+		);
+		state.usingBuiltIn = true;
+		normalizeImages();
+	} finally {
+		setBusy(false);
+	}
+}
+
+async function loadUploadedImages(files) {
+	const selected = [...files].slice(0, 24);
+	if (selected.length === 0) return;
+	setBusy(true);
+	try {
+		const nextImages = await Promise.all(
+			selected.map((file) => {
+				const url = URL.createObjectURL(file);
+				return loadImage(url, file.name, true).catch((error) => {
+					URL.revokeObjectURL(url);
+					throw error;
+				});
+			}),
+		);
+		releaseOwnedImages();
+		state.images = nextImages;
+		state.usingBuiltIn = false;
+		normalizeImages();
+	} catch (error) {
+		showFailure(error);
+	} finally {
+		setBusy(false);
+		elements.imageUpload.value = "";
+	}
+}
+
+function fixed332Palette() {
+	return Array.from({ length: 256 }, (_, index) => {
+		const red = Math.floor((((index >> 5) & 7) * 255 + 3) / 7);
+		const green = Math.floor((((index >> 2) & 7) * 255 + 3) / 7);
+		const blue = Math.floor(((index & 3) * 255 + 1) / 3);
+		return (red << 16) | (green << 8) | blue;
+	});
+}
+
+function quantizeRgb332(rgba) {
+	let hasTransparency = false;
+	for (let offset = 3; offset < rgba.length; offset += 4) {
+		if (rgba[offset] < ALPHA_THRESHOLD) {
+			hasTransparency = true;
+			break;
+		}
+	}
+	const indexed = new Uint8Array(rgba.length / 4);
+	for (
+		let source = 0, target = 0;
+		source < rgba.length;
+		source += 4, target += 1
+	) {
+		if (hasTransparency && rgba[source + 3] < ALPHA_THRESHOLD) {
+			indexed[target] = 255;
+		} else {
+			const index =
+				(rgba[source] & 0xe0) |
+				((rgba[source + 1] >> 3) & 0x1c) |
+				(rgba[source + 2] >> 6);
+			indexed[target] = hasTransparency ? Math.min(index, 254) : index;
+		}
+	}
+	const palette = fixed332Palette();
+	if (hasTransparency) palette[255] = 0;
+	return {
+		indexed,
+		palette,
+		transparentIndex: hasTransparency ? 255 : undefined,
+	};
+}
+
+function pointColor(point) {
+	return (point.r << 16) | (point.g << 8) | point.b;
+}
+
+function padPalette(palette) {
+	const padded = [...palette];
+	if (padded.length < 2) padded.push(0);
+	while (padded.length < 256 && (padded.length & (padded.length - 1)) !== 0)
+		padded.push(0);
+	return padded;
+}
+
+function quantizeImageQGlobal(rgba) {
+	const pixelCount = rgba.length / 4;
+	const transparent = new Uint8Array(pixelCount);
+	let opaqueCount = 0;
+	for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+		if (rgba[pixel * 4 + 3] < ALPHA_THRESHOLD) transparent[pixel] = 1;
+		else opaqueCount += 1;
+	}
+
+	if (opaqueCount === 0) {
+		return {
+			indexed: new Uint8Array(pixelCount).fill(1),
+			palette: [0, 0],
+			transparentIndex: 1,
+		};
+	}
+
+	const opaqueRgba = new Uint8Array(opaqueCount * 4);
+	let opaqueOffset = 0;
+	for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+		if (transparent[pixel]) continue;
+		const source = pixel * 4;
+		const target = opaqueOffset * 4;
+		opaqueRgba[target] = rgba[source];
+		opaqueRgba[target + 1] = rgba[source + 1];
+		opaqueRgba[target + 2] = rgba[source + 2];
+		opaqueRgba[target + 3] = 255;
+		opaqueOffset += 1;
+	}
+
+	const points = ImageQ.utils.PointContainer.fromUint8Array(
+		opaqueRgba,
+		opaqueCount,
+		1,
+	);
+	const paletteObject = ImageQ.buildPaletteSync([points], {
+		paletteQuantization: "rgbquant",
+		colors: opaqueCount === pixelCount ? 256 : 255,
+	});
+	const quantized = ImageQ.applyPaletteSync(points, paletteObject, {
+		imageQuantization: "nearest",
+	});
+	const palette = paletteObject
+		.getPointContainer()
+		.getPointArray()
+		.map(pointColor);
+	const colorToIndex = new Map(palette.map((color, index) => [color, index]));
+	const quantizedColors = quantized.getPointArray();
+	const transparentIndex =
+		opaqueCount === pixelCount ? undefined : palette.length;
+	if (transparentIndex !== undefined) palette.push(0);
+
+	const indexed = new Uint8Array(pixelCount);
+	opaqueOffset = 0;
+	for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+		if (transparent[pixel]) indexed[pixel] = transparentIndex;
+		else {
+			indexed[pixel] =
+				colorToIndex.get(pointColor(quantizedColors[opaqueOffset])) ?? 0;
+			opaqueOffset += 1;
+		}
+	}
+	return { indexed, palette: padPalette(palette), transparentIndex };
+}
+
+function encodeOmggifIndexed(fixture, quantized) {
+	const output = new Uint8Array(
+		quantized.indexed.length * 2 + fixture.frameCount * 1024 + 8192,
+	);
+	const writer = new GifWriter(output, fixture.width, fixture.height, {
+		loop: 0,
+		palette: quantized.palette,
+	});
+	const framePixels = fixture.width * fixture.height;
+	for (let frame = 0; frame < fixture.frameCount; frame += 1) {
+		writer.addFrame(
+			0,
+			0,
+			fixture.width,
+			fixture.height,
+			quantized.indexed.subarray(
+				frame * framePixels,
+				(frame + 1) * framePixels,
+			),
+			{
+				delay: 10,
+				disposal: 2,
+				transparent: quantized.transparentIndex,
+			},
+		);
+	}
+	return output.slice(0, writer.end());
+}
+
+function encodeOmggifQuality(fixture) {
+	return encodeOmggifIndexed(fixture, quantizeImageQGlobal(fixture.rgba));
+}
+
+function encodeOmggifTurbo(fixture) {
+	return encodeOmggifIndexed(fixture, quantizeRgb332(fixture.rgba));
+}
+
+function encodeWtfgif(fixture) {
+	const turbo = state.profile === "turbo";
+	return encodeRgbaGifFrames({
+		alphaThreshold: ALPHA_THRESHOLD,
+		backend: "wasm",
+		compression: turbo ? "fast" : "balanced",
+		delay: 10,
+		frameCount: fixture.frameCount,
+		frames: fixture.rgba,
+		height: fixture.height,
+		loop: 0,
+		paletteMode: "global",
+		quantization: turbo ? "fast" : "quality",
+		width: fixture.width,
+	});
+}
+
+function clearFrameRect(canvas, canvasWidth, info) {
+	for (let row = info.y; row < info.y + info.height; row += 1) {
+		canvas.fill(
+			0,
+			(row * canvasWidth + info.x) * 4,
+			(row * canvasWidth + info.x + info.width) * 4,
+		);
+	}
+}
+
+function decodeAll(Reader, data) {
+	const reader = new Reader(data);
+	const frameBytes = reader.width * reader.height * 4;
+	const canvas = new Uint8Array(frameBytes);
+	const restore = new Uint8Array(frameBytes);
+	const frames = new Uint8Array(frameBytes * reader.numFrames());
+	for (let frame = 0; frame < reader.numFrames(); frame += 1) {
+		const info = reader.frameInfo(frame);
+		if (info.disposal === 3) restore.set(canvas);
+		reader.decodeAndBlitFrameRGBA(frame, canvas);
+		frames.set(canvas, frame * frameBytes);
+		if (info.disposal === 2) clearFrameRect(canvas, reader.width, info);
+		else if (info.disposal === 3) canvas.set(restore);
+	}
+	reader.dispose?.();
+	return {
+		frameCount: frames.length / frameBytes,
+		frames,
+		height: reader.height,
+		width: reader.width,
+	};
+}
+
+function assertSameAnimation(left, right, label) {
+	if (
+		left.width !== right.width ||
+		left.height !== right.height ||
+		left.frameCount !== right.frameCount ||
+		left.frames.length !== right.frames.length
+	) {
+		throw new Error(`${label}: animation shape differs`);
+	}
+	for (let index = 0; index < left.frames.length; index += 1) {
+		if (left.frames[index] !== right.frames[index]) {
+			throw new Error(
+				`${label}: RGBA differs at byte ${index.toLocaleString()}`,
+			);
+		}
+	}
+}
+
+function psnrAgainstSource(source, decoded) {
+	let squaredError = 0;
+	let samples = 0;
+	for (let offset = 0; offset < source.length; offset += 4) {
+		if (source[offset + 3] < ALPHA_THRESHOLD) continue;
+		for (let channel = 0; channel < 3; channel += 1) {
+			const difference = source[offset + channel] - decoded[offset + channel];
+			squaredError += difference * difference;
+			samples += 1;
+		}
+	}
+	if (squaredError === 0 || samples === 0) return Number.POSITIVE_INFINITY;
+	return 20 * Math.log10(255 / Math.sqrt(squaredError / samples));
+}
+
+function reencodeOmggif(data) {
+	const reader = new OmgGifReader(data);
+	let totalFramePixels = 0;
+	for (let frame = 0; frame < reader.numFrames(); frame += 1) {
+		const info = reader.frameInfo(frame);
+		totalFramePixels += info.width * info.height;
+	}
+	const output = new Uint8Array(totalFramePixels * 2 + data.length + 4096);
+	const writer = new GifWriter(output, reader.width, reader.height, {
+		loop: reader.loopCount(),
+	});
+	const rgba = new Uint8Array(reader.width * reader.height * 4);
+	const paletteCache = new Map();
+	for (let frame = 0; frame < reader.numFrames(); frame += 1) {
+		const info = reader.frameInfo(frame);
+		const key = `${info.palette_offset}:${info.palette_size}`;
+		let paletteInfo = paletteCache.get(key);
+		if (!paletteInfo) {
+			const palette = new Array(info.palette_size);
+			const colorToIndex = new Map();
+			for (let index = 0; index < info.palette_size; index += 1) {
+				const offset = info.palette_offset + index * 3;
+				const color =
+					(data[offset] << 16) | (data[offset + 1] << 8) | data[offset + 2];
+				palette[index] = color;
+				if (!colorToIndex.has(color)) colorToIndex.set(color, index);
+			}
+			paletteInfo = { colorToIndex, palette };
+			paletteCache.set(key, paletteInfo);
+		}
+		rgba.fill(0);
+		reader.decodeAndBlitFrameRGBA(frame, rgba);
+		const indices = new Uint8Array(info.width * info.height);
+		let target = 0;
+		for (let y = 0; y < info.height; y += 1) {
+			let offset = ((info.y + y) * reader.width + info.x) * 4;
+			for (let x = 0; x < info.width; x += 1) {
+				if (rgba[offset + 3] === 0 && info.transparent_index !== null)
+					indices[target] = info.transparent_index;
+				else {
+					const color =
+						(rgba[offset] << 16) | (rgba[offset + 1] << 8) | rgba[offset + 2];
+					const index = paletteInfo.colorToIndex.get(color);
+					if (index === undefined)
+						throw new Error("Decoded color is absent from the frame palette");
+					indices[target] = index;
+				}
+				target += 1;
+				offset += 4;
+			}
+		}
+		writer.addFrame(info.x, info.y, info.width, info.height, indices, {
+			delay: info.delay,
+			disposal: info.disposal,
+			palette: paletteInfo.palette,
+			transparent: info.transparent_index,
+		});
+	}
+	return output.slice(0, writer.end());
+}
+
+function displayResult(omg, wtf, summary) {
+	const ratio = omg.duration / Math.max(wtf.duration, 0.0001);
+	elements.omgTime.textContent = formatTime(omg.duration);
+	elements.wtfTime.textContent = formatTime(wtf.duration);
+	elements.liveSpeed.textContent = `${ratio.toLocaleString(undefined, {
+		maximumFractionDigits: ratio >= 100 ? 0 : 1,
+	})}×`;
+	elements.heroLiveStat.textContent = `${ratio.toFixed(ratio >= 100 ? 0 : 1)}× LIVE`;
+	elements.pixelVerdict.textContent = summary;
+	elements.resultCallout.dataset.result = "pass";
+	animateTracks(omg.duration, wtf.duration);
+}
+
+async function runEncodeRace() {
+	const fixture = state.encodeFixture;
+	if (!fixture) throw new Error("No RGBA frames are ready");
+	const omgOperation =
+		state.profile === "quality"
+			? () => encodeOmggifQuality(fixture)
+			: () => encodeOmggifTurbo(fixture);
+	const wtfOperation = () => encodeWtfgif(fixture);
+	let omg;
+	let wtf;
+	if (state.raceCount % 2 === 0) {
+		omg = measure(omgOperation, ENCODE_SAMPLES);
+		await nextFrame();
+		wtf = measure(wtfOperation, ENCODE_SAMPLES);
+	} else {
+		wtf = measure(wtfOperation, ENCODE_SAMPLES);
+		await nextFrame();
+		omg = measure(omgOperation, ENCODE_SAMPLES);
+	}
+	const omgDecoded = decodeAll(OmgGifReader, omg.output);
+	const wtfDecoded = decodeAll(OmgGifReader, wtf.output);
+	if (
+		omgDecoded.width !== fixture.width ||
+		wtfDecoded.width !== fixture.width ||
+		omgDecoded.frameCount !== fixture.frameCount ||
+		wtfDecoded.frameCount !== fixture.frameCount
+	) {
+		throw new Error("An encoder returned the wrong animation dimensions");
+	}
+	const omgPsnr = psnrAgainstSource(fixture.rgba, omgDecoded.frames);
+	const wtfPsnr = psnrAgainstSource(fixture.rgba, wtfDecoded.frames);
+	if (state.profile === "turbo")
+		assertSameAnimation(omgDecoded, wtfDecoded, "Turbo parity");
+
+	elements.omgVerdict.textContent = `${formatBytes(omg.output.length)} / ${omg.batchSize}× timer batch`;
+	elements.wtfVerdict.textContent = `${formatBytes(wtf.output.length)} / ${wtf.batchSize}× timer batch`;
+	elements.metricBytes.textContent = `${formatBytes(wtf.output.length)} (${(wtf.output.length / omg.output.length).toFixed(2)}× baseline)`;
+	elements.metricQuality.textContent = `${Number.isFinite(wtfPsnr) ? wtfPsnr.toFixed(1) : "∞"} dB (${(wtfPsnr - omgPsnr).toFixed(1)} vs baseline)`;
+	elements.metricValidation.textContent =
+		state.profile === "turbo" ? "Exact decoded parity" : "Both outputs decoded";
+	displayResult(
+		omg,
+		wtf,
+		state.profile === "turbo"
+			? `PASS / ${wtfDecoded.frames.length.toLocaleString()} decoded RGBA bytes identical between engines.`
+			: `PASS / both GIFs decoded; quality measured against the source RGBA frames.`,
+	);
+	setOutputPreview(wtf.output);
+}
+
+async function runDecodeRace() {
+	const data = state.gifBytes;
+	if (!data) throw new Error("No GIF fixture is ready");
+	const omgOperation = () => decodeAll(OmgGifReader, data);
+	const wtfOperation = () => decodeAll(WtfGifReader, data);
+	let omg;
+	let wtf;
+	if (state.raceCount % 2 === 0) {
+		omg = measure(omgOperation, DECODE_SAMPLES);
+		await nextFrame();
+		wtf = measure(wtfOperation, DECODE_SAMPLES);
+	} else {
+		wtf = measure(wtfOperation, DECODE_SAMPLES);
+		await nextFrame();
+		omg = measure(omgOperation, DECODE_SAMPLES);
+	}
+	assertSameAnimation(omg.output, wtf.output, "Decode parity");
+	elements.omgVerdict.textContent = `${omg.output.frameCount} frames / ${omg.batchSize}× timer batch`;
+	elements.wtfVerdict.textContent = `${wtf.output.frameCount} frames / ${wtf.batchSize}× timer batch`;
+	elements.metricBytes.textContent = formatBytes(data.length);
+	elements.metricQuality.textContent = "Lossless decode";
+	elements.metricValidation.textContent = `${wtf.output.frames.length.toLocaleString()} RGBA bytes`;
+	displayResult(omg, wtf, "PASS / every composited RGBA byte matches omggif.");
+}
+
+async function runRemuxRace() {
+	const data = state.gifBytes;
+	if (!data) throw new Error("No GIF fixture is ready");
+	const source = decodeAll(OmgGifReader, data);
+	const omgOperation = () => reencodeOmggif(data);
+	const wtfOperation = () => remuxGifPixelPerfect(data);
+	let omg;
+	let wtf;
+	if (state.raceCount % 2 === 0) {
+		omg = measure(omgOperation, ENCODE_SAMPLES);
+		await nextFrame();
+		wtf = measure(wtfOperation, ENCODE_SAMPLES);
+	} else {
+		wtf = measure(wtfOperation, ENCODE_SAMPLES);
+		await nextFrame();
+		omg = measure(omgOperation, ENCODE_SAMPLES);
+	}
+	assertSameAnimation(
+		source,
+		decodeAll(OmgGifReader, omg.output),
+		"omggif reencode",
+	);
+	assertSameAnimation(
+		source,
+		decodeAll(OmgGifReader, wtf.output),
+		"wtfgif remux",
+	);
+	elements.omgVerdict.textContent = `${formatBytes(omg.output.length)} / fresh LZW`;
+	elements.wtfVerdict.textContent = `${formatBytes(wtf.output.length)} / original LZW preserved`;
+	elements.metricBytes.textContent = formatBytes(wtf.output.length);
+	elements.metricQuality.textContent = "Exact source pixels";
+	elements.metricValidation.textContent = `${source.frames.length.toLocaleString()} RGBA bytes`;
+	displayResult(
+		omg,
+		wtf,
+		"PASS / structural remux only; this is not an arbitrary-image encode result.",
+	);
+	setOutputPreview(wtf.output);
+}
+
+function showFailure(error) {
+	elements.liveSpeed.textContent = "FAIL";
+	elements.pixelVerdict.textContent =
+		error instanceof Error ? error.message : String(error);
+	elements.resultCallout.dataset.result = "fail";
+}
+
+function setBusy(busy) {
+	state.busy = busy;
+	updateRaceAvailability();
+}
+
+function updateRaceAvailability() {
+	const inputReady =
+		state.mode === "encode"
+			? Boolean(state.encodeFixture)
+			: Boolean(state.gifBytes);
+	elements.raceButton.disabled = state.busy || !state.wasmReady || !inputReady;
 }
 
 async function runRace() {
-	if (busy || !selectedBytes) {
-		return;
-	}
-	busy = true;
-	elements.raceButton.disabled = true;
-	elements.fixtureStrip.setAttribute("aria-disabled", "true");
-	resetRaceBoard();
-	elements.omgVerdict.textContent = "Engine staged";
-	elements.wtfVerdict.textContent = "Engine staged";
-
+	if (state.busy || !state.wasmReady) return;
+	setBusy(true);
+	resetResult();
 	try {
 		await showCountdown();
 		await nextFrame();
-
-		let omggifResult;
-		let wtfgifResult;
-		if (raceCount % 2 === 0) {
-			omggifResult = measure(() => reencodeOmggif(selectedBytes));
-			await nextFrame();
-			wtfgifResult = measure(() => remuxGifPixelPerfect(selectedBytes));
-		} else {
-			wtfgifResult = measure(() => remuxGifPixelPerfect(selectedBytes));
-			await nextFrame();
-			omggifResult = measure(() => reencodeOmggif(selectedBytes));
-		}
-		raceCount += 1;
-
-		const ratio = omggifResult.duration / Math.max(wtfgifResult.duration, 0.001);
-		elements.omgTime.textContent = formatTime(omggifResult.duration);
-		elements.wtfTime.textContent = formatTime(wtfgifResult.duration);
-		elements.omgVerdict.textContent = `${formatBytes(
-			omggifResult.output.length,
-		)} output / ${omggifResult.iterations.toLocaleString()} timed ${
-			omggifResult.iterations === 1 ? "run" : "runs"
-		}`;
-		elements.wtfVerdict.textContent = `${formatBytes(
-			wtfgifResult.output.length,
-		)} output / ${wtfgifResult.iterations.toLocaleString()} timed ${
-			wtfgifResult.iterations === 1 ? "run" : "runs"
-		}`;
-		elements.liveSpeed.textContent = `${ratio.toLocaleString(undefined, {
-			maximumFractionDigits: ratio >= 100 ? 0 : 1,
-		})}×`;
-		elements.pixelVerdict.textContent = "Decoding every output pixel…";
-		animateTracks(omggifResult.duration, wtfgifResult.duration);
-		await nextFrame();
-
-		const comparedBytes = await verifyOutputs(
-			selectedBytes,
-			omggifResult.output,
-			wtfgifResult.output,
-		);
-		elements.pixelVerdict.textContent = `PASS / ${comparedBytes.toLocaleString()} RGBA bytes identical`;
-		elements.resultCallout.dataset.result = "pass";
+		if (state.mode === "encode") await runEncodeRace();
+		else if (state.mode === "decode") await runDecodeRace();
+		else await runRemuxRace();
+		state.raceCount += 1;
 	} catch (error) {
-		elements.liveSpeed.textContent = "FAIL";
-		elements.pixelVerdict.textContent =
-			error instanceof Error ? error.message : String(error);
-		elements.resultCallout.dataset.result = "fail";
+		showFailure(error);
 	} finally {
-		busy = false;
-		elements.raceButton.disabled = false;
-		elements.fixtureStrip.removeAttribute("aria-disabled");
+		setBusy(false);
 	}
+}
+
+function renderFixtureButtons() {
+	elements.fixtureStrip.replaceChildren();
+	for (const fixture of GIF_FIXTURES) {
+		const button = document.createElement("button");
+		button.className = "fixture-button";
+		button.type = "button";
+		button.textContent = fixture[0];
+		button.dataset.file = fixture[1];
+		button.setAttribute("aria-pressed", String(fixture === state.selectedGif));
+		button.addEventListener("click", () => loadGifFixture(fixture));
+		elements.fixtureStrip.append(button);
+	}
+}
+
+async function loadGifFixture(fixture) {
+	if (state.busy) return;
+	state.selectedGif = fixture;
+	for (const button of elements.fixtureStrip.querySelectorAll("button")) {
+		button.setAttribute(
+			"aria-pressed",
+			String(button.dataset.file === fixture[1]),
+		);
+	}
+	setBusy(true);
+	try {
+		const response = await fetch(`./gifs/${fixture[1]}`);
+		if (!response.ok) throw new Error(`GIF fetch failed (${response.status})`);
+		state.gifBytes = new Uint8Array(await response.arrayBuffer());
+		if (state.mode !== "encode") showGifWorkload();
+	} catch (error) {
+		showFailure(error);
+	} finally {
+		setBusy(false);
+	}
+}
+
+function showGifWorkload() {
+	const reader = new OmgGifReader(state.gifBytes);
+	elements.sourcePreview.src = `./gifs/${state.selectedGif[1]}`;
+	elements.workloadName.textContent = state.selectedGif[0];
+	elements.workloadMeta.textContent = `${reader.numFrames()} frames / ${reader.width}×${reader.height} / ${formatBytes(state.gifBytes.length)}`;
+	renderFrameStrip();
+	resetResult();
+}
+
+function setProfile(profile) {
+	state.profile = profile;
+	for (const button of elements.profileButtons) {
+		button.setAttribute(
+			"aria-pressed",
+			String(button.dataset.profile === profile),
+		);
+	}
+	if (profile === "quality") {
+		elements.profileNote.textContent = "Adaptive global palette + balanced LZW";
+		elements.omgDetail.textContent = "global rgbquant / balanced LZW";
+		elements.wtfDetail.textContent = "quality/global / balanced LZW";
+		elements.contractDescription.textContent =
+			"Both clocks include palette creation, pixel mapping, and balanced LZW.";
+	} else {
+		elements.profileNote.textContent = "Fixed RGB332 palette + fastest LZW";
+		elements.omgDetail.textContent = "RGB332 mapping / balanced LZW";
+		elements.wtfDetail.textContent = "fast/global / literal LZW";
+		elements.contractDescription.textContent =
+			"Both engines receive identical RGB332 pixels; output bytes reveal the compression tradeoff.";
+	}
+	resetResult();
+}
+
+function setMode(mode) {
+	state.mode = mode;
+	for (const button of elements.modeButtons) {
+		button.setAttribute("aria-selected", String(button.dataset.mode === mode));
+	}
+	elements.encodeControls.classList.toggle("is-hidden", mode !== "encode");
+	elements.gifControls.classList.toggle("is-hidden", mode === "encode");
+	if (mode === "encode") {
+		elements.contractKicker.textContent = "RGBA → palette → GIF";
+		elements.omgLabel.textContent = "image-q + omggif";
+		elements.wtfLabel.textContent = "wtfgif";
+		elements.raceButton.firstElementChild.textContent = "Run encoder race";
+		elements.raceNote.textContent =
+			"Image decoding, resizing, and one-time Wasm initialization happen before the clock. Results are medians; engine order alternates between races.";
+		normalizeImages();
+		setProfile(state.profile);
+	} else if (mode === "decode") {
+		elements.contractKicker.textContent = "GIF → every composited RGBA frame";
+		elements.contractDescription.textContent =
+			"Both public GifReader APIs parse and decode the same real GIF into caller-owned pixel buffers.";
+		elements.omgLabel.textContent = "omggif GifReader";
+		elements.omgDetail.textContent = "JavaScript decode";
+		elements.wtfLabel.textContent = "wtfgif GifReader";
+		elements.wtfDetail.textContent = "Rust/Wasm decode";
+		elements.raceButton.firstElementChild.textContent = "Run decode race";
+		elements.raceNote.textContent =
+			"One-time Wasm initialization happens before the clock. Every composited RGBA byte must match omggif.";
+		showGifWorkload();
+	} else {
+		elements.contractKicker.textContent = "Existing GIF → pixel-identical GIF";
+		elements.contractDescription.textContent =
+			"omggif decodes and recompresses; wtfgif validates and preserves existing LZW. This structural shortcut is intentionally not an encoder claim.";
+		elements.omgLabel.textContent = "omggif reencode";
+		elements.omgDetail.textContent = "decode + fresh LZW";
+		elements.wtfLabel.textContent = "wtfgif remux";
+		elements.wtfDetail.textContent = "validate + preserve LZW";
+		elements.raceButton.firstElementChild.textContent = "Run remux race";
+		elements.raceNote.textContent =
+			"This mode measures a lossless structural operation on an existing GIF. It does not represent arbitrary-image encoding.";
+		showGifWorkload();
+	}
+	updateRaceAvailability();
 }
 
 async function initialize() {
 	renderFixtureButtons();
-	await loadFixture();
+	for (const button of elements.modeButtons)
+		button.addEventListener("click", () => setMode(button.dataset.mode));
+	for (const button of elements.profileButtons)
+		button.addEventListener("click", () => setProfile(button.dataset.profile));
+	elements.imageUpload.addEventListener("change", () =>
+		loadUploadedImages(elements.imageUpload.files),
+	);
+	elements.restoreSample.addEventListener("click", restoreBuiltInImages);
+	elements.sizeSelect.addEventListener("change", normalizeImages);
+	elements.raceButton.addEventListener("click", runRace);
+
+	const inputs = (async () => {
+		await restoreBuiltInImages();
+		await loadGifFixture(state.selectedGif);
+	})();
 	const started = performance.now();
 	try {
 		await initializeWasmGlobally();
 		const duration = performance.now() - started;
 		const backend = getFastBackendStatus();
-		if (!backend.available || backend.name !== "wtfgif-rust-wasm") {
+		if (!backend.available || backend.name !== "wtfgif-rust-wasm")
 			throw new Error("Rust/Wasm backend did not activate");
-		}
+		state.wasmReady = true;
 		elements.wasmStatus.dataset.state = "ready";
-		elements.wasmStatusText.textContent = `Rust/Wasm ready / ${duration.toFixed(
-			1,
-		)} ms page-load setup`;
-		elements.wtfVerdict.textContent = "Rust/Wasm ready";
-		elements.raceButton.disabled = false;
+		elements.wasmStatusText.textContent = `Rust/Wasm ready / ${duration.toFixed(1)} ms setup`;
+		elements.heroLiveStat.textContent = `${duration.toFixed(1)} MS INIT`;
 	} catch (error) {
 		elements.wasmStatus.dataset.state = "error";
 		elements.wasmStatusText.textContent = "Rust/Wasm unavailable";
-		elements.pixelVerdict.textContent =
-			error instanceof Error ? error.message : String(error);
-		elements.raceButton.disabled = true;
+		showFailure(error);
 	}
+	await inputs;
+	setMode("encode");
+	updateRaceAvailability();
 }
 
-elements.raceButton.addEventListener("click", runRace);
 initialize();

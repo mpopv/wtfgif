@@ -767,6 +767,7 @@ function encodeIndexedGifFramesJavascript(
 		const frame = getIndexedFrame(frames, frameSize, frameIndex);
 		const frameOptions = {
 			delay: frameDelay(delays, frameIndex),
+			disposal: delta || transparentIndex === null ? 0 : 2,
 			...(transparentIndex === null ? {} : { transparent: transparentIndex }),
 		};
 		if (delta) {

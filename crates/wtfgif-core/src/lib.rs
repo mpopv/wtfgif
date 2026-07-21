@@ -2582,12 +2582,13 @@ fn decode_segmented_frames_into_native(
         let handles: Vec<_> = (0..thread_count)
             .map(|_| {
                 let next_segment = &next_segment;
+                let palettes = &palettes;
                 scope.spawn(move || {
                     decode_segments_worker(
                         data,
                         metadata,
                         segments,
-                        &palettes,
+                        palettes,
                         palettes_share_table,
                         canvas_pixels,
                         output_address,
@@ -3489,15 +3490,18 @@ fn decode_and_compose_pipeline_into_native(
             .collect();
         let compose_handles: Vec<_> = (0..compose_thread_count)
             .map(|thread_index| {
-                scope.spawn(|| {
+                let decoded = &decoded;
+                let palettes = &palettes;
+                let next_frame = &next_frame;
+                scope.spawn(move || {
                     compose_pipeline_stripe(
                         data,
                         metadata,
-                        &decoded,
+                        decoded,
                         decoded_indices_address,
                         flat_decoded_indices,
                         parallel_direct_mapping,
-                        &palettes,
+                        palettes,
                         palettes_share_table,
                         canvas_width,
                         canvas_height,
@@ -3505,7 +3509,7 @@ fn decode_and_compose_pipeline_into_native(
                         rows_per_thread,
                         thread_index,
                         output_address,
-                        &next_frame,
+                        next_frame,
                         assist_decode,
                         direct_overlay_output,
                     )
@@ -4658,6 +4662,7 @@ fn encode_rgba_delta_gif_to_palette_inner(
                     rect.height as u16,
                     delay,
                     None,
+                    0,
                 );
                 map_rgba_rect_to_palette(frame, canvas_width, rect, &mapper, &mut mapped);
                 if literal {
@@ -4678,7 +4683,7 @@ fn encode_rgba_delta_gif_to_palette_inner(
                     )?;
                 }
             } else {
-                write_indexed_gif_frame_header(&mut output, 0, 0, 1, 1, delay, None);
+                write_indexed_gif_frame_header(&mut output, 0, 0, 1, 1, delay, None, 0);
                 let noop = [mapper.index_pixel(frame[0], frame[1], frame[2])];
                 if literal {
                     encode_indexed_literal_lzw_to(
@@ -4699,7 +4704,7 @@ fn encode_rgba_delta_gif_to_palette_inner(
                 }
             }
         } else {
-            write_indexed_gif_frame_header(&mut output, 0, 0, width, height, delay, None);
+            write_indexed_gif_frame_header(&mut output, 0, 0, width, height, delay, None, 0);
             map_rgba_frame_to_palette(frame, &mapper, &mut mapped);
             if literal {
                 encode_indexed_literal_lzw_to(
@@ -5398,6 +5403,7 @@ fn encode_indexed_gif_inner(
             height,
             delays.get(frame_index),
             transparent_index,
+            if transparent_index.is_some() { 2 } else { 0 },
         );
         encode_indexed_lzw_to_with_tables(
             &mut output,
@@ -5481,6 +5487,7 @@ fn encode_indexed_literal_gif_inner(
             height,
             delays.get(frame_index),
             transparent_index,
+            if transparent_index.is_some() { 2 } else { 0 },
         );
         encode_indexed_literal_lzw_to(
             &mut output,
@@ -5568,6 +5575,7 @@ fn encode_indexed_literal_gif_parallel_native(
                             height,
                             delays.get(frame_index),
                             transparent_index,
+                            if transparent_index.is_some() { 2 } else { 0 },
                         );
                         let mut compressed_scratch = Vec::new();
                         encode_indexed_literal_lzw_to(
@@ -6643,6 +6651,7 @@ fn encode_indexed_gif_inner_with_rects(
                     rect.height as u16,
                     delay,
                     transparent_index,
+                    0,
                 );
                 if literal {
                     rect_scratch.clear();
@@ -6675,7 +6684,16 @@ fn encode_indexed_gif_inner_with_rects(
                     )?;
                 }
             } else {
-                write_indexed_gif_frame_header(&mut output, 0, 0, 1, 1, delay, transparent_index);
+                write_indexed_gif_frame_header(
+                    &mut output,
+                    0,
+                    0,
+                    1,
+                    1,
+                    delay,
+                    transparent_index,
+                    0,
+                );
                 if literal {
                     encode_indexed_literal_lzw_to(
                         &mut output,
@@ -6703,6 +6721,7 @@ fn encode_indexed_gif_inner_with_rects(
                 height,
                 delay,
                 transparent_index,
+                0,
             );
             if literal {
                 encode_indexed_literal_lzw_to(
@@ -6772,17 +6791,19 @@ fn write_indexed_gif_frame_header(
     height: u16,
     delay: u16,
     transparent_index: Option<u8>,
+    disposal: u8,
 ) {
-    if delay != 0 || transparent_index.is_some() {
+    if delay != 0 || transparent_index.is_some() || disposal != 0 {
         output.extend_from_slice(&[
             0x21,
             0xf9,
             0x04,
-            if transparent_index.is_some() {
-                0x01
-            } else {
-                0x00
-            },
+            (disposal << 2)
+                | if transparent_index.is_some() {
+                    0x01
+                } else {
+                    0x00
+                },
         ]);
         push_u16_le(output, delay);
         output.push(transparent_index.unwrap_or(0));
@@ -8992,6 +9013,31 @@ mod tests {
             decode_frame_indices_inner(&encoded, &metadata.frames[1]).unwrap(),
             vec![1, 2, 0, 0]
         );
+    }
+
+    #[test]
+    fn transparent_rgba_frames_restore_the_canvas() {
+        let encoded = encode_rgba_gif_advanced_inner(
+            &[
+                255, 0, 0, 255, 0, 0, 0, 0, // red, transparent
+                0, 0, 0, 0, 0, 0, 255, 255, // transparent, blue
+            ],
+            2,
+            1,
+            2,
+            &[],
+            DelaySource::Constant(6),
+            0,
+            false,
+            TRANSPARENT_ALPHA_THRESHOLD,
+            true,
+            RgbaQuantization::Fast,
+            RgbaPaletteMode::Global,
+        )
+        .unwrap();
+        let metadata = parse_metadata(&encoded).unwrap();
+
+        assert!(metadata.frames.iter().all(|frame| frame.disposal == 2));
     }
 
     #[test]
