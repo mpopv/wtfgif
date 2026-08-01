@@ -41,7 +41,6 @@ const elements = {
 	fixtureStrip: document.querySelector("#fixture-strip"),
 	frameStrip: document.querySelector("#frame-strip"),
 	gifControls: document.querySelector("#gif-controls"),
-	heroLiveStat: document.querySelector("#hero-live-stat"),
 	imageUpload: document.querySelector("#image-upload"),
 	liveSpeed: document.querySelector("#live-speed"),
 	metricBytes: document.querySelector("#metric-bytes"),
@@ -816,8 +815,8 @@ async function initialize() {
 		state.wasmReady = true;
 		elements.wasmStatus.dataset.state = "ready";
 		elements.wasmStatusText.textContent = `Rust/Wasm ready / ${duration.toFixed(1)} ms setup`;
-		elements.heroLiveStat.textContent = `${duration.toFixed(1)} MS INIT`;
 	} catch (error) {
+		state.wasmReady = false;
 		elements.wasmStatus.dataset.state = "error";
 		elements.wasmStatusText.textContent = "Rust/Wasm unavailable";
 		showFailure(error);

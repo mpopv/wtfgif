@@ -5,101 +5,95 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta
 			name="description"
-			content="A small browser demo for measuring wtfgif against omggif on GIF encoding and decoding."
+			content="wtfgif is a fast GIF encoder and decoder for the browser and Node."
 		/>
-		<title>wtfgif — GIF speed demo</title>
+		<title>wtfgif</title>
 		<link rel="icon" href="./assets/01-pogu.png" type="image/png" />
 		<link rel="stylesheet" href="./styles.css" />
 	</head>
 	<body>
 		<header class="site-header">
 			<a class="wordmark" href="./" aria-label="wtfgif home">wtfgif</a>
-			<p>Fast GIF encode + decode</p>
-			<a class="github-link" href="https://github.com/mpopv/wtfgif" target="_blank" rel="noreferrer">GitHub ↗</a>
+			<nav aria-label="External links">
+				<a href="https://www.npmjs.com/package/wtfgif" target="_blank" rel="noreferrer">npm</a>
+				<a href="https://github.com/mpopv/wtfgif" target="_blank" rel="noreferrer">GitHub</a>
+			</nav>
 		</header>
 
 		<main>
 			<section class="intro" aria-labelledby="intro-title">
-				<div class="intro-copy">
-					<p class="eyebrow">Browser benchmark</p>
-					<h1 id="intro-title">GIFs, without<br /><em>the wait.</em></h1>
-					<p class="lede">
-						Upload a few images, run the same work through omggif and wtfgif,
-						and compare the result on this device.
-					</p>
-					<div class="setup-line">
-						<strong id="hero-live-stat">WASM INIT</strong>
-						<span>setup happens once, before the clock</span>
-					</div>
-				</div>
-				<div class="intro-images" aria-label="Example input images">
+				<h1 id="intro-title">GIF encode + decode.</h1>
+				<p class="lede">
+					wtfgif is a small, fast GIF encoder and decoder for the browser and Node.
+					The demo below runs the same work through <a href="https://www.npmjs.com/package/omggif" target="_blank" rel="noreferrer">omggif</a>
+					and wtfgif on this device.
+				</p>
+				<p class="intro-links">
+					<a href="#try">Run the demo</a>
+					<span aria-hidden="true">·</span>
+					<a href="https://github.com/mpopv/wtfgif/blob/main/README.md" target="_blank" rel="noreferrer">Read the README</a>
+					<span aria-hidden="true">·</span>
+					<code>npm install wtfgif</code>
+				</p>
+				<div class="intro-images" aria-label="Example GIF input images">
 					<img src="./assets/01-pogu.png" alt="Pogu" />
 					<img src="./assets/04-bryce.png" alt="Portrait" />
 					<img src="./assets/07-bug.png" alt="Illustration" />
 				</div>
 			</section>
 
-			<section class="demo" id="lab" aria-labelledby="demo-title">
+			<section class="demo" id="try" aria-labelledby="demo-title">
 				<div class="section-heading">
-					<div>
-						<p class="eyebrow">01 / choose a test</p>
-						<h2 id="demo-title">Run the demo</h2>
-					</div>
-					<div class="wasm-status" id="wasm-status" data-state="loading">
+					<h2 id="demo-title">Try it</h2>
+					<p class="wasm-status" id="wasm-status" data-state="loading">
 						<span class="status-light" aria-hidden="true"></span>
 						<span id="wasm-status-text">Preparing Rust/Wasm…</span>
-					</div>
+					</p>
 				</div>
 
-				<div class="mode-switch" role="tablist" aria-label="Benchmark contract">
-					<button type="button" role="tab" data-mode="encode" aria-selected="true">Encode images</button>
-					<button type="button" role="tab" data-mode="decode" aria-selected="false">Decode GIF</button>
-					<button type="button" role="tab" data-mode="remux" aria-selected="false">Lossless remux</button>
+				<div class="mode-switch" role="tablist" aria-label="Benchmark mode">
+					<button type="button" role="tab" data-mode="encode" aria-selected="true">Encode</button>
+					<button type="button" role="tab" data-mode="decode" aria-selected="false">Decode</button>
 				</div>
 
 				<div class="controls" id="encode-controls">
-					<div class="control">
-						<span class="control-label">Input frames</span>
-						<div class="control-actions">
-							<label class="button button-secondary" for="image-upload">
-								Choose images
-								<input id="image-upload" type="file" accept="image/png,image/jpeg,image/webp" multiple />
-							</label>
-							<button class="button button-quiet" id="restore-sample" type="button">Use sample</button>
-						</div>
-					</div>
-					<label class="control" for="size-select">
-						<span class="control-label">Output size</span>
+					<label class="file-button" for="image-upload">
+						Choose images
+						<input id="image-upload" type="file" accept="image/png,image/jpeg,image/webp" multiple />
+					</label>
+					<button class="plain-button" id="restore-sample" type="button">Use sample</button>
+					<label class="size-control" for="size-select">
+						Size
 						<select id="size-select">
 							<option value="128" selected>128 × 128</option>
 							<option value="256">256 × 256</option>
 							<option value="512">512 × 512</option>
 						</select>
 					</label>
-					<p class="control-note">Adaptive palette + literal LZW. Same pixels, measured twice.</p>
+					<p class="control-note">Palette creation and pixel mapping are included in the encode clock.</p>
 				</div>
 
 				<div class="gif-controls is-hidden" id="gif-controls">
-					<span class="control-label">GIF fixture</span>
+					<span>GIF</span>
 					<div class="fixture-strip" id="fixture-strip"></div>
 				</div>
 
-				<div class="frame-strip" id="frame-strip" aria-label="Input frame preview"></div>
+				<details class="frames">
+					<summary>Show input frames</summary>
+					<div class="frame-strip" id="frame-strip" aria-label="Input frame preview"></div>
+				</details>
 
-				<div class="workload-line">
-					<div>
-						<span class="muted-label">Workload</span>
-						<strong id="workload-name">Eight real MakeEmoji images</strong>
-					</div>
+				<p class="workload-line">
+					<strong id="workload-name">Eight real MakeEmoji images</strong>
 					<span id="workload-meta">Preparing RGBA…</span>
-				</div>
+				</p>
 
 				<div class="race">
 					<div class="preview-column">
-						<div class="preview-frame">
+						<figure class="preview-frame">
 							<img id="source-preview" alt="Selected benchmark input" />
 							<div class="countdown" id="countdown" aria-live="assertive"></div>
-						</div>
+						</figure>
 						<div class="output-preview" id="output-preview-wrap" hidden>
 							<span>wtfgif output</span>
 							<img id="output-preview" alt="Animated GIF encoded by wtfgif" />
@@ -107,63 +101,65 @@
 					</div>
 
 					<div class="results">
-						<div class="contract-copy">
-							<span id="contract-kicker">RGBA → palette → GIF</span>
-							<p id="contract-description">Both clocks include palette creation and pixel mapping; wtfgif uses literal LZW by default.</p>
-						</div>
+						<p class="contract-copy">
+							<strong id="contract-kicker">RGBA → palette → GIF</strong>
+							<span id="contract-description">Both clocks include palette creation and pixel mapping; wtfgif uses literal LZW by default.</span>
+						</p>
 
-						<div class="lane">
-							<div class="lane-heading">
-								<div>
-									<h3 id="omg-label">image-q + omggif</h3>
-									<p id="omg-detail">global rgbquant / balanced LZW</p>
+						<div class="timing-list" aria-label="Benchmark timings">
+							<div class="lane">
+								<div class="lane-heading">
+									<div>
+										<strong id="omg-label">image-q + omggif</strong>
+										<small id="omg-detail">global rgbquant / balanced LZW</small>
+									</div>
+									<strong class="lane-time" id="omg-time">—</strong>
 								</div>
-								<strong class="lane-time" id="omg-time">—</strong>
+								<div class="track" aria-hidden="true"><div id="omg-track"></div></div>
+								<small class="lane-verdict" id="omg-verdict">Waiting on the run</small>
 							</div>
-							<div class="track" aria-hidden="true"><div id="omg-track"></div></div>
-							<p class="lane-verdict" id="omg-verdict">Waiting on the run</p>
-						</div>
 
-						<div class="lane">
-							<div class="lane-heading">
-								<div>
-									<h3 id="wtf-label">wtfgif</h3>
-									<p id="wtf-detail">quality/global / literal LZW</p>
+							<div class="lane">
+								<div class="lane-heading">
+									<div>
+										<strong id="wtf-label">wtfgif</strong>
+										<small id="wtf-detail">quality/global / literal LZW</small>
+									</div>
+									<strong class="lane-time" id="wtf-time">—</strong>
 								</div>
-								<strong class="lane-time" id="wtf-time">—</strong>
+								<div class="track" aria-hidden="true"><div id="wtf-track"></div></div>
+								<small class="lane-verdict" id="wtf-verdict">Rust/Wasm preparing</small>
 							</div>
-							<div class="track" aria-hidden="true"><div id="wtf-track"></div></div>
-							<p class="lane-verdict" id="wtf-verdict">Rust/Wasm preparing</p>
 						</div>
 
-						<div class="result-callout" id="result-callout" aria-live="polite">
-							<div>
-								<span class="muted-label">Measured speedup</span>
-								<strong id="live-speed">—</strong>
+						<p class="result-callout" id="result-callout" aria-live="polite">
+							<strong id="live-speed">—</strong>
+							<span id="pixel-verdict">Run the demo to validate both outputs.</span>
+						</p>
+
+						<details class="result-details">
+							<summary>Show output details</summary>
+							<div class="metrics" aria-label="Output metrics">
+								<span><b>bytes</b> <strong id="metric-bytes">—</strong></span>
+								<span><b>quality</b> <strong id="metric-quality">—</strong></span>
+								<span><b>validation</b> <strong id="metric-validation">—</strong></span>
 							</div>
-							<p id="pixel-verdict">Run the demo to validate both outputs.</p>
-						</div>
+						</details>
 
-						<div class="metrics" aria-label="Output metrics">
-							<div><span>wtfgif bytes</span><strong id="metric-bytes">—</strong></div>
-							<div><span>Visual quality</span><strong id="metric-quality">—</strong></div>
-							<div><span>Validation</span><strong id="metric-validation">—</strong></div>
-						</div>
-
-						<button class="race-button" id="race-button" type="button" disabled>Run test</button>
+						<button class="race-button" id="race-button" type="button" disabled>Run encoder race</button>
 						<p class="race-note" id="race-note">Image loading and one-time Wasm initialization happen before the clock.</p>
 					</div>
 				</div>
 			</section>
 
 			<section class="notes" aria-label="Method notes">
-				<p>Encode starts with ordinary RGBA images. Decode checks every composited RGBA byte against omggif. Remux is a separate structural experiment for existing GIFs.</p>
-				<a href="https://github.com/mpopv/wtfgif/blob/master/BENCHMARKS.md" target="_blank" rel="noreferrer">Read the benchmark conditions ↗</a>
+				<p>Encode uses ordinary RGBA images. Decode checks every composited RGBA byte against omggif. Numbers are medians on this device.</p>
+				<a href="https://github.com/mpopv/wtfgif/blob/main/BENCHMARKS.md" target="_blank" rel="noreferrer">Benchmark conditions ↗</a>
 			</section>
 		</main>
 
 		<footer>
-			<span>wtfgif / portable Rust + Wasm</span>
+			<span>wtfgif</span>
 			<code>npm install wtfgif</code>
 		</footer>
 
