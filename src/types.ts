@@ -6,6 +6,14 @@ export interface WasmCoreInstance {
 	decode_frame_indices: (frameIndex: number) => Uint8Array;
 	decode_frame_rgba: (frameIndex: number) => Uint8Array;
 	decode_frame_bgra: (frameIndex: number) => Uint8Array;
+	decode_and_blit_frame_rgba?: (
+		frameIndex: number,
+		pixels: Uint8Array,
+	) => void;
+	decode_and_blit_frame_bgra?: (
+		frameIndex: number,
+		pixels: Uint8Array,
+	) => void;
 	decode_all_rgba?: () => Uint32Array;
 	reencode_gif_pixel_perfect?: () => Uint8Array;
 	prepare_composited_rgba: (requestedFrames: Uint8Array) => Uint32Array;
@@ -25,12 +33,6 @@ export interface WasmCoreModule {
 	decode_all_rgba?: (data: Uint8Array) => Uint32Array;
 	reencode_gif_pixel_perfect?: (data: Uint8Array) => Uint8Array;
 	remux_gif_pixel_perfect?: (data: Uint8Array) => Uint8Array;
-	prepare_reencode_hot_path?: () => void;
-	reencode_hot_path_primer?: (
-		side: number,
-		frameCount: number,
-	) => Uint8Array;
-	remux_hot_path_primer?: () => Uint8Array;
 	prepare_composited_rgba?: (
 		data: Uint8Array,
 		requestedFrames: Uint8Array,
@@ -52,6 +54,25 @@ export interface WasmCoreModule {
 		minCodeSize: number,
 		colorCount: number,
 	) => Uint8Array;
+	encode_indexed_lzw_scratch?: (
+		indexStream: Uint8Array,
+		minCodeSize: number,
+		colorCount: number,
+	) => number;
+	encode_indexed_literal_lzw_scratch?: (
+		indexStream: Uint8Array,
+		minCodeSize: number,
+		colorCount: number,
+	) => number;
+	indexed_lzw_input_scratch_reserve?: (length: number) => number;
+	encode_indexed_lzw_scratch_from_input?: (
+		length: number,
+		minCodeSize: number,
+		colorCount: number,
+		literal: boolean,
+	) => number;
+	indexed_lzw_scratch_ptr?: () => number;
+	wasm_memory?: () => WebAssembly.Memory;
 	encode_indexed_gif?: (
 		indexStream: Uint8Array,
 		width: number,
@@ -183,6 +204,49 @@ export interface WasmCoreModule {
 		loopCount: number,
 		alphaThreshold: number,
 	) => Uint8Array;
+	encode_rgba_gif_advanced?: (
+		rgbaStream: Uint8Array,
+		width: number,
+		height: number,
+		frameCount: number,
+		paletteRgb: Uint32Array,
+		delays: Uint16Array,
+		loopCount: number,
+		deltas: boolean,
+		alphaThreshold: number,
+		literal: boolean,
+		quantization: number,
+		paletteMode: number,
+	) => Uint8Array;
+	encode_rgba_gif_advanced_from_input?: (
+		length: number,
+		width: number,
+		height: number,
+		frameCount: number,
+		paletteRgb: Uint32Array,
+		delays: Uint16Array,
+		loopCount: number,
+		deltas: boolean,
+		alphaThreshold: number,
+		literal: boolean,
+		quantization: number,
+		paletteMode: number,
+	) => Uint8Array;
+	encode_rgba_gif_advanced_scratch_from_input?: (
+		length: number,
+		width: number,
+		height: number,
+		frameCount: number,
+		paletteRgb: Uint32Array,
+		delays: Uint16Array,
+		loopCount: number,
+		deltas: boolean,
+		alphaThreshold: number,
+		literal: boolean,
+		quantization: number,
+		paletteMode: number,
+	) => number;
+	gif_output_scratch_ptr?: () => number;
 }
 
 export interface PooledDecoderTables {
@@ -207,6 +271,7 @@ export type PaletteRGB = number[]; // array of 24-bit 0xRRGGBB
 
 export interface GifOptions {
 	background?: number;
+	compression?: "balanced" | "fast";
 	loop?: number | null;
 	palette?: PaletteRGB | null;
 }

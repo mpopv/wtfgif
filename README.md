@@ -1,140 +1,119 @@
 # wtfgif
 
-A drop-in `omggif` replacement with a Rust fast path that runs in Node,
-browsers, Cloudflare Workers, and Vercel Edge.
+Fast GIF encode and decode for Node.js, browsers, Workers, and edge runtimes.
 
-**[Race wtfgif against omggif in your browser →](https://mpopv.github.io/wtfgif/)**
+[Race it against omggif in your browser →](https://mpopv.github.io/wtfgif/)
 
 ```bash
 npm install wtfgif
 ```
 
-## Use it like omggif
+## Start once
 
-Change the package name:
-
-```diff
-- import { GifReader, GifWriter } from "omggif";
-+ import { GifReader, GifWriter } from "wtfgif";
-```
-
-CommonJS works too:
-
-```js
-const { GifReader, GifWriter } = require("wtfgif");
-```
-
-## Pixel-perfect GIF rewrite
-
-Initialize Rust/Wasm during page load, then remux GIFs without changing a
-single decoded pixel:
+Initialize WebAssembly during page or worker startup. Node.js can initialize
+automatically, but using the same explicit call everywhere keeps startup out of
+your hot path.
 
 ```ts
-import {
-	initializeWasmGlobally,
-	remuxGifPixelPerfect,
-} from "wtfgif";
+import { initializeWasmGlobally } from "wtfgif";
 
 await initializeWasmGlobally();
-
-const outputGif = remuxGifPixelPerfect(inputGif);
 ```
 
-`remuxGifPixelPerfect()` preserves each frame's original LZW payload and
-palette. It does not decode and recompress pixels. That is why it is extremely
-fast, keeps pixels exact, and usually produces a smaller file than wtfgif's
-speed-first fresh reencoder.
+Initialization only loads and compiles WebAssembly. There is no required
+primer call or synthetic encode; after this one-time startup, calls use the
+same initialized module.
 
-Use `reencodeGifPixelPerfect()` when you specifically require fresh LZW codes.
-That path is pixel-perfect too, but it does more work.
+## Encode images
 
-### Cloudflare Workers and Vercel Edge
-
-Edge runtimes need a static Wasm import:
+Give wtfgif one flat RGBA buffer containing every frame:
 
 ```ts
-import {
-	initializeWasmModule,
-	remuxGifPixelPerfect,
-} from "wtfgif";
-import init, * as rust from "wtfgif/wasm-web";
-import wasm from "wtfgif/wasm-web/wasm";
+import { encodeRgbaGifFrames } from "wtfgif";
 
-await initializeWasmModule({ ...rust, default: init }, wasm);
-
-export default {
-	fetch: async (request: Request) => {
-		const input = new Uint8Array(await request.arrayBuffer());
-		return new Response(remuxGifPixelPerfect(input), {
-			headers: { "content-type": "image/gif" },
-		});
-	},
-};
+const gif = encodeRgbaGifFrames({
+	width,
+	height,
+	frames: rgbaFrames,
+	frameCount,
+	delay: 10,
+	loop: 0,
+});
 ```
 
-## 100x proof
+GIF itself is limited to 256 colors per palette and binary transparency, so no
+GIF encoder can preserve every full-color source pixel exactly.
 
-This benchmark initializes and prepares Wasm before the clock, just as the
-browser example does. Each timed sample is the first real GIF processed in a
-fresh process. The primer is an unrelated generated GIF, so no fixture input or
-output is cached.
+The RGBA path uses one quality-first pipeline: adaptive palette quantization
+followed by literal LZW. Literal LZW is lossless for the indexed GIF pixels, so
+it never trades away visual quality for speed; it only produces larger files.
+
+## Decode GIFs
+
+`GifReader` uses the same core API as omggif:
+
+```ts
+import { GifReader } from "wtfgif";
+
+const reader = new GifReader(gifBytes);
+const rgba = new Uint8ClampedArray(reader.width * reader.height * 4);
+
+for (let frame = 0; frame < reader.numFrames(); frame += 1) {
+	reader.decodeAndBlitFrameRGBA(frame, rgba);
+}
+```
+
+## How fast?
+
+The default benchmark uses eight real MakeEmoji images, normalized to
+128×128 RGBA frames, with 200 timed samples after 30 warmups. Palette creation,
+pixel mapping, and GIF compression are all timed. WebAssembly initialization and
+image loading are not.
+
+| Real-image quality encode | Baseline | wtfgif | Speedup | wtfgif output |
+| --- | ---: | ---: | ---: | ---: |
+| Adaptive global palette | 107.898 ms | 0.732 ms | **147.49×** | 149,601 bytes / 34.12 dB |
+
+The baseline is `image-q` plus omggif with balanced LZW. Both implementations
+create an adaptive global palette and map every RGBA pixel. WebAssembly is
+initialized before timed samples. The race measures this single quality-first
+RGBA pipeline; there is no hidden lower-quality shortcut in the race.
+
+The same 200-sample run with every source pixel treated as opaque
+(`BENCH_ALPHA_THRESHOLD=0`) measured 119.788 ms for image-q + omggif versus
+0.905 ms for wtfgif: **132.41×**, at 33.91 dB PSNR.
+
+For a true no-cache measurement, run `BENCH_ITERATIONS=31 node scripts/bench-cold-rgba.mjs`; it starts a new
+Node process for every sample and includes imports, Wasm initialization, and
+the complete encode. The current 31-sample median is 177.470 ms for the
+baseline versus 9.362 ms for wtfgif (18.96×). Initialize Wasm during page or
+worker startup when measuring the hot path above.
+
+If your frames are already palette-indexed—the direct `GifWriter` contract—
+wtfgif is **180.28× faster**: 17.100 ms for omggif versus 0.095 ms for wtfgif.
+That result is byte-decoded and checked for exact RGBA equality before timing.
+
+Decode remains workload-dependent: **1.86×** on the included 198-frame
+128×128 GIF and **4.31×** on the included 16-frame 498×498 GIF, with exact
+composited RGBA parity.
 
 ```bash
-BENCH_ITERATIONS=31 \
-BENCH_REENCODE_ONLY=1 \
-WTFGIF_BENCH_BACKEND=wasm \
-WTFGIF_PREPARE_WASM_AT_PAGE_LOAD=1 \
-WTFGIF_REENCODE_MODE=remux \
 npm run bench
+npm run bench:encode
+BENCH_GIF_FILTER=GIGACHAD npm run bench:decode
+BENCH_RGBA_FIXTURE=stress BENCH_ITERATIONS=3 npm run bench:rgba
 ```
 
-| Fixture | Faster than omggif |
-| --- | ---: |
-| 18d | 738.64x |
-| Clap | 309.84x |
-| Homer | 983.53x |
-| Chipmunk | 768.77x |
-| GIGACHAD | 607.23x |
-| NODDERS | 512.23x |
-| Proud | 681.13x |
-| catJAM | 519.37x |
-| excuseme | 480.06x |
-| party_blob | 955.88x |
-| partyparrot | 244.09x |
-| tenor | 1,238.09x |
-| **Geometric mean** | **609.73x** |
+See [BENCHMARKS.md](BENCHMARKS.md) for every condition, output-size tradeoff,
+and reproduction command.
 
-The slowest result is **244.09x**. All 12 fixtures clear 100x.
+## Upgrade note for 2.0
 
-On the benchmark machine, the excluded one-time initialization and generic
-preparation cost had an 8.64 ms median and 9.86 ms p95 across 31 fresh
-processes.
-
-For every timed sample, the source and output are decoded after the timer and
-their complete RGBA frame streams are compared. Any mismatch aborts the run.
-
-This is a same-result benchmark, not a same-algorithm benchmark: omggif decodes
-and freshly recompresses each frame; wtfgif preserves already-valid compressed
-frame data. See [BENCHMARKS.md](BENCHMARKS.md) for the fresh-recompression and
-true-cold numbers.
-
-## Important behavior
-
-- Rust/Wasm runs in Node, browsers, Cloudflare Workers, and Vercel Edge.
-- Wasm preparation happens inside `initializeWasmGlobally()` or
-  `initializeWasmModule()`.
-- `remuxGifPixelPerfect()` guarantees the displayed animation's dimensions,
-  frames, timing, loop, disposal, transparency, and pixels.
-- Non-rendering extension metadata such as comments is not part of the remux
-  contract and may be preserved or removed.
-- `reencodeGifPixelPerfect()` writes fresh literal LZW data and can produce
-  larger files in exchange for speed.
-
-## Verify
-
-```bash
-npm run check
-npm run test:wasm-core
-```
+The old internal WebAssembly warmup-primer hooks were removed. If you used
+`WasmWebModule` directly, remove calls to
+`prepare_reencode_hot_path`, `reencode_hot_path_primer`, and
+`remux_hot_path_primer`; `initializeWasmGlobally()` or `initializeWasmModule()`
+is now sufficient. The public GIF reader, writer, RGBA encoder, and compression
+options remain available.
 
 [MIT](LICENSE)

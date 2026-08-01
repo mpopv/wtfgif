@@ -8,16 +8,8 @@ const source = path.join(root, "site");
 const output = path.join(root, "site-dist");
 
 const fixtureCopies = [
-	["18d30677-d255-4cc9-9933-c8d35306c1d5.gif", "18d.gif"],
-	["Clap-1x.gif", "clap.gif"],
 	["Disappear Homer Simpson GIF.gif", "homer.gif"],
-	["Dramatic Chipmunk GIF.gif", "chipmunk.gif"],
 	["GIGACHAD-4x.gif", "gigachad.gif"],
-	["NODDERS-2x.gif", "nodders.gif"],
-	["Proud Of You Yes GIF.gif", "proud.gif"],
-	["catJAM-3x.gif", "catjam.gif"],
-	["excuseme.gif", "excuseme.gif"],
-	["party_blob.gif", "party-blob.gif"],
 	["partyparrot.gif", "partyparrot.gif"],
 	["tenor.gif", "tenor.gif"],
 ];
@@ -30,7 +22,13 @@ await Promise.all([
 	cp(path.join(source, "index.html"), path.join(output, "index.html")),
 	cp(path.join(source, "styles.css"), path.join(output, "styles.css")),
 	cp(path.join(source, "app.js"), path.join(output, "app.js")),
-	cp(path.join(root, "dist", "index.mjs"), path.join(output, "vendor", "wtfgif.mjs")),
+	cp(path.join(source, "assets"), path.join(output, "assets"), {
+		recursive: true,
+	}),
+	cp(
+		path.join(root, "dist", "index.mjs"),
+		path.join(output, "vendor", "wtfgif.mjs"),
+	),
 	cp(
 		path.join(root, "dist", "wasm-web"),
 		path.join(output, "vendor", "wasm-web"),
@@ -45,6 +43,7 @@ await build({
 	entryPoints: [path.join(source, "omggif-entry.js")],
 	bundle: true,
 	format: "esm",
+	mainFields: ["main", "module"],
 	minify: true,
 	outfile: path.join(output, "vendor", "omggif.mjs"),
 	platform: "browser",
@@ -60,4 +59,6 @@ if (!html.includes("./vendor/wtfgif.mjs")) {
 }
 
 await writeFile(path.join(output, ".nojekyll"), "");
-console.log(`Built GitHub Pages artifact with ${fixtureCopies.length} GIFs.`);
+console.log(
+	`Built GitHub Pages artifact with ${fixtureCopies.length} GIFs and the real-image encoder workload.`,
+);

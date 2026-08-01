@@ -1,129 +1,122 @@
 # Benchmarks
 
-Performance claims are only meaningful when the backend, cache state, fixtures,
-and correctness checks are explicit.
-
-## Experimental cold pixel-perfect reencoding
-
-The current research checkpoint starts a fresh process for each sample and
-reencodes every GIF image descriptor with the experimental native addon. The
-timer excludes the decoded-pixel verification that follows each sample. Every
-output and source GIF is then decoded and compared; any pixel mismatch aborts
-the run.
-
-Command:
+The headline benchmark measures the job an image-stitching app actually does:
+ordinary decoded images in, GIF bytes out.
 
 ```bash
-BENCH_ITERATIONS=31 BENCH_REENCODE_ONLY=1 npm run bench
+npm run bench
 ```
 
-31 fresh-process samples per implementation and fixture:
+## Default: arbitrary RGBA images
 
-| Fixture | wtfgif faster than omggif |
-| --- | ---: |
-| 18d | 142.65x |
-| Clap | 100.97x |
-| Homer | 191.85x |
-| Chip | 200.35x |
-| GIG | 180.09x |
-| NOD | 111.37x |
-| Proud | 229.79x |
-| cat | 180.53x |
-| excuse | 117.74x |
-| blob | 126.32x |
-| parrot | 149.29x |
-| tenor | 214.14x |
-| Geometric mean | 156.69x |
+The committed workload is eight real images from MakeEmoji. Each image was
+aspect-fitted into a transparent 128×128 canvas, then stored as one contiguous
+RGBA fixture at `test/rgba/makeemoji-128x128x8.rgba`.
 
-These are experimental-addon results on the development machine, not a promise
-for the portable npm package or other hardware. The 1.0.0 npm artifact ships
-JavaScript and WebAssembly; it does not ship a prebuilt native addon.
+The clock starts with that RGBA buffer. Both implementations must create a
+palette, map every source pixel, and compress every frame. File loading, image
+decoding, resizing, WebAssembly initialization, warmup, validation, and quality
+measurement are outside timed samples.
 
-## Page-load-prepared portable pixel-perfect remux
+Results below are medians from 200 samples after thirty warmups on an Apple M3
+Pro with Node.js 22.17.1, recorded for the 2.0.0 release tree.
 
-This is the web product benchmark. Wasm initialization and generic hot-path
-preparation happen before the clock, as they would during page load. Each timed
-sample is still the first real GIF processed in a fresh process. Preparation
-uses unrelated generated GIFs and cannot cache a fixture's input or output.
+| Implementation | Median | Speedup | Bytes | PSNR |
+| --- | ---: | ---: | ---: | ---: |
+| image-q rgbquant + omggif balanced LZW | 107.898 ms | 1.00× | 39,350 | 31.84 dB |
+| wtfgif quality/global + literal LZW (default) | 0.732 ms | **147.49×** | 149,601 | 34.12 dB |
 
-wtfgif validates and rewrites the GIF container while preserving original LZW
-frame payloads. omggif decodes and freshly recompresses the frames. The
-externally tested contract is the same—an owned GIF with identical decoded
-pixels—but the algorithms intentionally differ.
+This is one practical adaptive global-palette pipeline. The implementations do
+not choose identical pixels, so the table reports source-relative PSNR and
+output bytes alongside speed. The wtfgif palette is higher quality on this
+fixture while remaining 147.49× faster. Literal LZW is lossless for the
+indexed pixels, so the speedup does not come from lowering GIF pixel quality.
+
+The quality path uses a weighted 4-bit-per-channel histogram for workloads up
+to one million pixels and the full 5-bit-per-channel histogram above that
+threshold. This is an internal memory/throughput optimization, not a user
+selectable quality mode; both branches use adaptive palettes and the same
+literal GIF writer.
+
+The same source with every pixel treated as opaque (`BENCH_ALPHA_THRESHOLD=0`)
+took 119.788 ms for image-q + omggif and 0.905 ms for wtfgif: **132.41×**,
+with 33.91 dB PSNR. This is the normal full-color, no-transparent-pixels case.
+
+For the no-cache contract:
 
 ```bash
-BENCH_ITERATIONS=31 BENCH_REENCODE_ONLY=1 \
-WTFGIF_BENCH_BACKEND=wasm \
-WTFGIF_PREPARE_WASM_AT_PAGE_LOAD=1 \
-WTFGIF_REENCODE_MODE=remux npm run bench
+BENCH_ITERATIONS=31 node scripts/bench-cold-rgba.mjs
 ```
 
-| Fixture | wtfgif faster than omggif |
-| --- | ---: |
-| 18d | 738.64x |
-| Clap | 309.84x |
-| Homer | 983.53x |
-| Chip | 768.77x |
-| GIG | 607.23x |
-| NOD | 512.23x |
-| Proud | 681.13x |
-| cat | 519.37x |
-| excuse | 480.06x |
-| blob | 955.88x |
-| parrot | 244.09x |
-| tenor | 1,238.09x |
-| Geometric mean | 609.73x |
+That run starts a fresh Node process for every sample and includes fixture
+loading, dynamic imports, Wasm initialization, palette creation, pixel mapping,
+and GIF compression. The current 31-sample median is 177.470 ms for the
+baseline versus 9.362 ms for wtfgif (18.96×). This includes process startup and
+Wasm initialization and is not the initialized hot-path contract.
 
-Every fixture clears 100x. The slowest is partyparrot at 244.09x.
-
-The excluded initialization plus generic preparation cost was measured
-separately across 31 fresh processes on the same machine: 8.64 ms median,
-9.86 ms p95, and 9.91 ms maximum.
-
-## Cold portable Rust/WebAssembly reencoding
-
-The same pixel-perfect Rust reencoder now runs in browsers, Cloudflare Workers,
-Vercel Edge, and Node through WebAssembly.
+Run the optional larger synthetic stress workload with:
 
 ```bash
-BENCH_ITERATIONS=31 BENCH_REENCODE_ONLY=1 \
-WTFGIF_BENCH_BACKEND=wasm npm run bench
+npm run bench:rgba:stress
 ```
 
-| Fixture | wtfgif faster than omggif |
-| --- | ---: |
-| 18d | 8.19x |
-| Clap | 1.23x |
-| Homer | 14.68x |
-| Chip | 17.70x |
-| GIG | 15.44x |
-| NOD | 8.60x |
-| Proud | 20.00x |
-| cat | 14.42x |
-| excuse | 9.60x |
-| blob | 9.74x |
-| parrot | 3.38x |
-| tenor | 16.00x |
-| Geometric mean | 9.45x |
+For a stress-only receipt, use `BENCH_RGBA_FIXTURE=stress`. Three initialized
+samples took 9,274.407 ms with image-q + omggif and 13.789 ms with wtfgif:
+**672.57×**, with 26.46 dB PSNR and 2,973,381 output bytes. A five-process
+strict-cold run on the same fixture measured **151.11×** (8,412.785 ms vs
+55.675 ms).
 
-These are first-call numbers in 31 fresh Node processes per implementation and
-fixture. They include Wasm's first-call cost and use no warmup. Browser and edge
-support is separately exercised by real-browser, Cloudflare workerd, and Vercel
-Edge VM smoke tests.
+## Specialized: already-indexed frames
 
-Page-load preparation improves fresh LZW recompression, but it does not remove
-the actual LZW decode and encode work. Profiling found decoding responsible for
-roughly 57–85% of its hot runtime and literal reencoding for roughly 15–43%.
-The remux API avoids both stages by preserving the original compressed payload.
+```bash
+BENCH_ITERATIONS=300 npm run bench:encode
+```
 
-## Correctness gates
+This is the direct `GifWriter` contract: 12 full 128×128 frames, a normal
+256-color global palette, typed output, and wtfgif `compression: "fast"`.
 
-- Source and reencoded decoded pixels must match exactly for every timed sample.
-- Source and remuxed decoded pixels must match exactly for every timed sample.
-- A randomized parity stress run covered 200 generated GIFs across 4, 16, 64,
-  128, and 256 colors, global palettes, and identical local palettes.
-- Unit tests compare reader and writer behavior with omggif across the fixture
-  corpus.
+| Implementation | Median | Bytes |
+| --- | ---: | ---: |
+| omggif | 17.100 ms | 163,797 |
+| wtfgif | 0.095 ms | 224,001 |
+| **Speedup** | **180.28×** | **1.37× baseline** |
 
-Record new results here only with the exact command, sample count, environment,
-backend, and correctness gate.
+Both outputs are decoded before timing and must produce exactly the same RGBA
+pixels. This is a real 100× result, but it applies only after palette creation
+and pixel indexing have already happened.
+
+## Decode
+
+```bash
+BENCH_GIF_FILTER=GIGACHAD BENCH_ITERATIONS=100 npm run bench:decode
+BENCH_GIF_FILTER=tenor BENCH_ITERATIONS=50 npm run bench:decode
+```
+
+Reader construction, GIF parsing, and decoding every composited RGBA frame are
+inside each sample. One caller-owned RGBA buffer is reused, matching ordinary
+omggif usage. Every final byte must match omggif before timing.
+
+| Fixture | Shape | omggif | wtfgif | Speedup |
+| --- | ---: | ---: | ---: | ---: |
+| GIGACHAD | 198 × 128×128 | 32.585 ms | 17.520 ms | **1.86×** |
+| tenor | 16 × 498×498 | 38.219 ms | 8.864 ms | **4.31×** |
+
+## Browser racer
+
+The [live racer](https://mpopv.github.io/wtfgif/) uses the same eight-image
+workload by default and also accepts multiple PNG, JPEG, or WebP uploads. It
+keeps Encode, Decode, and the separate structural remux experiment in distinct
+modes so a remux shortcut can never be mistaken for arbitrary-image encoding.
+
+Browser results vary with device, browser, thermal state, and background load.
+Speedup ratios are generally more useful than raw milliseconds, but neither is
+universal.
+
+The old process-startup diagnostic remains available as `npm run bench:cold`.
+It measures a different contract and is intentionally not the headline race.
+
+## Release notes
+
+The 2.0 release removes initialization-time warmup primers. Benchmark setup
+still initializes WebAssembly before timed samples, and no hidden synthetic
+encode, decode, or remux work is performed during initialization.

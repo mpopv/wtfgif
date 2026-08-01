@@ -48,6 +48,20 @@ function makeDuplicateFrameGif(): Uint8Array {
 	return buf.slice(0, writer.end());
 }
 
+function makeQualityGradient(width: number, height: number): Uint8Array {
+	const rgba = new Uint8Array(width * height * 4);
+	let offset = 0;
+	for (let y = 0; y < height; y += 1) {
+		for (let x = 0; x < width; x += 1) {
+			rgba[offset++] = (x * 13 + y * 7) & 255;
+			rgba[offset++] = (x * 5 + y * 17) & 255;
+			rgba[offset++] = (x * 19 + y * 3) & 255;
+			rgba[offset++] = 255;
+		}
+	}
+	return rgba;
+}
+
 describe("Rust/Wasm core decode backend", () => {
 	afterEach(() => {
 		GifReader.setDecodeBackend(null);
@@ -262,16 +276,57 @@ describe("Rust/Wasm core decode backend", () => {
 			delay: 5,
 			backend: "native",
 		});
+		const repeated = encodeRgbaGifFrames({
+			width,
+			height,
+			frames,
+			delay: 5,
+			backend: "native",
+		});
 		const reader = new GifReader(encoded);
 		const first = new Uint8Array(width * height * 4);
 		const second = new Uint8Array(width * height * 4);
 
+		expect(repeated).toStrictEqual(encoded);
 		expect(reader.numFrames()).toBe(2);
 		expect(reader.frameInfo(0).delay).toBe(5);
 		reader.decodeAndBlitFrameRGBA(0, first);
 		reader.decodeAndBlitFrameRGBA(1, second);
 		expect(first).toStrictEqual(frames.subarray(0, 16));
 		expect(second).toStrictEqual(frames.subarray(16));
+	});
+
+	maybeTest("reuses quality histograms across normal and large RGBA encodes", () => {
+		const smallFrame = makeQualityGradient(128, 128);
+		const smallFrames = new Uint8Array(smallFrame.length * 2);
+		smallFrames.set(smallFrame);
+		smallFrames.set(smallFrame, smallFrame.length);
+		const small = encodeRgbaGifFrames({
+			width: 128,
+			height: 128,
+			frameCount: 2,
+			frames: smallFrames,
+			backend: "native",
+			quantization: "quality",
+		});
+		const large = encodeRgbaGifFrames({
+			width: 1024,
+			height: 1024,
+			frames: makeQualityGradient(1024, 1024),
+			backend: "native",
+			quantization: "quality",
+		});
+		const repeated = encodeRgbaGifFrames({
+			width: 128,
+			height: 128,
+			frames: makeQualityGradient(128, 128),
+			backend: "native",
+			quantization: "quality",
+		});
+
+		expect(new GifReader(small).numFrames()).toBe(2);
+		expect(new GifReader(large).numFrames()).toBe(1);
+		expect(new GifReader(repeated).numFrames()).toBe(1);
 	});
 
 	maybeTest("encodes pixel-perfect fast-mode indexed and RGBA GIFs", () => {
@@ -313,6 +368,65 @@ describe("Rust/Wasm core decode backend", () => {
 			}
 		}
 	});
+
+	maybeTest(
+		"quantizes arbitrary RGBA with independent compression and palette modes",
+		() => {
+			const width = 16;
+			const height = 16;
+			const frameBytes = width * height * 4;
+			const frames = new Uint8Array(frameBytes * 2);
+			for (let value = 0; value < 256; value++) {
+				const first = value * 4;
+				frames[first] = value;
+				frames[first + 1] = (value * 3) & 0xff;
+				frames[first + 3] = 255;
+				const second = frameBytes + value * 4;
+				frames[second + 1] = value;
+				frames[second + 2] = (value * 5 + 1) & 0xff;
+				frames[second + 3] = 255;
+			}
+
+			const fastGlobal = encodeRgbaGifFrames({
+				width,
+				height,
+				frames,
+				compression: "fast",
+				quantization: "fast",
+				backend: "native",
+			});
+			const qualityGlobal = encodeRgbaGifFrames({
+				width,
+				height,
+				frames,
+				compression: "fast",
+				quantization: "quality",
+				backend: "native",
+			});
+			const exactLocal = encodeRgbaGifFrames({
+				width,
+				height,
+				frames,
+				compression: "fast",
+				quantization: "exact",
+				paletteMode: "local",
+				backend: "native",
+			});
+
+			expect(new GifReader(fastGlobal).numFrames()).toBe(2);
+			expect(new GifReader(qualityGlobal).numFrames()).toBe(2);
+			const localReader = new GifReader(exactLocal);
+			expect(localReader.numFrames()).toBe(2);
+			for (let frame = 0; frame < 2; frame++) {
+				const decoded = new Uint8Array(frameBytes);
+				localReader.decodeAndBlitFrameRGBA(frame, decoded);
+				expect(decoded).toStrictEqual(
+					frames.subarray(frame * frameBytes, (frame + 1) * frameBytes),
+				);
+				expect(localReader.frameInfo(frame).disposal).toBe(2);
+			}
+		},
+	);
 
 	maybeTest(
 		"fast RGBA mode rejects colors and alpha GIF cannot preserve",

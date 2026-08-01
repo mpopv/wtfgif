@@ -9,8 +9,10 @@ const wasmPath = join(root, "dist", "wasm-web", "wtfgif_core_bg.wasm");
 const wasmModule = new WebAssembly.Module(readFileSync(wasmPath));
 const source = `
 	import {
+		compileGif,
 		decodeGifFramesRgba,
 		encodeIndexedGifFrames,
+		encodeRgbaGifFrames,
 		initializeWasmModule,
 		remuxGifPixelPerfect,
 	} from "./dist/index.mjs";
@@ -32,19 +34,49 @@ const source = `
 				compression: "fast",
 			});
 			const remuxed = remuxGifPixelPerfect(sourceGif);
+			const retimed = compileGif(sourceGif)
+				.withDelays(11)
+				.toUint8Array();
 			const before = decodeGifFramesRgba(sourceGif);
 			const after = decodeGifFramesRgba(remuxed);
+			const afterRetime = decodeGifFramesRgba(retimed);
 			const pixelPerfect =
 				before.width === after.width &&
 				before.height === after.height &&
 				before.frameCount === after.frameCount &&
 				before.pixels.every(
 					(value, index) => value === after.pixels[index],
+				) &&
+				before.pixels.every(
+					(value, index) => value === afterRetime.pixels[index],
 				);
+			const rgba = new Uint8Array(17 * 17 * 4);
+			for (let pixel = 0; pixel < 17 * 17; pixel++) {
+				const offset = pixel * 4;
+				rgba[offset] = (pixel * 13) & 255;
+				rgba[offset + 1] = (pixel * 29) & 255;
+				rgba[offset + 2] = (pixel * 47) & 255;
+				rgba[offset + 3] = 255;
+			}
+			const arbitraryRgba = decodeGifFramesRgba(
+				encodeRgbaGifFrames({
+					width: 17,
+					height: 17,
+					frames: rgba,
+					backend: "wasm",
+					compression: "fast",
+					quantization: "quality",
+					paletteMode: "local",
+				}),
+			);
 			event.respondWith(Response.json({
 				runtime: "vercel-edge-vm",
 				backend: "rust-wasm",
 				pixelPerfect,
+				arbitraryRgba:
+					arbitraryRgba.width === 17 &&
+					arbitraryRgba.height === 17 &&
+					arbitraryRgba.frameCount === 1,
 			}));
 		});
 	})()
@@ -101,11 +133,10 @@ const result = await response.json();
 if (
 	result.runtime !== "vercel-edge-vm" ||
 	result.backend !== "rust-wasm" ||
-	result.pixelPerfect !== true
+	result.pixelPerfect !== true ||
+	result.arbitraryRgba !== true
 ) {
 	throw new Error(`Vercel Edge runtime validation failed: ${JSON.stringify(result)}`);
 }
 
-console.log(
-	"Vercel Edge VM static Rust/Wasm pixel-perfect remux validation passed.",
-);
+console.log("Vercel Edge VM remux, retime, and arbitrary-RGBA validation passed.");

@@ -14,6 +14,7 @@
 		</main>
 		<script type="module">
 			import {
+				compileGif,
 				decodeGifFramesRgba,
 				GifReader,
 				encodeIndexedGifFrames,
@@ -35,15 +36,22 @@
 				);
 				const started = performance.now();
 				const realRemuxed = remuxGifPixelPerfect(realGif);
+				const realRetimed = compileGif(realGif)
+					.withDelays(11)
+					.toUint8Array();
 				const elapsedMs = performance.now() - started;
 				const realBefore = decodeGifFramesRgba(realGif);
 				const realAfter = decodeGifFramesRgba(realRemuxed);
+				const realRetimedFrames = decodeGifFramesRgba(realRetimed);
 				const realPixelPerfect =
 					realBefore.width === realAfter.width &&
 					realBefore.height === realAfter.height &&
 					realBefore.frameCount === realAfter.frameCount &&
 					realBefore.pixels.every(
 						(value, index) => value === realAfter.pixels[index],
+					) &&
+					realBefore.pixels.every(
+						(value, index) => value === realRetimedFrames.pixels[index],
 					);
 				if (!realPixelPerfect) {
 					throw new Error("Real GIF remux changed decoded pixels");
@@ -71,6 +79,7 @@
 						(value, index) => value === reencodedPixels[index],
 					) &&
 					window.wtfgif?.GifReader === GifReader &&
+					window.wtfgif?.compileGif === compileGif &&
 					window.wtfgif?.remuxGifPixelPerfect ===
 						remuxGifPixelPerfect;
 				reader.dispose();

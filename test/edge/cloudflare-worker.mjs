@@ -1,6 +1,8 @@
 import {
+	compileGif,
 	decodeGifFramesRgba,
 	encodeIndexedGifFrames,
+	encodeRgbaGifFrames,
 	initializeWasmModule,
 	remuxGifPixelPerfect,
 } from "../../dist/index.mjs";
@@ -27,13 +29,35 @@ export default {
 			compression: "fast",
 		});
 		const remuxed = remuxGifPixelPerfect(source);
+		const retimed = compileGif(source).withDelays(11).toUint8Array();
 		const before = decodeGifFramesRgba(source);
 		const after = decodeGifFramesRgba(remuxed);
+		const retimedFrames = decodeGifFramesRgba(retimed);
 		const pixelPerfect =
 			before.width === after.width &&
 			before.height === after.height &&
 			before.frameCount === after.frameCount &&
-			equalBytes(before.pixels, after.pixels);
+			equalBytes(before.pixels, after.pixels) &&
+			equalBytes(before.pixels, retimedFrames.pixels);
+		const rgba = new Uint8Array(17 * 17 * 4);
+		for (let pixel = 0; pixel < 17 * 17; pixel++) {
+			const offset = pixel * 4;
+			rgba[offset] = (pixel * 13) & 255;
+			rgba[offset + 1] = (pixel * 29) & 255;
+			rgba[offset + 2] = (pixel * 47) & 255;
+			rgba[offset + 3] = 255;
+		}
+		const arbitraryRgba = decodeGifFramesRgba(
+			encodeRgbaGifFrames({
+				width: 17,
+				height: 17,
+				frames: rgba,
+				backend: "wasm",
+				compression: "fast",
+				quantization: "quality",
+				paletteMode: "local",
+			}),
+		);
 
 		return Response.json({
 			runtime: "cloudflare-worker",
@@ -41,6 +65,10 @@ export default {
 			pixelPerfect,
 			sourceBytes: source.length,
 			remuxedBytes: remuxed.length,
+			arbitraryRgba:
+				arbitraryRgba.width === 17 &&
+				arbitraryRgba.height === 17 &&
+				arbitraryRgba.frameCount === 1,
 		});
 	},
 };

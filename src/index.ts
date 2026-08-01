@@ -24,26 +24,13 @@ import {
 	remuxGifPixelPerfect,
 	reencodeGifPixelPerfect,
 } from "./native/oneOff";
-
-const PUBLIC_API_PRIMER = new Uint8Array([
-	71, 73, 70, 56, 57, 97, 2, 0, 2, 0, 128, 0, 0, 0, 0, 0, 255, 255, 255,
-	44, 0, 0, 0, 0, 2, 0, 2, 0, 0, 2, 3, 68, 24, 20, 0, 59,
-]);
-
-const preparePublicFastPath = () => {
-	const generatedPrimer =
-		getWasmCoreModule()?.remux_hot_path_primer?.();
-	const representativePrimer = generatedPrimer
-		? new Uint8Array(generatedPrimer)
-		: undefined;
-	for (let iteration = 0; iteration < 64; iteration++) {
-		reencodeGifPixelPerfect(PUBLIC_API_PRIMER);
-		remuxGifPixelPerfect(PUBLIC_API_PRIMER);
-		if (representativePrimer) {
-			remuxGifPixelPerfect(representativePrimer);
-		}
-	}
-};
+import {
+	boomerangGifPixelPerfect,
+	CompiledGif,
+	compileGif,
+	reverseGifPixelPerfect,
+	retimeGifPixelPerfect,
+} from "./compiled";
 
 const bindPublicWasmApi = () => {
 	prepareWasmOneOffApi(getWasmCoreModule());
@@ -53,7 +40,6 @@ const bindPublicWasmApi = () => {
 const initializeWasmGlobally = async (moduleOrPath?: unknown): Promise<void> => {
 	await initializeGlobalWasm(moduleOrPath);
 	bindPublicWasmApi();
-	preparePublicFastPath();
 };
 
 const initializeWasmModule = async (
@@ -62,7 +48,6 @@ const initializeWasmModule = async (
 ): Promise<void> => {
 	await initializeStaticWasmModule(module, moduleOrPath);
 	bindPublicWasmApi();
-	preparePublicFastPath();
 };
 
 const setWasmCoreModule = (
@@ -101,6 +86,11 @@ export {
 	decodeGifFramesRgba,
 	remuxGifPixelPerfect,
 	reencodeGifPixelPerfect,
+	CompiledGif,
+	compileGif,
+	reverseGifPixelPerfect,
+	boomerangGifPixelPerfect,
+	retimeGifPixelPerfect,
 };
 
 export type {
@@ -109,6 +99,8 @@ export type {
 	EncodeRgbaGifFramesOptions,
 	GifCompressionMode,
 	GifFrameDelay,
+	GifPaletteMode,
+	GifQuantizationMode,
 	IndexedGifFrame,
 	IndexedGifFrames,
 	RgbaGifFrame,
@@ -121,6 +113,7 @@ export type {
 } from "./native/runtime";
 
 export type { WasmWebModule } from "./wasm/runtime";
+export type { GifFrameDelays } from "./compiled";
 
 export type {
 	GifDecodeBackend,
@@ -161,6 +154,11 @@ const browserExports = {
 	decodeGifFramesRgba,
 	remuxGifPixelPerfect,
 	reencodeGifPixelPerfect,
+	CompiledGif,
+	compileGif,
+	reverseGifPixelPerfect,
+	boomerangGifPixelPerfect,
+	retimeGifPixelPerfect,
 };
 
 if (typeof window !== "undefined") {
