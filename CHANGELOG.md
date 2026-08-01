@@ -2,6 +2,34 @@
 
 All notable changes to wtfgif are documented here.
 
+## 2.0.0 - 2026-08-01
+
+### Breaking changes
+
+- Remove the old `WasmWebModule` warmup-primer hooks
+  (`prepare_reencode_hot_path`, `reencode_hot_path_primer`, and
+  `remux_hot_path_primer`). WebAssembly initialization now only loads the
+  module; callers do not need to run synthetic encode, decode, or remux work.
+  `initializeWasmGlobally()` and `initializeWasmModule()` remain the complete
+  startup API.
+
+### Performance and documentation
+
+- Keep arbitrary RGBA encoding on one quality-first adaptive-palette pipeline
+  with literal LZW, while reusing input, output, delay, histogram, and palette
+  scratch storage.
+- Stop exact-color bookkeeping as soon as a source exceeds the GIF palette
+  limit, use branch-free histogram accumulation for the remainder, and use
+  representative-seeded KD-tree searches for exact palette assignment.
+- Lower the Wasm decode handoff threshold for medium partial frames after
+  parity-checked measurements showed the Rust decoder wins there too.
+- Add `npm run bench:rgba:cold` and document initialized, strict-cold, indexed,
+  and decode measurements separately so a remux shortcut cannot be mistaken
+  for arbitrary-image encoding.
+- Refresh the release receipts on the real-image fixture: 147.49× initialized
+  RGBA encode, 18.96× strict-cold RGBA encode, 180.28× indexed encode, 1.86×
+  GIGACHAD decode, and 4.31× tenor decode, with exact decoded-pixel checks.
+
 ## 1.4.0 - 2026-07-20
 
 - Decouple RGBA quantization from LZW compression with explicit `exact`,
@@ -11,8 +39,34 @@ All notable changes to wtfgif are documented here.
 - Add global and per-frame local palette modes. Local exact palettes preserve
   independently representable frames even when their combined colors exceed
   256.
-- Preserve the existing fast-mode default: callers must explicitly opt into
-  lossy quantization rather than silently losing colors.
+- Make quality quantization with literal LZW the arbitrary-RGBA default. The
+  indexed GIF pixels remain lossless after quantization, while the compact
+  `compression: "balanced"` encoder stays available as an explicit opt-in;
+  legacy `compression: "fast"` remains supported for compatibility.
+- Remove the browser racer's lower-quality profile: it now measures one
+  adaptive quality-palette pipeline, with literal LZW emitted directly into
+  the final GIF buffer.
+- Remove initialization-time warmup primers; Wasm initialization now only loads
+  the module and does no unrelated encode, decode, or remux work.
+- Reuse Wasm input/output and quantization scratch buffers, and fuse exact-color
+  detection with the adaptive histogram so repeated arbitrary-RGBA encodes do
+  not allocate or rescan more than necessary.
+- Carry median-cut box statistics through each split and emit local/global
+  literal payloads directly, removing avoidable quantizer scans and compressed
+  buffer copies without changing decoded pixels.
+- Replace repeated median-cut full sorts with weighted selection and keep exact
+  nearest-color assignments, preserving quality while reducing palette cost on
+  large arbitrary-RGBA inputs.
+- Keep median-cut colors in one arena and cache final box representatives,
+  removing per-split allocations and repeated weighted sums without changing
+  palette membership.
+- Stop exact-color detection as soon as an input exceeds the GIF palette limit,
+  then finish the same histogram in a branch-free accumulation pass.
+- Seed exact palette KD-tree searches from each median-cut representative and
+  prune far branches before pushing them, reducing nearest-color work without
+  changing assignments.
+- Lower the Wasm decode handoff cutoff for medium partial frames after parity-
+  checked measurements showed it beats the JavaScript decoder there too.
 - Validate arbitrary-RGBA encoding in JavaScript, WebAssembly, Cloudflare
   Workers, and Vercel Edge, with end-to-end RGBA benchmarks and quality
   measurements.

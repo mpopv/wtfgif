@@ -32,26 +32,6 @@ import {
 	retimeGifPixelPerfect,
 } from "./compiled";
 
-const PUBLIC_API_PRIMER = new Uint8Array([
-	71, 73, 70, 56, 57, 97, 2, 0, 2, 0, 128, 0, 0, 0, 0, 0, 255, 255, 255,
-	44, 0, 0, 0, 0, 2, 0, 2, 0, 0, 2, 3, 68, 24, 20, 0, 59,
-]);
-
-const preparePublicFastPath = () => {
-	const generatedPrimer =
-		getWasmCoreModule()?.remux_hot_path_primer?.();
-	const representativePrimer = generatedPrimer
-		? new Uint8Array(generatedPrimer)
-		: undefined;
-	for (let iteration = 0; iteration < 64; iteration++) {
-		reencodeGifPixelPerfect(PUBLIC_API_PRIMER);
-		remuxGifPixelPerfect(PUBLIC_API_PRIMER);
-		if (representativePrimer) {
-			remuxGifPixelPerfect(representativePrimer);
-		}
-	}
-};
-
 const bindPublicWasmApi = () => {
 	prepareWasmOneOffApi(getWasmCoreModule());
 	browserExports.remuxGifPixelPerfect = remuxGifPixelPerfect;
@@ -60,7 +40,6 @@ const bindPublicWasmApi = () => {
 const initializeWasmGlobally = async (moduleOrPath?: unknown): Promise<void> => {
 	await initializeGlobalWasm(moduleOrPath);
 	bindPublicWasmApi();
-	preparePublicFastPath();
 };
 
 const initializeWasmModule = async (
@@ -69,7 +48,6 @@ const initializeWasmModule = async (
 ): Promise<void> => {
 	await initializeStaticWasmModule(module, moduleOrPath);
 	bindPublicWasmApi();
-	preparePublicFastPath();
 };
 
 const setWasmCoreModule = (

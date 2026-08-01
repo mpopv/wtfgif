@@ -102,17 +102,9 @@
 							<option value="512">512 × 512</option>
 						</select>
 					</div>
-					<div class="control-group profile-control">
-						<span class="control-label">Encoder profile</span>
-						<div class="profile-switch" role="group" aria-label="Encoder profile">
-							<button type="button" data-profile="quality" aria-pressed="true">
-								Quality
-							</button>
-							<button type="button" data-profile="turbo" aria-pressed="false">
-								Turbo
-							</button>
-						</div>
-						<small id="profile-note">Adaptive global palette + balanced LZW</small>
+					<div class="control-group encoder-control">
+						<span class="control-label">Encoder</span>
+						<small>Adaptive global palette + literal LZW</small>
 					</div>
 				</div>
 
@@ -148,7 +140,8 @@
 						<div class="contract-copy">
 							<span id="contract-kicker">RGBA → palette → GIF</span>
 							<p id="contract-description">
-								Both clocks include palette creation, pixel mapping, and balanced LZW.
+								Both clocks include palette creation and pixel mapping; wtfgif uses
+								literal LZW by default.
 							</p>
 						</div>
 
@@ -170,7 +163,7 @@
 								<div>
 									<span class="lane-number">B</span>
 									<h3 id="wtf-label">wtfgif</h3>
-									<p id="wtf-detail">quality/global / balanced LZW</p>
+									<p id="wtf-detail">quality/global / literal LZW (default)</p>
 								</div>
 								<strong class="lane-time" id="wtf-time">—</strong>
 							</div>
@@ -215,7 +208,10 @@
 					</article>
 					<article>
 						<span>Bytes stay visible</span>
-						<p>Turbo can be much faster and much larger. The race never hides that.</p>
+						<p>
+							Both clocks include palette creation and pixel mapping; wtfgif uses
+							literal LZW by default.
+						</p>
 					</article>
 					<article>
 						<span>Contracts stay separate</span>
@@ -225,7 +221,7 @@
 				<p class="method-footnote">
 					Reproduce the Node benchmarks and inspect every condition in
 					<a
-						href="https://github.com/mpopv/wtfgif/blob/main/BENCHMARKS.md"
+						href="https://github.com/mpopv/wtfgif/blob/master/BENCHMARKS.md"
 						target="_blank"
 						rel="noreferrer"
 						>BENCHMARKS.md ↗</a

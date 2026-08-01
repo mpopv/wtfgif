@@ -56,8 +56,6 @@ const elements = {
 	outputPreview: document.querySelector("#output-preview"),
 	outputPreviewWrap: document.querySelector("#output-preview-wrap"),
 	pixelVerdict: document.querySelector("#pixel-verdict"),
-	profileButtons: [...document.querySelectorAll("[data-profile]")],
-	profileNote: document.querySelector("#profile-note"),
 	raceButton: document.querySelector("#race-button"),
 	raceNote: document.querySelector("#race-note"),
 	restoreSample: document.querySelector("#restore-sample"),
@@ -82,7 +80,6 @@ const state = {
 	images: [],
 	mode: "encode",
 	outputUrl: null,
-	profile: "quality",
 	raceCount: 0,
 	selectedGif: GIF_FIXTURES[0],
 	usingBuiltIn: true,
@@ -293,48 +290,6 @@ async function loadUploadedImages(files) {
 	}
 }
 
-function fixed332Palette() {
-	return Array.from({ length: 256 }, (_, index) => {
-		const red = Math.floor((((index >> 5) & 7) * 255 + 3) / 7);
-		const green = Math.floor((((index >> 2) & 7) * 255 + 3) / 7);
-		const blue = Math.floor(((index & 3) * 255 + 1) / 3);
-		return (red << 16) | (green << 8) | blue;
-	});
-}
-
-function quantizeRgb332(rgba) {
-	let hasTransparency = false;
-	for (let offset = 3; offset < rgba.length; offset += 4) {
-		if (rgba[offset] < ALPHA_THRESHOLD) {
-			hasTransparency = true;
-			break;
-		}
-	}
-	const indexed = new Uint8Array(rgba.length / 4);
-	for (
-		let source = 0, target = 0;
-		source < rgba.length;
-		source += 4, target += 1
-	) {
-		if (hasTransparency && rgba[source + 3] < ALPHA_THRESHOLD) {
-			indexed[target] = 255;
-		} else {
-			const index =
-				(rgba[source] & 0xe0) |
-				((rgba[source + 1] >> 3) & 0x1c) |
-				(rgba[source + 2] >> 6);
-			indexed[target] = hasTransparency ? Math.min(index, 254) : index;
-		}
-	}
-	const palette = fixed332Palette();
-	if (hasTransparency) palette[255] = 0;
-	return {
-		indexed,
-		palette,
-		transparentIndex: hasTransparency ? 255 : undefined,
-	};
-}
-
 function pointColor(point) {
 	return (point.r << 16) | (point.g << 8) | point.b;
 }
@@ -445,23 +400,17 @@ function encodeOmggifQuality(fixture) {
 	return encodeOmggifIndexed(fixture, quantizeImageQGlobal(fixture.rgba));
 }
 
-function encodeOmggifTurbo(fixture) {
-	return encodeOmggifIndexed(fixture, quantizeRgb332(fixture.rgba));
-}
-
 function encodeWtfgif(fixture) {
-	const turbo = state.profile === "turbo";
 	return encodeRgbaGifFrames({
 		alphaThreshold: ALPHA_THRESHOLD,
 		backend: "wasm",
-		compression: turbo ? "fast" : "balanced",
 		delay: 10,
 		frameCount: fixture.frameCount,
 		frames: fixture.rgba,
 		height: fixture.height,
 		loop: 0,
 		paletteMode: "global",
-		quantization: turbo ? "fast" : "quality",
+		quantization: "quality",
 		width: fixture.width,
 	});
 }
@@ -609,10 +558,7 @@ function displayResult(omg, wtf, summary) {
 async function runEncodeRace() {
 	const fixture = state.encodeFixture;
 	if (!fixture) throw new Error("No RGBA frames are ready");
-	const omgOperation =
-		state.profile === "quality"
-			? () => encodeOmggifQuality(fixture)
-			: () => encodeOmggifTurbo(fixture);
+	const omgOperation = () => encodeOmggifQuality(fixture);
 	const wtfOperation = () => encodeWtfgif(fixture);
 	let omg;
 	let wtf;
@@ -637,21 +583,16 @@ async function runEncodeRace() {
 	}
 	const omgPsnr = psnrAgainstSource(fixture.rgba, omgDecoded.frames);
 	const wtfPsnr = psnrAgainstSource(fixture.rgba, wtfDecoded.frames);
-	if (state.profile === "turbo")
-		assertSameAnimation(omgDecoded, wtfDecoded, "Turbo parity");
 
 	elements.omgVerdict.textContent = `${formatBytes(omg.output.length)} / ${omg.batchSize}× timer batch`;
 	elements.wtfVerdict.textContent = `${formatBytes(wtf.output.length)} / ${wtf.batchSize}× timer batch`;
 	elements.metricBytes.textContent = `${formatBytes(wtf.output.length)} (${(wtf.output.length / omg.output.length).toFixed(2)}× baseline)`;
 	elements.metricQuality.textContent = `${Number.isFinite(wtfPsnr) ? wtfPsnr.toFixed(1) : "∞"} dB (${(wtfPsnr - omgPsnr).toFixed(1)} vs baseline)`;
-	elements.metricValidation.textContent =
-		state.profile === "turbo" ? "Exact decoded parity" : "Both outputs decoded";
+	elements.metricValidation.textContent = "Both outputs decoded";
 	displayResult(
 		omg,
 		wtf,
-		state.profile === "turbo"
-			? `PASS / ${wtfDecoded.frames.length.toLocaleString()} decoded RGBA bytes identical between engines.`
-			: `PASS / both GIFs decoded; quality measured against the source RGBA frames.`,
+		`PASS / both GIFs decoded; quality measured against the source RGBA frames.`,
 	);
 	setOutputPreview(wtf.output);
 }
@@ -804,30 +745,6 @@ function showGifWorkload() {
 	resetResult();
 }
 
-function setProfile(profile) {
-	state.profile = profile;
-	for (const button of elements.profileButtons) {
-		button.setAttribute(
-			"aria-pressed",
-			String(button.dataset.profile === profile),
-		);
-	}
-	if (profile === "quality") {
-		elements.profileNote.textContent = "Adaptive global palette + balanced LZW";
-		elements.omgDetail.textContent = "global rgbquant / balanced LZW";
-		elements.wtfDetail.textContent = "quality/global / balanced LZW";
-		elements.contractDescription.textContent =
-			"Both clocks include palette creation, pixel mapping, and balanced LZW.";
-	} else {
-		elements.profileNote.textContent = "Fixed RGB332 palette + fastest LZW";
-		elements.omgDetail.textContent = "RGB332 mapping / balanced LZW";
-		elements.wtfDetail.textContent = "fast/global / literal LZW";
-		elements.contractDescription.textContent =
-			"Both engines receive identical RGB332 pixels; output bytes reveal the compression tradeoff.";
-	}
-	resetResult();
-}
-
 function setMode(mode) {
 	state.mode = mode;
 	for (const button of elements.modeButtons) {
@@ -843,7 +760,6 @@ function setMode(mode) {
 		elements.raceNote.textContent =
 			"Image decoding, resizing, and one-time Wasm initialization happen before the clock. Results are medians; engine order alternates between races.";
 		normalizeImages();
-		setProfile(state.profile);
 	} else if (mode === "decode") {
 		elements.contractKicker.textContent = "GIF → every composited RGBA frame";
 		elements.contractDescription.textContent =
@@ -876,8 +792,6 @@ async function initialize() {
 	renderFixtureButtons();
 	for (const button of elements.modeButtons)
 		button.addEventListener("click", () => setMode(button.dataset.mode));
-	for (const button of elements.profileButtons)
-		button.addEventListener("click", () => setProfile(button.dataset.profile));
 	elements.imageUpload.addEventListener("change", () =>
 		loadUploadedImages(elements.imageUpload.files),
 	);

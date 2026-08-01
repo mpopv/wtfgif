@@ -1329,7 +1329,13 @@ export class GifReader {
     const frame = this.frames[frameNum]!;
     const framePixels = frame.width * frame.height;
     const canvasPixels = this.width_ * this.height_;
-    if (framePixels >= 16384 && framePixels * 2 >= canvasPixels) {
+    // The Rust decoder is already faster for medium partial frames; the old
+    // full-frame-only cutoff left measurable work on the JS path.
+    if (
+      canvasPixels >= 16384 &&
+      framePixels >= 4096 &&
+      framePixels * 2 >= canvasPixels
+    ) {
       const wasmModule = getWasmCoreModule();
       if (wasmModule) {
         this.wasmCore ??= new wasmModule.WtfGifCore(this.buf);
