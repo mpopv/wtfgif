@@ -132,12 +132,12 @@ function resetResult() {
 	elements.wtfTime.textContent = "—";
 	elements.omgTrack.style.width = "0%";
 	elements.wtfTrack.style.width = "0%";
-	elements.omgVerdict.textContent = "Waiting on the grid";
+	elements.omgVerdict.textContent = "Waiting on the run";
 	elements.wtfVerdict.textContent = state.wasmReady
 		? "Rust/Wasm ready"
 		: "Rust/Wasm preparing";
-	elements.liveSpeed.textContent = "RACE!";
-	elements.pixelVerdict.textContent = "Run the race to validate both outputs.";
+	elements.liveSpeed.textContent = "—";
+	elements.pixelVerdict.textContent = "Run the demo to validate both outputs.";
 	elements.metricBytes.textContent = "—";
 	elements.metricQuality.textContent = "—";
 	elements.metricValidation.textContent = "—";
@@ -549,7 +549,6 @@ function displayResult(omg, wtf, summary) {
 	elements.liveSpeed.textContent = `${ratio.toLocaleString(undefined, {
 		maximumFractionDigits: ratio >= 100 ? 0 : 1,
 	})}×`;
-	elements.heroLiveStat.textContent = `${ratio.toFixed(ratio >= 100 ? 0 : 1)}× LIVE`;
 	elements.pixelVerdict.textContent = summary;
 	elements.resultCallout.dataset.result = "pass";
 	animateTracks(omg.duration, wtf.duration);
@@ -754,9 +753,13 @@ function setMode(mode) {
 	elements.gifControls.classList.toggle("is-hidden", mode === "encode");
 	if (mode === "encode") {
 		elements.contractKicker.textContent = "RGBA → palette → GIF";
+		elements.contractDescription.textContent =
+			"Both clocks include palette creation and pixel mapping; wtfgif uses literal LZW by default.";
 		elements.omgLabel.textContent = "image-q + omggif";
+		elements.omgDetail.textContent = "global rgbquant / balanced LZW";
 		elements.wtfLabel.textContent = "wtfgif";
-		elements.raceButton.firstElementChild.textContent = "Run encoder race";
+		elements.wtfDetail.textContent = "quality/global / literal LZW";
+		elements.raceButton.textContent = "Run encoder race";
 		elements.raceNote.textContent =
 			"Image decoding, resizing, and one-time Wasm initialization happen before the clock. Results are medians; engine order alternates between races.";
 		normalizeImages();
@@ -768,7 +771,7 @@ function setMode(mode) {
 		elements.omgDetail.textContent = "JavaScript decode";
 		elements.wtfLabel.textContent = "wtfgif GifReader";
 		elements.wtfDetail.textContent = "Rust/Wasm decode";
-		elements.raceButton.firstElementChild.textContent = "Run decode race";
+		elements.raceButton.textContent = "Run decode race";
 		elements.raceNote.textContent =
 			"One-time Wasm initialization happens before the clock. Every composited RGBA byte must match omggif.";
 		showGifWorkload();
@@ -780,7 +783,7 @@ function setMode(mode) {
 		elements.omgDetail.textContent = "decode + fresh LZW";
 		elements.wtfLabel.textContent = "wtfgif remux";
 		elements.wtfDetail.textContent = "validate + preserve LZW";
-		elements.raceButton.firstElementChild.textContent = "Run remux race";
+		elements.raceButton.textContent = "Run remux race";
 		elements.raceNote.textContent =
 			"This mode measures a lossless structural operation on an existing GIF. It does not represent arbitrary-image encoding.";
 		showGifWorkload();
