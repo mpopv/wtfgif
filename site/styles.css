@@ -397,7 +397,6 @@ h2 {
 
 .upload-button,
 .text-button,
-.profile-switch button,
 select,
 .fixture-button {
 	border: 1px solid var(--line);
@@ -440,29 +439,7 @@ select {
 	color-scheme: dark;
 }
 
-.profile-switch {
-	display: grid;
-	grid-template-columns: 1fr 1fr;
-	width: 100%;
-}
-
-.profile-switch button {
-	padding: 0.75rem;
-	font-size: 0.66rem;
-	font-weight: 700;
-	letter-spacing: 0.08em;
-	text-transform: uppercase;
-}
-
-.profile-switch button + button {
-	border-left: 0;
-}
-.profile-switch button[aria-pressed="true"] {
-	background: var(--acid);
-	color: var(--ink);
-}
-
-.profile-control small {
+.encoder-control small {
 	color: var(--muted);
 	font-size: 0.58rem;
 	line-height: 1.45;

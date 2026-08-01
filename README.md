@@ -20,6 +20,10 @@ import { initializeWasmGlobally } from "wtfgif";
 await initializeWasmGlobally();
 ```
 
+Initialization only loads and compiles WebAssembly. There is no required
+primer call or synthetic encode; after this one-time startup, calls use the
+same initialized module.
+
 ## Encode images
 
 Give wtfgif one flat RGBA buffer containing every frame:
@@ -34,18 +38,15 @@ const gif = encodeRgbaGifFrames({
 	frameCount,
 	delay: 10,
 	loop: 0,
-	quantization: "quality",
-	paletteMode: "global",
-	compression: "balanced",
 });
 ```
 
-Use `quantization: "fast"` with `compression: "fast"` for maximum speed. It
-uses fewer colors accurately and produces a much larger GIF. Use `quality` and
-`balanced` for the normal default.
-
 GIF itself is limited to 256 colors per palette and binary transparency, so no
 GIF encoder can preserve every full-color source pixel exactly.
+
+The RGBA path uses one quality-first pipeline: adaptive palette quantization
+followed by literal LZW. Literal LZW is lossless for the indexed GIF pixels, so
+it never trades away visual quality for speed; it only produces larger files.
 
 ## Decode GIFs
 
@@ -65,33 +66,54 @@ for (let frame = 0; frame < reader.numFrames(); frame += 1) {
 ## How fast?
 
 The default benchmark uses eight real MakeEmoji images, normalized to
-128×128 RGBA frames. Palette creation, pixel mapping, and GIF compression are
-all timed. WebAssembly initialization and image loading are not.
+128×128 RGBA frames, with 200 timed samples after 30 warmups. Palette creation,
+pixel mapping, and GIF compression are all timed. WebAssembly initialization and
+image loading are not.
 
-| Real-image encode | Baseline | wtfgif | Speedup | wtfgif output |
+| Real-image quality encode | Baseline | wtfgif | Speedup | wtfgif output |
 | --- | ---: | ---: | ---: | ---: |
-| Quality | 93.062 ms | 2.985 ms | **31.17×** | 45,730 bytes / 32.71 dB |
-| Turbo, exact decoded parity | 5.299 ms | 0.282 ms | **18.82×** | 149,601 bytes / 19.55 dB |
+| Adaptive global palette | 107.898 ms | 0.732 ms | **147.49×** | 149,601 bytes / 34.12 dB |
 
-The Quality baseline is `image-q` plus omggif. Turbo gives both encoders the
-same RGB332 pixels; wtfgif is faster because its literal LZW mode trades file
-size for CPU time.
+The baseline is `image-q` plus omggif with balanced LZW. Both implementations
+create an adaptive global palette and map every RGBA pixel. WebAssembly is
+initialized before timed samples. The race measures this single quality-first
+RGBA pipeline; there is no hidden lower-quality shortcut in the race.
+
+The same 200-sample run with every source pixel treated as opaque
+(`BENCH_ALPHA_THRESHOLD=0`) measured 119.788 ms for image-q + omggif versus
+0.905 ms for wtfgif: **132.41×**, at 33.91 dB PSNR.
+
+For a true no-cache measurement, run `BENCH_ITERATIONS=31 node scripts/bench-cold-rgba.mjs`; it starts a new
+Node process for every sample and includes imports, Wasm initialization, and
+the complete encode. The current 31-sample median is 177.470 ms for the
+baseline versus 9.362 ms for wtfgif (18.96×). Initialize Wasm during page or
+worker startup when measuring the hot path above.
 
 If your frames are already palette-indexed—the direct `GifWriter` contract—
-wtfgif is **110.37× faster**: 16.827 ms for omggif versus 0.152 ms for wtfgif.
+wtfgif is **180.28× faster**: 17.100 ms for omggif versus 0.095 ms for wtfgif.
 That result is byte-decoded and checked for exact RGBA equality before timing.
 
-Decode remains workload-dependent: **1.77×** on the included 198-frame
-128×128 GIF and **4.39×** on the included 16-frame 498×498 GIF, with exact
+Decode remains workload-dependent: **1.86×** on the included 198-frame
+128×128 GIF and **4.31×** on the included 16-frame 498×498 GIF, with exact
 composited RGBA parity.
 
 ```bash
 npm run bench
 npm run bench:encode
 BENCH_GIF_FILTER=GIGACHAD npm run bench:decode
+BENCH_RGBA_FIXTURE=stress BENCH_ITERATIONS=3 npm run bench:rgba
 ```
 
 See [BENCHMARKS.md](BENCHMARKS.md) for every condition, output-size tradeoff,
 and reproduction command.
+
+## Upgrade note for 2.0
+
+The old internal WebAssembly warmup-primer hooks were removed. If you used
+`WasmWebModule` directly, remove calls to
+`prepare_reencode_hot_path`, `reencode_hot_path_primer`, and
+`remux_hot_path_primer`; `initializeWasmGlobally()` or `initializeWasmModule()`
+is now sufficient. The public GIF reader, writer, RGBA encoder, and compression
+options remain available.
 
 [MIT](LICENSE)

@@ -9,9 +9,20 @@ const require = createRequire(import.meta.url);
 const ImageQ = require("image-q");
 const { GifReader, GifWriter } = require("omggif");
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const iterations = Number(process.env.BENCH_ITERATIONS ?? 15);
-const warmups = Number(process.env.BENCH_WARMUP_ITERATIONS ?? 4);
-const alphaThreshold = Math.trunc(255 * 0.7);
+const iterations = Number(process.env.BENCH_ITERATIONS ?? 200);
+const warmups = Number(process.env.BENCH_WARMUP_ITERATIONS ?? 30);
+const alphaThreshold = Math.trunc(
+	Number(process.env.BENCH_ALPHA_THRESHOLD ?? 179),
+);
+if (
+	!Number.isInteger(alphaThreshold) ||
+	alphaThreshold < 0 ||
+	alphaThreshold > 255
+) {
+	throw new Error(
+		"BENCH_ALPHA_THRESHOLD must be an integer from 0 through 255",
+	);
+}
 let sink = 0;
 
 await initializeWasmGlobally();
@@ -89,48 +100,6 @@ function measure(operation) {
 		sink ^= result[result.length - 1] ?? 0;
 	}
 	return median(samples);
-}
-
-function fixed332Palette() {
-	return Array.from({ length: 256 }, (_, index) => {
-		const red = Math.floor((((index >> 5) & 7) * 255 + 3) / 7);
-		const green = Math.floor((((index >> 2) & 7) * 255 + 3) / 7);
-		const blue = Math.floor(((index & 3) * 255 + 1) / 3);
-		return (red << 16) | (green << 8) | blue;
-	});
-}
-
-function quantizeRgb332(rgba) {
-	let hasTransparency = false;
-	for (let offset = 3; offset < rgba.length; offset += 4) {
-		if (rgba[offset] < alphaThreshold) {
-			hasTransparency = true;
-			break;
-		}
-	}
-	const indexed = new Uint8Array(rgba.length / 4);
-	for (
-		let source = 0, target = 0;
-		source < rgba.length;
-		source += 4, target += 1
-	) {
-		if (hasTransparency && rgba[source + 3] < alphaThreshold)
-			indexed[target] = 255;
-		else {
-			const index =
-				(rgba[source] & 0xe0) |
-				((rgba[source + 1] >> 3) & 0x1c) |
-				(rgba[source + 2] >> 6);
-			indexed[target] = hasTransparency ? Math.min(index, 254) : index;
-		}
-	}
-	const palette = fixed332Palette();
-	if (hasTransparency) palette[255] = 0;
-	return {
-		indexed,
-		palette,
-		transparentIndex: hasTransparency ? 255 : undefined,
-	};
 }
 
 function pointColor(point) {
@@ -239,22 +208,17 @@ function encodeOmggifQuality(fixture) {
 	return encodeOmggifIndexed(fixture, quantizeImageQGlobal(fixture.rgba));
 }
 
-function encodeOmggifTurbo(fixture) {
-	return encodeOmggifIndexed(fixture, quantizeRgb332(fixture.rgba));
-}
-
-function encodeWtfgif(fixture, profile) {
+function encodeWtfgif(fixture) {
 	return encodeRgbaGifFrames({
 		alphaThreshold,
 		backend: "wasm",
-		compression: profile === "turbo" ? "fast" : "balanced",
 		delay: 10,
 		frameCount: fixture.frameCount,
 		frames: fixture.rgba,
 		height: fixture.height,
 		loop: 0,
 		paletteMode: "global",
-		quantization: profile === "turbo" ? "fast" : "quality",
+		quantization: "quality",
 		width: fixture.width,
 	});
 }
@@ -270,15 +234,6 @@ function decode(encoded) {
 		pixels.set(frame, index * frameBytes);
 	}
 	return pixels;
-}
-
-function assertEqual(left, right, label) {
-	if (left.length !== right.length)
-		throw new Error(`${label}: decoded lengths differ`);
-	for (let index = 0; index < left.length; index += 1) {
-		if (left[index] !== right[index])
-			throw new Error(`${label}: decoded RGBA differs at byte ${index}`);
-	}
 }
 
 function quality(encoded, fixture) {
@@ -298,55 +253,48 @@ function quality(encoded, fixture) {
 	return 20 * Math.log10(255 / Math.sqrt(squaredError / sampleCount));
 }
 
-const fixtures = [realImageFixture()];
-if (process.env.BENCH_RGBA_INCLUDE_STRESS === "1") {
+const fixtureMode = process.env.BENCH_RGBA_FIXTURE ?? "real";
+if (
+	fixtureMode !== "real" &&
+	fixtureMode !== "stress" &&
+	fixtureMode !== "all"
+) {
+	throw new Error("BENCH_RGBA_FIXTURE must be real, stress, or all");
+}
+const fixtures = fixtureMode === "stress" ? [] : [realImageFixture()];
+if (
+	fixtureMode === "stress" ||
+	fixtureMode === "all" ||
+	process.env.BENCH_RGBA_INCLUDE_STRESS === "1"
+) {
 	fixtures.push(makePhotoLikeStressFixture(512, 512, 10));
 }
 
 console.log(
-	`Arbitrary RGBA encoder benchmark: initialized Wasm, ${iterations} samples, ${warmups} warmups`,
+	`Arbitrary RGBA encoder benchmark: initialized Wasm, alpha threshold ${alphaThreshold}, ${iterations} samples, ${warmups} warmups`,
 );
-console.log(
-	"fixture\tprofile\timplementation\tmedian ms\tspeedup\tbytes\tPSNR dB",
-);
+console.log("fixture\timplementation\tmedian ms\tspeedup\tbytes\tPSNR dB");
 for (const fixture of fixtures) {
-	for (const profile of ["quality", "turbo"]) {
-		const omgRun =
-			profile === "quality"
-				? () => encodeOmggifQuality(fixture)
-				: () => encodeOmggifTurbo(fixture);
-		const wtfRun = () => encodeWtfgif(fixture, profile);
-		const omgOutput = omgRun();
-		const wtfOutput = wtfRun();
-		if (profile === "turbo")
-			assertEqual(
-				decode(omgOutput),
-				decode(wtfOutput),
-				`${fixture.name}/turbo`,
-			);
-		const omgMs = measure(omgRun);
-		const wtfMs = measure(wtfRun);
-		for (const [implementation, milliseconds, output, speedup] of [
+	const omgRun = () => encodeOmggifQuality(fixture);
+	const wtfRun = () => encodeWtfgif(fixture);
+	const omgOutput = omgRun();
+	const wtfOutput = wtfRun();
+	const omgMs = measure(omgRun);
+	const wtfMs = measure(wtfRun);
+	for (const [implementation, milliseconds, output, speedup] of [
+		["image-q + omggif", omgMs, omgOutput, 1],
+		["wtfgif", wtfMs, wtfOutput, omgMs / wtfMs],
+	]) {
+		console.log(
 			[
-				profile === "quality" ? "image-q + omggif" : "RGB332 + omggif",
-				omgMs,
-				omgOutput,
-				1,
-			],
-			["wtfgif", wtfMs, wtfOutput, omgMs / wtfMs],
-		]) {
-			console.log(
-				[
-					fixture.name,
-					profile,
-					implementation,
-					milliseconds.toFixed(3),
-					`${speedup.toFixed(2)}x`,
-					output.length,
-					quality(output, fixture).toFixed(2),
-				].join("\t"),
-			);
-		}
+				fixture.name,
+				implementation,
+				milliseconds.toFixed(3),
+				`${speedup.toFixed(2)}x`,
+				output.length,
+				quality(output, fixture).toFixed(2),
+			].join("\t"),
+		);
 	}
 }
 console.log(`sink=${sink}`);

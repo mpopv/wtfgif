@@ -33,12 +33,6 @@ export interface WasmCoreModule {
 	decode_all_rgba?: (data: Uint8Array) => Uint32Array;
 	reencode_gif_pixel_perfect?: (data: Uint8Array) => Uint8Array;
 	remux_gif_pixel_perfect?: (data: Uint8Array) => Uint8Array;
-	prepare_reencode_hot_path?: () => void;
-	reencode_hot_path_primer?: (
-		side: number,
-		frameCount: number,
-	) => Uint8Array;
-	remux_hot_path_primer?: () => Uint8Array;
 	prepare_composited_rgba?: (
 		data: Uint8Array,
 		requestedFrames: Uint8Array,
@@ -224,6 +218,35 @@ export interface WasmCoreModule {
 		quantization: number,
 		paletteMode: number,
 	) => Uint8Array;
+	encode_rgba_gif_advanced_from_input?: (
+		length: number,
+		width: number,
+		height: number,
+		frameCount: number,
+		paletteRgb: Uint32Array,
+		delays: Uint16Array,
+		loopCount: number,
+		deltas: boolean,
+		alphaThreshold: number,
+		literal: boolean,
+		quantization: number,
+		paletteMode: number,
+	) => Uint8Array;
+	encode_rgba_gif_advanced_scratch_from_input?: (
+		length: number,
+		width: number,
+		height: number,
+		frameCount: number,
+		paletteRgb: Uint32Array,
+		delays: Uint16Array,
+		loopCount: number,
+		deltas: boolean,
+		alphaThreshold: number,
+		literal: boolean,
+		quantization: number,
+		paletteMode: number,
+	) => number;
+	gif_output_scratch_ptr?: () => number;
 }
 
 export interface PooledDecoderTables {

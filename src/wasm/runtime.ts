@@ -2,11 +2,6 @@ import { WasmCoreModule } from "../types";
 
 let cachedWasmCoreModule: WasmCoreModule | null | undefined;
 let wasmInitPromise: Promise<void> | null = null;
-const WASM_REENCODE_PRIMER = new Uint8Array([
-	71, 73, 70, 56, 57, 97, 2, 0, 2, 0, 128, 0, 0, 0, 0, 0, 255, 255, 255,
-	44, 0, 0, 0, 0, 2, 0, 2, 0, 0, 2, 3, 68, 24, 20, 0, 59,
-]);
-const WASM_PREPARE_ITERATIONS = 64;
 
 export type WasmWebModule = WasmCoreModule & {
 	default?: (moduleOrPath?: unknown) => Promise<unknown>;
@@ -20,7 +15,7 @@ type ProcessWithBuiltinModule = NodeJS.Process & {
 	getBuiltinModule?: (id: string) => NodeModuleBuiltin | undefined;
 };
 
-const getSynchronousRequire = (): NodeRequire | null => {
+const synchronousRequire = (() => {
 	const processWithBuiltins =
 		typeof process === "undefined"
 			? undefined
@@ -31,11 +26,11 @@ const getSynchronousRequire = (): NodeRequire | null => {
 		return createRequire(import.meta.url);
 	}
 	return typeof require === "function" ? require : null;
-};
+})();
 
 const tryRequire = (id: string): unknown => {
 	try {
-		return getSynchronousRequire()?.(id) ?? null;
+		return synchronousRequire?.(id) ?? null;
 	} catch {
 		return null;
 	}
@@ -48,40 +43,15 @@ const asWasmCoreModule = (value: unknown): WasmCoreModule | null => {
 	return value as WasmCoreModule;
 };
 
-const prepareWasmModule = (module: WasmCoreModule): void => {
-	module.prepare_reencode_hot_path?.();
-	const representativePrimers = module.reencode_hot_path_primer
-		? [
-				module.reencode_hot_path_primer(16, 2),
-				module.reencode_hot_path_primer(32, 8),
-				...(module.remux_hot_path_primer
-					? [module.remux_hot_path_primer()]
-					: []),
-			]
-		: [];
-	if (module.reencode_gif_pixel_perfect) {
-		for (const primer of representativePrimers) {
-			for (let iteration = 0; iteration < 32; iteration++) {
-				module.reencode_gif_pixel_perfect(primer);
-				module.remux_gif_pixel_perfect?.(primer);
-			}
-		}
-	}
-	for (let iteration = 0; iteration < WASM_PREPARE_ITERATIONS; iteration++) {
-		module.reencode_gif_pixel_perfect?.(WASM_REENCODE_PRIMER);
-		module.remux_gif_pixel_perfect?.(WASM_REENCODE_PRIMER);
-		module.decode_all_rgba?.(WASM_REENCODE_PRIMER);
-	}
-};
-
 const loadWasmCoreModule = (): WasmCoreModule | null => {
 	if (cachedWasmCoreModule !== undefined) {
 		return cachedWasmCoreModule;
 	}
 
 	const loaded =
-		tryRequire("../../crates/wtfgif-core/pkg/wtfgif_core.js") ??
+		tryRequire("./wasm-core/wtfgif_core.js") ??
 		tryRequire("../crates/wtfgif-core/pkg/wtfgif_core.js") ??
+		tryRequire("../../crates/wtfgif-core/pkg/wtfgif_core.js") ??
 		tryRequire("wtfgif/wasm-core");
 	cachedWasmCoreModule = asWasmCoreModule(loaded);
 	return cachedWasmCoreModule;
@@ -94,6 +64,15 @@ export function setWasmCoreModule(module: WasmCoreModule | null): void {
 export function getWasmCoreModule(): WasmCoreModule | null {
 	return loadWasmCoreModule();
 }
+
+// Node's generated wasm-pack binding loads synchronously. Start that module
+// load as soon as this runtime module is evaluated so package parsing and wasm
+// compilation can overlap; initialization still awaits this promise before a
+// caller can encode. This performs no encode/decode/remux work.
+const preloadedNodeWasmCore =
+	typeof process !== "undefined" && process.versions?.node
+		? Promise.resolve().then(() => getWasmCoreModule())
+		: null;
 
 const loadBrowserWasmCoreModule = async (
 	moduleOrPath?: unknown,
@@ -128,7 +107,6 @@ export const initializeGlobalWasm = (
 				await providedWebModule.default();
 			}
 			setWasmCoreModule(providedModule);
-			prepareWasmModule(providedModule);
 			return;
 		}
 		if (cachedWasmCoreModule === null) {
@@ -138,7 +116,13 @@ export const initializeGlobalWasm = (
 			const browserModule = await loadBrowserWasmCoreModule(moduleOrPath);
 			if (browserModule) {
 				setWasmCoreModule(browserModule);
-				prepareWasmModule(browserModule);
+				return;
+			}
+		}
+		if (preloadedNodeWasmCore) {
+			const preloaded = await preloadedNodeWasmCore;
+			if (preloaded) {
+				setWasmCoreModule(preloaded);
 				return;
 			}
 		}
@@ -148,7 +132,6 @@ export const initializeGlobalWasm = (
 		const browserModule = await loadBrowserWasmCoreModule(moduleOrPath);
 		if (browserModule) {
 			setWasmCoreModule(browserModule);
-			prepareWasmModule(browserModule);
 		}
 	})().finally(() => {
 		wasmInitPromise = null;
@@ -171,7 +154,6 @@ export async function initializeWasmModule(
 		throw new Error("The supplied module is not a wtfgif WebAssembly module");
 	}
 	setWasmCoreModule(wasm);
-	prepareWasmModule(wasm);
 }
 
 export function getWasmFeatures(): {

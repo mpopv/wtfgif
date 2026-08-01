@@ -44,6 +44,22 @@ describe("WebAssembly runtime integration", () => {
 		});
 	});
 
+	test("does not execute unrelated work during initialization", async () => {
+		const reencodeCall = vi.fn(() => new Uint8Array());
+		const remuxCall = vi.fn(() => new Uint8Array());
+		const decodeCall = vi.fn(() => new Uint32Array());
+		await initializeGlobalWasm({
+			...fakeCoreModule,
+			reencode_gif_pixel_perfect: reencodeCall,
+			remux_gif_pixel_perfect: remuxCall,
+			decode_all_rgba: decodeCall,
+		});
+
+		expect(reencodeCall).not.toHaveBeenCalled();
+		expect(remuxCall).not.toHaveBeenCalled();
+		expect(decodeCall).not.toHaveBeenCalled();
+	});
+
 	test("initializes statically imported bindings for edge runtimes", async () => {
 		const init = vi.fn(async () => undefined);
 		const module = { ...fakeCoreModule, default: init };
