@@ -1867,12 +1867,18 @@ fn decode_frame_indices_with_image_scratch(
 ) -> Result<Vec<u8>, String> {
     let frame_size = usize::from(frame.width) * usize::from(frame.height);
     if should_decode_lzw_direct(frame, frame_size) {
-        if image_data.capacity() < frame.data_length {
-            image_data.reserve(frame.data_length.saturating_sub(image_data.len()));
+        let image_data_slice;
+        if let Some(range) = single_image_data_range(data, frame.data_offset) {
+            image_data_slice = &data[range];
+        } else {
+            if image_data.capacity() < frame.data_length {
+                image_data.reserve(frame.data_length.saturating_sub(image_data.len()));
+            }
+            collect_image_data_into(data, frame.data_offset, image_data)?;
+            image_data_slice = image_data.as_slice();
         }
-        collect_image_data_into(data, frame.data_offset, image_data)?;
         let mut output = vec![0; frame_size];
-        lzw_decode_to_indices_direct(frame.min_code_size, image_data, &mut output)?;
+        lzw_decode_to_indices_direct(frame.min_code_size, image_data_slice, &mut output)?;
         return deinterlace_frame_indices(output, frame);
     }
     let mut lzw_scratch = LzwStackScratch::default();
@@ -1885,24 +1891,30 @@ fn decode_frame_indices_with_scratches(
     image_data: &mut Vec<u8>,
     lzw_scratch: &mut LzwStackScratch,
 ) -> Result<Vec<u8>, String> {
-    if image_data.capacity() < frame.data_length {
-        image_data.reserve(frame.data_length.saturating_sub(image_data.len()));
+    let image_data_slice;
+    if let Some(range) = single_image_data_range(data, frame.data_offset) {
+        image_data_slice = &data[range];
+    } else {
+        if image_data.capacity() < frame.data_length {
+            image_data.reserve(frame.data_length.saturating_sub(image_data.len()));
+        }
+        collect_image_data_into(data, frame.data_offset, image_data)?;
+        image_data_slice = image_data.as_slice();
     }
-    collect_image_data_into(data, frame.data_offset, image_data)?;
     let frame_size = usize::from(frame.width) * usize::from(frame.height);
     let linear = if should_decode_lzw_direct(frame, frame_size) {
         let mut output = vec![0; frame_size];
         if should_decode_lzw_copy(frame, frame_size) {
             lzw_decode_to_indices_copy_with_scratch(
                 frame.min_code_size,
-                image_data,
+                image_data_slice,
                 &mut output,
                 lzw_scratch,
             )?;
         } else {
             lzw_decode_to_indices_direct_with_scratch(
                 frame.min_code_size,
-                image_data,
+                image_data_slice,
                 &mut output,
                 lzw_scratch,
             )?;
@@ -1912,7 +1924,7 @@ fn decode_frame_indices_with_scratches(
         let mut output = vec![0; frame_size];
         lzw_decode_to_indices_stack_with_scratch(
             frame.min_code_size,
-            image_data,
+            image_data_slice,
             &mut output,
             lzw_scratch,
         )?;
@@ -1932,24 +1944,30 @@ fn decode_frame_indices_reusing_output(
         *output = decode_frame_indices_with_scratches(data, frame, image_data, lzw_scratch)?;
         return Ok(());
     }
-    if image_data.capacity() < frame.data_length {
-        image_data.reserve(frame.data_length.saturating_sub(image_data.len()));
+    let image_data_slice;
+    if let Some(range) = single_image_data_range(data, frame.data_offset) {
+        image_data_slice = &data[range];
+    } else {
+        if image_data.capacity() < frame.data_length {
+            image_data.reserve(frame.data_length.saturating_sub(image_data.len()));
+        }
+        collect_image_data_into(data, frame.data_offset, image_data)?;
+        image_data_slice = image_data.as_slice();
     }
-    collect_image_data_into(data, frame.data_offset, image_data)?;
     let frame_size = usize::from(frame.width) * usize::from(frame.height);
     output.resize(frame_size, 0);
     if should_decode_lzw_direct(frame, frame_size) {
         if should_decode_lzw_copy(frame, frame_size) {
             lzw_decode_to_indices_copy_with_scratch(
                 frame.min_code_size,
-                image_data,
+                image_data_slice,
                 output,
                 lzw_scratch,
             )
         } else {
             lzw_decode_to_indices_direct_with_scratch(
                 frame.min_code_size,
-                image_data,
+                image_data_slice,
                 output,
                 lzw_scratch,
             )
@@ -1957,11 +1975,23 @@ fn decode_frame_indices_reusing_output(
     } else {
         lzw_decode_to_indices_stack_with_scratch(
             frame.min_code_size,
-            image_data,
+            image_data_slice,
             output,
             lzw_scratch,
         )
     }
+}
+
+#[inline]
+fn single_image_data_range(data: &[u8], data_offset: usize) -> Option<std::ops::Range<usize>> {
+    let length_offset = data_offset.checked_add(1)?;
+    let payload_start = length_offset.checked_add(1)?;
+    let length = usize::from(*data.get(length_offset)?);
+    if length == 0 {
+        return Some(payload_start..payload_start);
+    }
+    let payload_end = payload_start.checked_add(length)?;
+    (data.get(payload_end) == Some(&0)).then_some(payload_start..payload_end)
 }
 
 #[inline]
