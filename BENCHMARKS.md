@@ -119,6 +119,11 @@ The targeted sweep ranged from **0.77×** on the tiny Clap fixture to
 **3.36×** on tenor. Every decoded byte was
 still checked for composited RGBA parity.
 
+The one-off `decodeGifFramesRgba` API has an additional direct-output path for
+animations whose frames are all full-canvas and opaque. On the same tenor GIF,
+50 samples measured 35.182 ms for omggif versus 7.069 ms for wtfgif (**4.98×**).
+That optimization does not change the drop-in reader's frame-by-frame contract.
+
 ## Browser racer
 
 The [live racer](https://mpopv.github.io/wtfgif/) uses the same eight-image

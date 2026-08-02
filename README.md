@@ -122,6 +122,8 @@ That result is byte-decoded and checked for exact RGBA equality before timing.
 Decode remains workload-dependent rather than 100×: the current fixture sweep
 ranges from **0.77×** on a tiny frame to **3.36×** on a larger input, with
 exact composited RGBA parity.
+The one-off `decodeGifFramesRgba` API reaches **4.98×** on an all-full-canvas,
+opaque animation by writing frames directly into the final stream.
 
 ```bash
 npm run bench

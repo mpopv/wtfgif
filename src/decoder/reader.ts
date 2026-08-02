@@ -1506,7 +1506,9 @@ export class GifReader {
           decodeAndBlit.call(
             this.wasmCore,
             frameNum,
-            pixels.subarray(0, canvasPixels * 4)
+            pixels.byteLength === canvasPixels * 4
+              ? pixels
+              : pixels.subarray(0, canvasPixels * 4)
           );
           this.lastDecodedFrame = frameNum;
           return;

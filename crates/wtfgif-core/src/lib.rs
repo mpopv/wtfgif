@@ -2206,6 +2206,13 @@ fn prepare_composited_frames_selected(
     requested_frames: Option<&[u8]>,
     format: PixelFormat,
 ) -> Result<Vec<u32>, String> {
+    let all_requested = requested_frames.is_none()
+        || requested_frames.is_some_and(|frames| {
+            frames.len() == metadata.frames.len() && frames.iter().all(|flag| *flag != 0)
+        });
+    if all_requested && all_frames_full_opaque(metadata) {
+        return decode_full_opaque_frames_direct(data, metadata, format);
+    }
     if let Some(requested_frames) = requested_frames {
         if requested_frames.len() > metadata.frames.len() {
             return Err("Requested frame flags exceed frame count".to_string());
@@ -2278,6 +2285,76 @@ fn prepare_composited_frames_selected(
     }
 
     Ok(output)
+}
+
+#[inline]
+fn all_frames_full_opaque(metadata: &GifMetadata) -> bool {
+    !metadata.frames.is_empty()
+        && metadata.frames.iter().all(|frame| {
+            frame.x == 0
+                && frame.y == 0
+                && frame.width == metadata.width
+                && frame.height == metadata.height
+                && frame.transparent_index.is_none()
+        })
+}
+
+/// Decode animations whose frames overwrite the entire canvas without
+/// transparency directly into the returned frame stream. The general
+/// compositor first maps each frame into a reusable canvas and then copies
+/// that canvas into the output; this common independent-frame shape only
+/// needs the palette mapping once per pixel.
+fn decode_full_opaque_frames_direct(
+    data: &[u8],
+    metadata: &GifMetadata,
+    format: PixelFormat,
+) -> Result<Vec<u32>, String> {
+    let canvas_pixels = usize::from(metadata.width)
+        .checked_mul(usize::from(metadata.height))
+        .ok_or_else(|| "Canvas size overflow".to_string())?;
+    let output_pixels = canvas_pixels
+        .checked_mul(metadata.frames.len())
+        .ok_or_else(|| "Prepared frame output overflow".to_string())?;
+    let palettes_share_table = metadata.frames.first().is_some_and(|first| {
+        metadata.frames.iter().all(|frame| {
+            frame.palette_offset == first.palette_offset && frame.palette_size == first.palette_size
+        })
+    });
+    let shared_palette = if palettes_share_table {
+        Some(build_palette_u32(data, &metadata.frames[0], format)?)
+    } else {
+        None
+    };
+    let mut output = Vec::<std::mem::MaybeUninit<u32>>::with_capacity(output_pixels);
+    unsafe {
+        output.set_len(output_pixels);
+    }
+    let mut image_data = Vec::new();
+    let mut lzw_scratch = LzwStackScratch::default();
+    let mut indices_scratch = Vec::new();
+    for (frame_index, frame) in metadata.frames.iter().enumerate() {
+        let palette_storage;
+        let palette = if let Some(palette) = shared_palette.as_ref() {
+            palette
+        } else {
+            palette_storage = build_palette_u32(data, frame, format)?;
+            &palette_storage
+        };
+        decode_frame_indices_reusing_output(
+            data,
+            frame,
+            &mut image_data,
+            &mut lzw_scratch,
+            &mut indices_scratch,
+        )?;
+        let destination = &mut output[frame_index * canvas_pixels..(frame_index + 1) * canvas_pixels];
+        blit_indices_to_uninit_full_canvas_u32(palette, &indices_scratch, destination)?;
+    }
+    let pointer = output.as_mut_ptr().cast::<u32>();
+    let length = output.len();
+    let capacity = output.capacity();
+    std::mem::forget(output);
+    Ok(unsafe { Vec::from_raw_parts(pointer, length, capacity) })
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -12461,6 +12538,68 @@ fn blit_indices_to_canvas_u32(
     Ok(())
 }
 
+fn blit_indices_to_uninit_full_canvas_u32(
+    palette: &[u32],
+    indices: &[u8],
+    output: &mut [std::mem::MaybeUninit<u32>],
+) -> Result<(), String> {
+    if indices.len() != output.len() {
+        return Err("Decoded index buffer is the wrong size".to_string());
+    }
+    if palette.len() == 256 {
+        let indices_pointer = indices.as_ptr();
+        let palette_pointer = palette.as_ptr();
+        let output_pointer = output.as_mut_ptr().cast::<u32>();
+        let mut pixel_index = 0usize;
+        while pixel_index + 8 <= indices.len() {
+            let packed = unsafe {
+                std::ptr::read_unaligned(indices_pointer.add(pixel_index).cast::<u64>())
+            };
+            let colors = unsafe {
+                [
+                    *palette_pointer.add((packed & 0xff) as usize),
+                    *palette_pointer.add(((packed >> 8) & 0xff) as usize),
+                    *palette_pointer.add(((packed >> 16) & 0xff) as usize),
+                    *palette_pointer.add(((packed >> 24) & 0xff) as usize),
+                    *palette_pointer.add(((packed >> 32) & 0xff) as usize),
+                    *palette_pointer.add(((packed >> 40) & 0xff) as usize),
+                    *palette_pointer.add(((packed >> 48) & 0xff) as usize),
+                    *palette_pointer.add(((packed >> 56) & 0xff) as usize),
+                ]
+            };
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    colors.as_ptr(),
+                    output_pointer.add(pixel_index),
+                    colors.len(),
+                );
+            }
+            pixel_index += 8;
+        }
+        while pixel_index < indices.len() {
+            let index = unsafe { *indices_pointer.add(pixel_index) };
+            if usize::from(index) >= palette.len() {
+                return Err(format!("Palette index {index} exceeds palette size"));
+            }
+            unsafe {
+                output_pointer
+                    .add(pixel_index)
+                    .write(*palette_pointer.add(usize::from(index)));
+            }
+            pixel_index += 1;
+        }
+        return Ok(());
+    }
+
+    for (pixel, &index) in output.iter_mut().zip(indices) {
+        let color = palette
+            .get(usize::from(index))
+            .ok_or_else(|| format!("Palette index {index} exceeds palette size"))?;
+        pixel.write(*color);
+    }
+    Ok(())
+}
+
 fn apply_frame_disposal_u32(
     canvas: &mut [u32],
     canvas_width: u16,
@@ -13461,6 +13600,39 @@ mod tests {
 
         assert_eq!(rgba, vec![0xff0000ff]);
         assert_eq!(bgra, vec![0xffff0000]);
+    }
+
+    #[test]
+    fn direct_full_opaque_compositing_matches_per_frame_decode() {
+        let palette = [0x000000, 0xff0000];
+        let frames = [0, 1, 1, 0];
+        let gif = encode_indexed_gif_inner(
+            &frames,
+            2,
+            1,
+            2,
+            &palette,
+            DelaySource::Constant(0),
+            -1,
+            None,
+        )
+        .unwrap();
+        let metadata = parse_metadata(&gif).unwrap();
+        assert!(all_frames_full_opaque(&metadata));
+
+        let direct = prepare_composited_frames_selected(&gif, &metadata, None, PixelFormat::Rgba)
+            .unwrap();
+        let mut expected = Vec::new();
+        for frame_index in 0..metadata.frames.len() {
+            let pixels = decode_frame_pixels_inner(&gif, &metadata, frame_index, PixelFormat::Rgba)
+                .unwrap();
+            expected.extend(
+                pixels
+                    .chunks_exact(4)
+                    .map(|pixel| u32::from_le_bytes([pixel[0], pixel[1], pixel[2], pixel[3]])),
+            );
+        }
+        assert_eq!(direct, expected);
     }
 
     #[test]
