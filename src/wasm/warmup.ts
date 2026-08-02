@@ -35,7 +35,8 @@ export function warmupWasmCore(module: WarmupModule | null): void {
 		const reserve = module.indexed_lzw_input_scratch_reserve;
 		const memory = module.wasm_memory;
 		const encode = module.encode_rgba_quality_gif_scratch_from_input;
-		if (reserve && memory && encode) {
+		const encodeVec = module.encode_rgba_quality_gif_from_input;
+		if (reserve && memory && (encode || encodeVec)) {
 			const pointer = reserve(WARMUP_RGBA.byteLength);
 			const wasmMemory = memory();
 			new Uint8Array(
@@ -43,15 +44,28 @@ export function warmupWasmCore(module: WarmupModule | null): void {
 				pointer,
 				WARMUP_RGBA.byteLength,
 			).set(WARMUP_RGBA);
-			encode(
-				WARMUP_RGBA.byteLength,
-				WARMUP_WIDTH,
-				WARMUP_HEIGHT,
-				1,
-				WARMUP_DELAYS,
-				-1,
-				179,
-			);
+			if (encode) {
+				encode(
+					WARMUP_RGBA.byteLength,
+					WARMUP_WIDTH,
+					WARMUP_HEIGHT,
+					1,
+					WARMUP_DELAYS,
+					-1,
+					179,
+				);
+			}
+			if (encodeVec) {
+				encodeVec(
+					WARMUP_RGBA.byteLength,
+					WARMUP_WIDTH,
+					WARMUP_HEIGHT,
+					1,
+					WARMUP_DELAYS,
+					-1,
+					179,
+				);
+			}
 		}
 
 		// Also touch the explicit-palette/literal entry used by the drop-in
