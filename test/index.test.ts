@@ -490,6 +490,42 @@ describe("Cross-library write/read compatibility", () => {
 });
 
 describe("Disposal metadata compatibility", () => {
+  test("large partial transparent frames stay pixel-perfect", () => {
+    const width = 512;
+    const height = 512;
+    const palette = [0xffffff, 0xff0000];
+    const output = new Uint8Array(1_000_000);
+    const writer = new OmgGifWriter(output, width, height, {
+      loop: 0,
+      palette,
+    });
+    writer.addFrame(0, 0, width, height, new Array(width * height).fill(0), {
+      disposal: 1,
+    });
+    const rect = new Array(128 * 128).fill(1);
+    writer.addFrame(128, 96, 128, 128, rect, {
+      disposal: 1,
+      transparent: 0,
+    });
+    const gif = output.slice(0, writer.end());
+    const omg = new OmgGifReader(gif);
+    const wtf = new WtfGifReader(gif);
+    const omgRgba = new Uint8Array(width * height * 4);
+    const wtfRgba = new Uint8Array(width * height * 4);
+    const omgBgra = new Uint8Array(width * height * 4);
+    const wtfBgra = new Uint8Array(width * height * 4);
+
+    for (let frame = 0; frame < 2; frame++) {
+      omg.decodeAndBlitFrameRGBA(frame, omgRgba);
+      wtf.decodeAndBlitFrameRGBA(frame, wtfRgba);
+      omg.decodeAndBlitFrameBGRA(frame, omgBgra);
+      wtf.decodeAndBlitFrameBGRA(frame, wtfBgra);
+    }
+
+    expect(wtfRgba).toStrictEqual(omgRgba);
+    expect(wtfBgra).toStrictEqual(omgBgra);
+  });
+
   test("preserves restore-to-background metadata while blitting like omggif", () => {
     const width = 2;
     const height = 2;

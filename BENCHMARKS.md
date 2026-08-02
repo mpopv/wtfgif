@@ -23,13 +23,13 @@ Pro with Node.js 22.17.1, measured on the current optimized tree.
 
 | Implementation | Median | Speedup | Bytes | PSNR |
 | --- | ---: | ---: | ---: | ---: |
-| image-q rgbquant + omggif balanced LZW | 101.588 ms | 1.00× | 39,350 | 31.84 dB |
-| wtfgif quality/global + literal LZW (default) | 0.465 ms | **218.51×** | 149,601 | 34.12 dB |
+| image-q rgbquant + omggif balanced LZW | 101.026 ms | 1.00× | 39,350 | 31.84 dB |
+| wtfgif quality/global + literal LZW (default) | 0.451 ms | **224.23×** | 149,601 | 34.12 dB |
 
 This is one practical adaptive global-palette pipeline. The implementations do
 not choose identical pixels, so the table reports source-relative PSNR and
 output bytes alongside speed. The wtfgif palette is higher quality on this
-fixture while remaining 218.51× faster. Literal LZW is lossless for the
+fixture while remaining 224.23× faster. Literal LZW is lossless for the
 indexed pixels, so the speedup does not come from lowering GIF pixel quality.
 
 The quality path uses a weighted 4-bit-per-channel histogram for ordinary
@@ -83,7 +83,7 @@ and report the median.
 ## Specialized: already-indexed frames
 
 ```bash
-BENCH_ITERATIONS=300 BENCH_WARMUP_ITERATIONS=30 npm run bench:encode
+BENCH_ITERATIONS=200 BENCH_WARMUP_ITERATIONS=40 npm run bench:encode
 ```
 
 This is the direct `GifWriter` contract: 12 full 128×128 frames, a normal
@@ -91,13 +91,18 @@ This is the direct `GifWriter` contract: 12 full 128×128 frames, a normal
 
 | Implementation | Median | Bytes |
 | --- | ---: | ---: |
-| omggif | 17.013 ms | 163,797 |
-| wtfgif | 0.084 ms | 224,001 |
-| **Speedup** | **203.66×** | **1.37× baseline** |
+| omggif | 16.541 ms | 163,797 |
+| wtfgif | 0.074 ms | 224,001 |
+| **Speedup** | **222.58×** | **1.37× baseline** |
 
 Both outputs are decoded before timing and must produce exactly the same RGBA
 pixels. This is a real 100× result, but it applies only after palette creation
 and pixel indexing have already happened.
+
+The same typed-output sweep across 2, 4, 8, 16, 32, 64, 128, and 256-color
+palettes measured a minimum of **109.65×** (32 colors) and a geometric mean of
+about **170×**. Low-color literal streams use a dedicated fixed-width writer;
+all output still decodes to the same indexed pixels.
 
 ## Decode
 
@@ -112,12 +117,18 @@ omggif usage. Every final byte must match omggif before timing.
 
 | Fixture | Shape | omggif | wtfgif | Speedup |
 | --- | ---: | ---: | ---: | ---: |
-| GIGACHAD | 198 × 128×128 | 30.997 ms | 16.124 ms | **1.92×** |
-| tenor | 16 × 498×498 | 34.859 ms | 8.308 ms | **4.20×** |
+| GIGACHAD | 198 × 128×128 | 30.391 ms | 16.345 ms | **1.86×** |
+| tenor | 16 × 498×498 | 36.675 ms | 7.967 ms | **4.60×** |
 
-The 60-sample targeted sweep ranged from **0.84×** on the tiny Clap fixture to
-**4.20×** on tenor, with a **2.21× geometric mean**. Every decoded byte was
+The 100-sample targeted sweep ranged from **0.91×** on the tiny Clap fixture to
+**4.60×** on tenor, with a **2.23× geometric mean**. Every decoded byte was
 still checked for composited RGBA parity.
+
+For large canvases with partial transparent rectangles, the drop-in reader can
+decode only the frame rectangle into Wasm scratch storage and overlay it onto
+the caller's canvas. This avoids copying the full canvas through Wasm on every
+frame while preserving RGBA/BGRA pixels exactly; the path is covered by the
+large-partial-frame parity test in `test/index.test.ts`.
 
 The one-off `decodeGifFramesRgba` API has an additional direct-output path for
 animations whose frames are all full-canvas and opaque. On the same tenor GIF,

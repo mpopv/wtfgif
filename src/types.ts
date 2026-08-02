@@ -16,6 +16,8 @@ export interface WasmCoreInstance {
 	) => void;
 	decode_frame_rgba_scratch?: (frameIndex: number) => number;
 	decode_frame_bgra_scratch?: (frameIndex: number) => number;
+	decode_frame_rect_rgba_scratch?: (frameIndex: number) => number;
+	decode_frame_rect_bgra_scratch?: (frameIndex: number) => number;
 	decode_scratch_ptr?: () => number;
 	decode_all_rgba?: () => Uint32Array;
 	reencode_gif_pixel_perfect?: () => Uint8Array;

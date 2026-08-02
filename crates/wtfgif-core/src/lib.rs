@@ -1476,6 +1476,31 @@ impl WtfGifCore {
         .map_err(|message| JsValue::from_str(&message))
     }
 
+    /// Decode one frame's rectangle into reusable RGBA/BGRA scratch storage.
+    /// Transparent pixels are returned as zero and must be left untouched by
+    /// the caller when overlaying the rectangle onto an existing canvas.
+    pub fn decode_frame_rect_rgba_scratch(&self, frame_index: usize) -> Result<usize, JsValue> {
+        decode_frame_rect_to_scratch(
+            &self.data,
+            &self.metadata,
+            frame_index,
+            PixelFormat::Rgba,
+            &mut self.decode_scratch.borrow_mut(),
+        )
+        .map_err(|message| JsValue::from_str(&message))
+    }
+
+    pub fn decode_frame_rect_bgra_scratch(&self, frame_index: usize) -> Result<usize, JsValue> {
+        decode_frame_rect_to_scratch(
+            &self.data,
+            &self.metadata,
+            frame_index,
+            PixelFormat::Bgra,
+            &mut self.decode_scratch.borrow_mut(),
+        )
+        .map_err(|message| JsValue::from_str(&message))
+    }
+
     pub fn decode_scratch_ptr(&self) -> usize {
         self.decode_scratch.borrow().output.as_ptr() as usize
     }
@@ -2166,6 +2191,93 @@ fn decode_frame_to_scratch(
         )?;
     }
     Ok(output_len)
+}
+
+fn decode_frame_rect_to_scratch(
+    data: &[u8],
+    metadata: &GifMetadata,
+    frame_index: usize,
+    format: PixelFormat,
+    scratch: &mut FrameDecodeScratch,
+) -> Result<usize, String> {
+    let frame = metadata
+        .frames
+        .get(frame_index)
+        .ok_or_else(|| "Frame index out of range".to_string())?;
+    let frame_pixels = usize::from(frame.width)
+        .checked_mul(usize::from(frame.height))
+        .ok_or_else(|| "Decoded frame size overflow".to_string())?;
+
+    scratch.composited_output.resize(frame_pixels, 0);
+    if !frame.interlaced {
+        if scratch.palette_offset != frame.palette_offset
+            || scratch.palette_size != frame.palette_size
+            || scratch.palette_format != Some(format)
+        {
+            scratch.palette = build_palette_u32(data, frame, format)?;
+            scratch.palette_offset = frame.palette_offset;
+            scratch.palette_size = frame.palette_size;
+            scratch.palette_format = Some(format);
+        }
+        let image_data_slice;
+        if let Some(range) = single_image_data_range(data, frame.data_offset) {
+            image_data_slice = &data[range];
+        } else {
+            if scratch.image_data.capacity() < frame.data_length {
+                scratch
+                    .image_data
+                    .reserve(frame.data_length.saturating_sub(scratch.image_data.len()));
+            }
+            collect_image_data_into(data, frame.data_offset, &mut scratch.image_data)?;
+            image_data_slice = scratch.image_data.as_slice();
+        }
+        if frame.transparent_index.is_none()
+            && lzw_decode_to_pixels_copy_with_scratch(
+                frame.min_code_size,
+                image_data_slice,
+                &scratch.palette,
+                &mut scratch.composited_output,
+                &mut scratch.lzw,
+            )
+            .is_ok()
+        {
+            return Ok(frame_pixels);
+        }
+    }
+
+    decode_frame_indices_reusing_output(
+        data,
+        frame,
+        &mut scratch.image_data,
+        &mut scratch.lzw,
+        &mut scratch.indices,
+    )?;
+    if scratch.palette_offset != frame.palette_offset
+        || scratch.palette_size != frame.palette_size
+        || scratch.palette_format != Some(format)
+    {
+        scratch.palette = build_palette_u32(data, frame, format)?;
+        scratch.palette_offset = frame.palette_offset;
+        scratch.palette_size = frame.palette_size;
+        scratch.palette_format = Some(format);
+    }
+
+    let transparent_index = frame.transparent_index;
+    for (destination, &index) in scratch
+        .composited_output
+        .iter_mut()
+        .zip(scratch.indices.iter().take(frame_pixels))
+    {
+        *destination = if transparent_index == Some(index) {
+            0
+        } else {
+            *scratch
+                .palette
+                .get(usize::from(index))
+                .ok_or_else(|| format!("Palette index {index} exceeds palette size"))?
+        };
+    }
+    Ok(frame_pixels)
 }
 
 fn decode_and_blit_frame_reusing_scratch(
@@ -10455,6 +10567,13 @@ fn encode_indexed_literal_lzw_direct_to_impl<const VALIDATE: bool>(
     if min_code_size == 3 {
         return encode_four_bit_literal_lzw_direct_to::<VALIDATE>(output, index_stream, color_count);
     }
+    if min_code_size == 6 {
+        return encode_seven_bit_literal_lzw_direct_to::<VALIDATE>(
+            output,
+            index_stream,
+            color_count,
+        );
+    }
     if min_code_size == 8 {
         return encode_nine_bit_literal_lzw_direct_to::<VALIDATE>(
             output,
@@ -10482,44 +10601,98 @@ fn encode_indexed_literal_lzw_direct_to_impl<const VALIDATE: bool>(
     Ok(())
 }
 
-struct GifSubblockAppender<'a> {
-    output: &'a mut [u8],
-    position: usize,
-    raw_remaining: usize,
-    block_remaining: usize,
-}
+fn encode_seven_bit_literal_lzw_direct_to<const VALIDATE: bool>(
+	output: &mut Vec<u8>,
+	index_stream: &[u8],
+	color_count: usize,
+) -> Result<(), String> {
+	if color_count == 0 || color_count > 64 {
+		return Err("Invalid color count".to_string());
+	}
+	if index_stream.is_empty() {
+		return Err("Indexed pixel stream is empty".to_string());
+	}
+	if VALIDATE && !indices_fit_color_count(index_stream, color_count) {
+		return Err("Pixel index out of range".to_string());
+	}
 
-impl GifSubblockAppender<'_> {
-    #[inline]
-    fn start_block(&mut self) {
-        if self.block_remaining == 0 && self.raw_remaining > 0 {
-            self.block_remaining = self.raw_remaining.min(255);
-            self.output[self.position] = self.block_remaining as u8;
-            self.position += 1;
-        }
-    }
+	const CODE_SIZE: usize = 7;
+	const CLEAR: u16 = 64;
+	const EOI: u16 = 65;
+	const LITERALS_PER_CLEAR: usize = 62;
+	let clear_count = index_stream.len().div_ceil(LITERALS_PER_CLEAR);
+	let raw_length = ((index_stream.len() + clear_count + 1) * CODE_SIZE).div_ceil(8);
+	let block_count = raw_length.div_ceil(255);
+	let output_start = output.len();
+	output.reserve(2 + block_count + raw_length + 8);
+	unsafe {
+		output.as_mut_ptr().add(output_start).write(6);
+	}
+	let mut writer = DirectGifSubblockWriter {
+		output: unsafe { output.as_mut_ptr().add(output_start) },
+		position: 2,
+		block_remaining: 255,
+		raw_position: 0,
+	};
+	let mut bits = 0u64;
+	let mut bit_count = 0usize;
 
-    #[inline]
-    fn write_byte(&mut self, value: u8) {
-        self.start_block();
-        self.output[self.position] = value;
-        self.position += 1;
-        self.block_remaining -= 1;
-        self.raw_remaining -= 1;
-    }
+	for literals in index_stream.chunks(LITERALS_PER_CLEAR) {
+		append_seven_bit_literal_code_to_direct(&mut writer, &mut bits, &mut bit_count, CLEAR);
+		let mut groups = literals.chunks_exact(8);
+		for group in &mut groups {
+			let packed = u64::from(group[0])
+				| (u64::from(group[1]) << 7)
+				| (u64::from(group[2]) << 14)
+				| (u64::from(group[3]) << 21)
+				| (u64::from(group[4]) << 28)
+				| (u64::from(group[5]) << 35)
+				| (u64::from(group[6]) << 42)
+				| (u64::from(group[7]) << 49);
+			let combined = bits | (packed << bit_count);
+			let total_bits = bit_count + 56;
+			let byte_count = total_bits / 8;
+			let bytes = combined.to_le_bytes();
+			writer.write_fixed(&bytes, byte_count);
+			bits = combined >> (byte_count * 8);
+			bit_count = total_bits - byte_count * 8;
+		}
+		for &pixel in groups.remainder() {
+			append_seven_bit_literal_code_to_direct(
+				&mut writer,
+				&mut bits,
+				&mut bit_count,
+				u16::from(pixel),
+			);
+		}
+	}
+	append_seven_bit_literal_code_to_direct(&mut writer, &mut bits, &mut bit_count, EOI);
+	while bit_count > 0 {
+		writer.write_byte(bits as u8);
+		bits >>= 8;
+		bit_count = bit_count.saturating_sub(8);
+	}
+	debug_assert_eq!(writer.raw_position, raw_length);
 
-    #[inline]
-    fn write_slice(&mut self, mut bytes: &[u8]) {
-        while !bytes.is_empty() {
-            self.start_block();
-            let length = bytes.len().min(self.block_remaining);
-            self.output[self.position..self.position + length].copy_from_slice(&bytes[..length]);
-            self.position += length;
-            self.block_remaining -= length;
-            self.raw_remaining -= length;
-            bytes = &bytes[length..];
-        }
-    }
+	let mut raw_offset = 0usize;
+	for block in 0..block_count {
+		let length = (raw_length - raw_offset).min(255);
+		unsafe {
+			output
+				.as_mut_ptr()
+				.add(output_start + 1 + block * 256)
+				.write(length as u8);
+		}
+		raw_offset += length;
+	}
+	unsafe {
+		output
+			.as_mut_ptr()
+			.add(output_start + 1 + block_count + raw_length)
+			.write(0);
+		output.set_len(output_start + 2 + block_count + raw_length);
+	}
+	Ok(())
 }
 
 fn encode_eight_bit_literal_lzw_direct_to<const VALIDATE: bool>(
@@ -10540,21 +10713,41 @@ fn encode_eight_bit_literal_lzw_direct_to<const VALIDATE: bool>(
     let raw_length = index_stream.len() + index_stream.len().div_ceil(126) + 1;
     let block_count = raw_length.div_ceil(255);
     let output_start = output.len();
-    output.resize(output_start + 1 + block_count + raw_length + 1, 0);
-    output[output_start] = 7;
-    let mut appender = GifSubblockAppender {
-        output: &mut output[output_start + 1..],
-        position: 0,
-        raw_remaining: raw_length,
-        block_remaining: 0,
+    let output_length = output_start + 2 + block_count + raw_length;
+    output.reserve(output_length.saturating_sub(output.len()));
+    unsafe {
+        output.set_len(output_length);
+        output.as_mut_ptr().add(output_start).write(7);
+    }
+    let mut writer = DirectGifSubblockWriter {
+        output: unsafe { output.as_mut_ptr().add(output_start) },
+        position: 2,
+        block_remaining: 255,
+        raw_position: 0,
     };
     for literals in index_stream.chunks(126) {
-        appender.write_byte(128);
-        appender.write_slice(literals);
+        writer.write_byte(128);
+        writer.write_slice(literals);
     }
-    appender.write_byte(129);
-    debug_assert_eq!(appender.raw_remaining, 0);
-    debug_assert_eq!(appender.position, block_count + raw_length);
+    writer.write_byte(129);
+    debug_assert_eq!(writer.raw_position, raw_length);
+    let mut raw_offset = 0usize;
+    for block in 0..block_count {
+        let length = (raw_length - raw_offset).min(255);
+        unsafe {
+            output
+                .as_mut_ptr()
+                .add(output_start + 1 + block * 256)
+                .write(length as u8);
+        }
+        raw_offset += length;
+    }
+    unsafe {
+        output
+            .as_mut_ptr()
+            .add(output_start + 1 + block_count + raw_length)
+            .write(0);
+    }
     Ok(())
 }
 
@@ -10603,6 +10796,28 @@ impl DirectGifSubblockWriter {
         self.position += length;
         self.block_remaining -= length;
         self.raw_position += length;
+    }
+
+    #[inline(always)]
+    fn write_slice(&mut self, mut bytes: &[u8]) {
+        while !bytes.is_empty() {
+            if self.block_remaining == 0 {
+                self.position += 1;
+                self.block_remaining = 255;
+            }
+            let length = bytes.len().min(self.block_remaining);
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    bytes.as_ptr(),
+                    self.output.add(self.position),
+                    length,
+                );
+            }
+            self.position += length;
+            self.block_remaining -= length;
+            self.raw_position += length;
+            bytes = &bytes[length..];
+        }
     }
 }
 
@@ -11191,6 +11406,22 @@ fn mapped_quality_pixel<const BITS: usize, const HAS_TRANSPARENT: bool>(
         let index = quality_histogram_index_packed::<BITS>(packed);
         unsafe { *histogram_to_palette.get_unchecked(index) }
     }
+}
+
+#[inline(always)]
+fn append_seven_bit_literal_code_to_direct(
+	writer: &mut DirectGifSubblockWriter,
+	bits: &mut u64,
+	bit_count: &mut usize,
+	code: u16,
+) {
+	*bits |= u64::from(code) << *bit_count;
+	*bit_count += 7;
+	while *bit_count >= 8 {
+		writer.write_byte(*bits as u8);
+		*bits >>= 8;
+		*bit_count -= 8;
+	}
 }
 
 #[inline(always)]
@@ -14130,6 +14361,42 @@ mod tests {
     }
 
     #[test]
+    fn seven_bit_literal_direct_subblocks_match_buffered_writer() {
+        for length in [1usize, 62, 63, 255, 508, 4096] {
+            let indices: Vec<u8> = (0..length)
+                .map(|index| ((index * 73 + index / 11) & 63) as u8)
+                .collect();
+            let mut direct = Vec::new();
+            encode_indexed_literal_lzw_direct_to(&mut direct, &indices, 6, 64).unwrap();
+
+            let mut buffered = Vec::new();
+            let mut compressed = Vec::new();
+            encode_indexed_literal_lzw_to(&mut buffered, &indices, 6, 64, &mut compressed)
+                .unwrap();
+
+            assert_eq!(direct, buffered, "length {length}");
+        }
+    }
+
+    #[test]
+    fn eight_bit_literal_direct_subblocks_match_buffered_writer() {
+        for length in [1usize, 126, 127, 255, 508, 4096] {
+            let indices: Vec<u8> = (0..length)
+                .map(|index| ((index * 73 + index / 11) & 1) as u8)
+                .collect();
+            let mut direct = Vec::new();
+            encode_indexed_literal_lzw_direct_to(&mut direct, &indices, 7, 2).unwrap();
+
+            let mut buffered = Vec::new();
+            let mut compressed = Vec::new();
+            encode_indexed_literal_lzw_to(&mut buffered, &indices, 7, 2, &mut compressed)
+                .unwrap();
+
+            assert_eq!(direct, buffered, "length {length}");
+        }
+    }
+
+    #[test]
     fn nine_bit_literal_copy_decoder_matches_indices() {
         let indices: Vec<u8> = (0..4096u32)
             .map(|index| ((index * 73 + index / 11) & 0xff) as u8)
@@ -14172,6 +14439,41 @@ mod tests {
             .map(|&index| palette[usize::from(index)])
             .collect();
         assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn direct_lzw_color_decoder_matches_dictionary_stream() {
+        let indices: Vec<u8> = (0..8192u32)
+            .map(|index| ((index * 17 + (index >> 3) * 5) & 255) as u8)
+            .collect();
+        let palette: Vec<u32> = (0..256u32)
+            .map(|index| 0xff00_0000 | (index << 16) | (index << 8) | index)
+            .collect();
+        let mut image_data = Vec::new();
+        let mut tables = LzwEncodeTables::new();
+        encode_indexed_lzw_to_with_tables(&mut image_data, &indices, 8, 256, &mut tables)
+            .unwrap();
+        let mut payload = Vec::new();
+        collect_image_data_into(&image_data, 0, &mut payload).unwrap();
+
+        let mut decoded_indices = vec![0u8; indices.len()];
+        let mut decoded_colors = vec![0u32; indices.len()];
+        let mut scratch = LzwStackScratch::default();
+        lzw_decode_to_indices_copy_with_scratch(8, &payload, &mut decoded_indices, &mut scratch)
+            .unwrap();
+        lzw_decode_to_pixels_copy_with_scratch(
+            8,
+            &payload,
+            &palette,
+            &mut decoded_colors,
+            &mut scratch,
+        )
+        .unwrap();
+
+        assert_eq!(decoded_indices, indices);
+        for (index, &color) in decoded_indices.iter().zip(&decoded_colors) {
+            assert_eq!(color, palette[usize::from(*index)]);
+        }
     }
 
     #[test]

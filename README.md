@@ -80,7 +80,7 @@ image loading are not.
 
 | Real-image quality encode | Baseline | wtfgif | Speedup | wtfgif output |
 | --- | ---: | ---: | ---: | ---: |
-| Adaptive global palette | 101.588 ms | 0.465 ms | **218.51×** | 149,601 bytes / 34.12 dB |
+| Adaptive global palette | 101.026 ms | 0.451 ms | **224.23×** | 149,601 bytes / 34.12 dB |
 
 The baseline is `image-q` plus omggif with balanced LZW. Both implementations
 create an adaptive global palette and map every RGBA pixel. WebAssembly is
@@ -121,13 +121,17 @@ This includes process startup and Wasm initialization. Initialize Wasm during
 page or worker startup when measuring the hot path above.
 
 If your frames are already palette-indexed—the direct `GifWriter` contract—
-wtfgif is **203.66× faster** in the current 120-sample run: 17.013 ms for
-omggif versus 0.084 ms for wtfgif.
+wtfgif is **222.58× faster** in the current 200-sample run: 16.541 ms for
+omggif versus 0.074 ms for wtfgif.
 That result is byte-decoded and checked for exact RGBA equality before timing.
+Across the 2–256-color typed-output sweep, the minimum measured speedup is
+**109.65×** (32 colors).
 
-Decode remains workload-dependent rather than 100×: the current 60-sample
-fixture sweep ranges from **0.84×** on a tiny frame to **4.20×** on a larger
-input (2.21× geometric mean), with exact composited RGBA parity.
+Decode remains workload-dependent rather than 100×: the current 100-sample
+fixture sweep ranges from **0.91×** on a tiny frame to **4.60×** on a larger
+input (2.23× geometric mean), with exact composited RGBA parity. Large GIFs
+with partial transparent rectangles also use a rectangle-only Wasm path so the
+caller canvas is not copied through Wasm for every frame.
 The one-off `decodeGifFramesRgba` API reaches **4.98×** on an all-full-canvas,
 opaque animation by writing frames directly into the final stream.
 

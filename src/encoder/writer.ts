@@ -2175,6 +2175,7 @@ function tryEncodeLzwWithWasm(
 		? wasmCore?.encode_indexed_literal_lzw_scratch
 		: wasmCore?.encode_indexed_lzw_scratch;
 	const canUseDirectInput =
+		minCodeSize > 4 &&
 		wasmCore?.indexed_lzw_input_scratch_reserve &&
 		wasmCore.encode_indexed_lzw_scratch_from_input;
 	if (

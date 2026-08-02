@@ -1379,7 +1379,7 @@ export class GifReader {
       this.frames.length >= 8 &&
       canvasPixels >= 512 &&
       Number.isSafeInteger(totalPixels) &&
-      totalPixels <= 8_000_000;
+      totalPixels <= 1_000_000;
     if (
       frameNum === 0 &&
       this.lastDecodedFrame === -1 &&
@@ -1401,19 +1401,22 @@ export class GifReader {
       }
     }
 
+    const sameInitialCanvas =
+      this.sequentialInitialCanvasZero === true &&
+      this.sequentialInitialCanvasBuffer === out32.buffer &&
+      this.sequentialInitialCanvasByteOffset === out32.byteOffset &&
+      this.sequentialInitialCanvasByteLength === out32.byteLength &&
+      this.sequentialInitialCanvasOrder === order;
     // Do not turn an isolated frame read into a whole-animation decode. The
     // cache is deliberately armed only by the first sequential pair into the
     // same caller-owned canvas, and is bounded to keep a legacy reader from
-    // unexpectedly retaining a large animation in memory.
+    // unexpectedly retaining a large animation in memory (1,000,000 output
+    // pixels at most).
     if (
       frameNum !== 1 ||
       this.lastDecodedFrame !== 0 ||
       !cacheCandidate ||
-      this.sequentialInitialCanvasZero !== true ||
-      this.sequentialInitialCanvasBuffer !== out32.buffer ||
-      this.sequentialInitialCanvasByteOffset !== out32.byteOffset ||
-      this.sequentialInitialCanvasByteLength !== out32.byteLength ||
-      this.sequentialInitialCanvasOrder !== order
+      !sameInitialCanvas
     ) {
       return false;
     }
@@ -1519,7 +1522,7 @@ export class GifReader {
     if (
       canvasPixels >= 8192 &&
       framePixels >= 4096 &&
-      framePixels * 2 >= canvasPixels
+      (framePixels * 2 >= canvasPixels || canvasPixels >= 40_000)
     ) {
       const wasmModule = getWasmCoreModule();
       if (wasmModule) {
@@ -1556,6 +1559,68 @@ export class GifReader {
                   canvasPixels,
                 ),
               );
+              this.lastDecodedFrame = frameNum;
+              return;
+            }
+          } catch {
+            // Older/custom Wasm modules may expose the optional symbols but
+            // reject this frame shape. Fall through to the compatible path.
+          }
+        }
+        const rectDecode =
+          order === "rgba"
+            ? this.wasmCore.decode_frame_rect_rgba_scratch
+            : this.wasmCore.decode_frame_rect_bgra_scratch;
+        const rectScratchPtr = this.wasmCore.composited_scratch_ptr;
+        if (
+          canvasPixels >= 40_000 &&
+          framePixels < canvasPixels &&
+          frame.x >= 0 &&
+          frame.y >= 0 &&
+          frame.x + frame.width <= this.width_ &&
+          frame.y + frame.height <= this.height_ &&
+          rectDecode &&
+          rectScratchPtr &&
+          this.wasmMemory
+        ) {
+          try {
+            const outputLength = rectDecode.call(this.wasmCore, frameNum);
+            const outputPointer = rectScratchPtr.call(this.wasmCore);
+            if (
+              outputLength === framePixels &&
+              outputPointer > 0 &&
+              (outputPointer & 3) === 0
+            ) {
+              const source = new Uint32Array(
+                this.wasmMemory.buffer,
+                outputPointer,
+                framePixels,
+              );
+              const frameWidth = frame.width | 0;
+              const frameHeight = frame.height | 0;
+              const frameX = frame.x | 0;
+              const frameY = frame.y | 0;
+              if (frame.transparent_index === null) {
+                for (let row = 0; row < frameHeight; row++) {
+                  out32.set(
+                    source.subarray(row * frameWidth, (row + 1) * frameWidth),
+                    (frameY + row) * this.width_ + frameX,
+                  );
+                }
+              } else {
+                for (let row = 0; row < frameHeight; row++) {
+                  const sourceOffset = row * frameWidth;
+                  let destinationOffset =
+                    (frameY + row) * this.width_ + frameX;
+                  for (let column = 0; column < frameWidth; column++) {
+                    const color = source[sourceOffset + column]!;
+                    if (color !== 0) {
+                      out32[destinationOffset] = color;
+                    }
+                    destinationOffset++;
+                  }
+                }
+              }
               this.lastDecodedFrame = frameNum;
               return;
             }
