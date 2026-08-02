@@ -1352,8 +1352,8 @@ export class GifReader {
 
     const totalPixels = canvasPixels * this.frames.length;
     const cacheCandidate =
-      this.frames.length >= 32 &&
-      canvasPixels >= 8_192 &&
+      this.frames.length >= 8 &&
+      canvasPixels >= 4_096 &&
       Number.isSafeInteger(totalPixels) &&
       totalPixels <= 8_000_000;
     if (
