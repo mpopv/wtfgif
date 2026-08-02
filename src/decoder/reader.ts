@@ -1332,7 +1332,7 @@ export class GifReader {
     // The Rust decoder is already faster for medium partial frames; the old
     // full-frame-only cutoff left measurable work on the JS path.
     if (
-      canvasPixels >= 16384 &&
+      canvasPixels >= 8192 &&
       framePixels >= 4096 &&
       framePixels * 2 >= canvasPixels
     ) {

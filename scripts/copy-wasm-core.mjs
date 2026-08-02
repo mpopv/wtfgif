@@ -35,6 +35,30 @@ const packages = [
 		label: "encode browser",
 		moduleType: "module",
 	},
+	{
+		source: "pkg-simd",
+		target: "wasm-core-simd",
+		label: "Node SIMD",
+		moduleType: "commonjs",
+	},
+	{
+		source: "pkg-web-simd",
+		target: "wasm-web-simd",
+		label: "browser SIMD",
+		moduleType: "module",
+	},
+	{
+		source: "pkg-encode-simd",
+		target: "wasm-encode-simd",
+		label: "encode Node SIMD",
+		moduleType: "commonjs",
+	},
+	{
+		source: "pkg-encode-web-simd",
+		target: "wasm-encode-web-simd",
+		label: "encode browser SIMD",
+		moduleType: "module",
+	},
 ];
 
 for (const wasmPackage of packages) {

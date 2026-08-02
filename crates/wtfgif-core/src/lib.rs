@@ -4368,6 +4368,7 @@ fn push_rect_pixels_u32(
 struct ColorIndexTable {
     keys: Vec<i32>,
     values: Vec<u8>,
+    mask: usize,
 }
 
 impl ColorIndexTable {
@@ -4375,6 +4376,7 @@ impl ColorIndexTable {
         Self {
             keys: Vec::new(),
             values: Vec::new(),
+            mask: 0,
         }
     }
 
@@ -4383,6 +4385,7 @@ impl ColorIndexTable {
         Self {
             keys: vec![-1; capacity],
             values: vec![0; capacity],
+            mask: capacity - 1,
         }
     }
 
@@ -4395,17 +4398,18 @@ impl ColorIndexTable {
             self.keys.fill(-1);
             self.values.fill(0);
         }
+        self.mask = capacity - 1;
     }
 
-    #[inline]
+    #[inline(always)]
     fn get(&self, key: u32) -> Option<u8> {
         let key = key as i32;
-        let mask = self.keys.len() - 1;
+        let mask = self.mask;
         let mut slot = (key as usize).wrapping_mul(2_654_435_761) & mask;
         loop {
-            let stored = self.keys[slot];
+            let stored = unsafe { *self.keys.get_unchecked(slot) };
             if stored == key {
-                return Some(self.values[slot]);
+                return Some(unsafe { *self.values.get_unchecked(slot) });
             }
             if stored == -1 {
                 return None;
@@ -4414,19 +4418,21 @@ impl ColorIndexTable {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     fn insert_if_absent(&mut self, key: u32, value: u8) {
         let key = key as i32;
-        let mask = self.keys.len() - 1;
+        let mask = self.mask;
         let mut slot = (key as usize).wrapping_mul(2_654_435_761) & mask;
         loop {
-            let stored = self.keys[slot];
+            let stored = unsafe { *self.keys.get_unchecked(slot) };
             if stored == key {
                 return;
             }
             if stored == -1 {
-                self.keys[slot] = key;
-                self.values[slot] = value;
+                unsafe {
+                    *self.keys.get_unchecked_mut(slot) = key;
+                    *self.values.get_unchecked_mut(slot) = value;
+                }
                 return;
             }
             slot = (slot + 1) & mask;
@@ -4601,21 +4607,157 @@ fn encode_rgba_quality_gif_inner_with_output(
 ) -> Result<Vec<u8>, String> {
     let delays = DelaySource::PerFrame(delays);
     validate_rgba_stream(rgba_stream, width, height, frame_count, delays, loop_count)?;
-    let (palette, indexed, transparent_index) =
-        index_rgba_frames_quality(rgba_stream, alpha_threshold);
-    let encoded = encode_indexed_literal_gif_inner_with_output(
-        output,
-        &indexed,
-        width,
-        height,
-        frame_count,
-        &palette,
-        delays,
-        loop_count,
+    match index_rgba_frames_quality_result(rgba_stream, alpha_threshold) {
+        QualityIndexResult::Exact((palette, indexed, transparent_index)) => {
+            let encoded = encode_indexed_literal_gif_inner_with_output(
+                output,
+                &indexed,
+                width,
+                height,
+                frame_count,
+                &palette,
+                delays,
+                loop_count,
+                transparent_index,
+            );
+            recycle_quantized_indexed(indexed);
+            encoded
+        }
+        QualityIndexResult::Quantized(plan) => encode_quality_index_plan_literal_gif(
+            output,
+            rgba_stream,
+            width,
+            height,
+            frame_count,
+            delays,
+            loop_count,
+            alpha_threshold,
+            plan,
+        ),
+    }
+}
+
+fn encode_quality_index_plan_literal_gif(
+    mut output: Vec<u8>,
+    rgba_stream: &[u8],
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    delays: DelaySource<'_>,
+    loop_count: i32,
+    alpha_threshold: u8,
+    plan: QualityIndexPlan,
+) -> Result<Vec<u8>, String> {
+    let QualityIndexPlan {
+        palette,
+        histogram_to_palette,
         transparent_index,
-    );
-    recycle_quantized_indexed(indexed);
-    encoded
+        mapping_bits,
+    } = plan;
+    let color_count = checked_palette_color_count(palette.len())?;
+    if color_count != 256 {
+        let (palette, indexed, transparent_index) = QualityIndexPlan {
+            palette,
+            histogram_to_palette,
+            transparent_index,
+            mapping_bits,
+        }
+        .into_indexed(rgba_stream, alpha_threshold);
+        let encoded = encode_indexed_literal_gif_inner_with_output(
+            output,
+            &indexed,
+            width,
+            height,
+            frame_count,
+            &palette,
+            delays,
+            loop_count,
+            transparent_index,
+        );
+        recycle_quantized_indexed(indexed);
+        return encoded;
+    }
+    let frame_len = usize::from(width)
+        .checked_mul(usize::from(height))
+        .ok_or_else(|| "Frame size overflow".to_string())?;
+    let expected_len = frame_len
+        .checked_mul(frame_count)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| "RGBA frame stream overflow".to_string())?;
+    if rgba_stream.len() != expected_len {
+        return Err("RGBA frame stream length does not match dimensions".to_string());
+    }
+    let min_code_size = 8;
+    let lzw_length = literal_lzw_block_size(frame_len, min_code_size)?;
+    let frame_capacity = (0..frame_count).try_fold(0usize, |capacity, frame_index| {
+        let graphic_control_length =
+            usize::from(delays.get(frame_index) != 0 || transparent_index.is_some()) * 8;
+        capacity
+            .checked_add(10)
+            .and_then(|length| length.checked_add(graphic_control_length))
+            .and_then(|length| length.checked_add(lzw_length))
+            .ok_or_else(|| "Encoded GIF size overflow".to_string())
+    })?;
+    let output_capacity = 13usize
+        .checked_add(color_count * 3)
+        .and_then(|length| length.checked_add(usize::from(loop_count >= 0) * 19))
+        .and_then(|length| length.checked_add(frame_capacity))
+        .and_then(|length| length.checked_add(1))
+        .ok_or_else(|| "Encoded GIF size overflow".to_string())?;
+    output.clear();
+    if output.capacity() < output_capacity {
+        output.reserve(output_capacity - output.capacity());
+    }
+    write_indexed_gif_header(&mut output, width, height, &palette, color_count);
+    write_loop_extension(&mut output, loop_count);
+    for frame_index in 0..frame_count {
+        let frame_start = frame_index * frame_len * 4;
+        let frame = &rgba_stream[frame_start..frame_start + frame_len * 4];
+        write_indexed_gif_frame_header(
+            &mut output,
+            0,
+            0,
+            width,
+            height,
+            delays.get(frame_index),
+            transparent_index,
+            if transparent_index.is_some() { 2 } else { 0 },
+        );
+        match (mapping_bits, transparent_index.is_some()) {
+            (4, false) => encode_nine_bit_literal_lzw_mapped_to::<4, false>(
+                &mut output,
+                frame,
+                alpha_threshold,
+                0,
+                &histogram_to_palette,
+            )?,
+            (4, true) => encode_nine_bit_literal_lzw_mapped_to::<4, true>(
+                &mut output,
+                frame,
+                alpha_threshold,
+                transparent_index.unwrap_or(0),
+                &histogram_to_palette,
+            )?,
+            (5, false) => encode_nine_bit_literal_lzw_mapped_to::<5, false>(
+                &mut output,
+                frame,
+                alpha_threshold,
+                0,
+                &histogram_to_palette,
+            )?,
+            (5, true) => encode_nine_bit_literal_lzw_mapped_to::<5, true>(
+                &mut output,
+                frame,
+                alpha_threshold,
+                transparent_index.unwrap_or(0),
+                &histogram_to_palette,
+            )?,
+            _ => return Err("Unsupported quality histogram precision".to_string()),
+        }
+    }
+    output.push(0x3b);
+    recycle_quality_histogram_to_palette(histogram_to_palette);
+    Ok(output)
 }
 
 fn validate_rgba_stream(
@@ -5013,6 +5155,55 @@ const QUALITY_DOMINANT_COLOR_LIMIT: usize = 2_048;
 const QUALITY_U32_PIXEL_LIMIT: usize = u32::MAX as usize / 255;
 const QUALITY_LOW_RES_PIXEL_LIMIT: usize = 1_000_000;
 
+struct QualityIndexPlan {
+    palette: Vec<u32>,
+    histogram_to_palette: Vec<u8>,
+    transparent_index: Option<u8>,
+    mapping_bits: usize,
+}
+
+enum QualityIndexResult {
+    Exact((Vec<u32>, Vec<u8>, Option<u8>)),
+    Quantized(QualityIndexPlan),
+}
+
+impl QualityIndexPlan {
+    fn into_indexed(
+        self,
+        rgba_stream: &[u8],
+        alpha_threshold: u8,
+    ) -> (Vec<u32>, Vec<u8>, Option<u8>) {
+        let QualityIndexPlan {
+            palette,
+            histogram_to_palette,
+            transparent_index,
+            mapping_bits,
+        } = self;
+        let mut indexed = take_quantized_indexed(rgba_stream.len() / 4);
+        match mapping_bits {
+            4 => map_quality_pixels::<4>(
+                rgba_stream,
+                alpha_threshold,
+                transparent_index.is_some(),
+                transparent_index,
+                &histogram_to_palette,
+                &mut indexed,
+            ),
+            5 => map_quality_pixels::<5>(
+                rgba_stream,
+                alpha_threshold,
+                transparent_index.is_some(),
+                transparent_index,
+                &histogram_to_palette,
+                &mut indexed,
+            ),
+            _ => unreachable!("unsupported quality histogram precision"),
+        }
+        recycle_quality_histogram_to_palette(histogram_to_palette);
+        (palette, indexed, transparent_index)
+    }
+}
+
 #[derive(Clone, Copy, Default)]
 struct RgbHistogramBin {
     count: u64,
@@ -5021,6 +5212,7 @@ struct RgbHistogramBin {
     blue: u64,
 }
 
+#[repr(C)]
 #[derive(Clone, Copy, Default)]
 struct RgbHistogramBin32 {
     count: u32,
@@ -5732,6 +5924,16 @@ fn index_rgba_frames_quality(
     rgba_stream: &[u8],
     alpha_threshold: u8,
 ) -> (Vec<u32>, Vec<u8>, Option<u8>) {
+    match index_rgba_frames_quality_result(rgba_stream, alpha_threshold) {
+        QualityIndexResult::Exact(result) => result,
+        QualityIndexResult::Quantized(plan) => plan.into_indexed(rgba_stream, alpha_threshold),
+    }
+}
+
+fn index_rgba_frames_quality_result(
+    rgba_stream: &[u8],
+    alpha_threshold: u8,
+) -> QualityIndexResult {
     let pixel_count = rgba_stream.len() / 4;
     if pixel_count <= QUALITY_LOW_RES_PIXEL_LIMIT {
         return index_rgba_frames_quality_low_res(rgba_stream, alpha_threshold);
@@ -5742,7 +5944,7 @@ fn index_rgba_frames_quality(
 fn index_rgba_frames_quality_low_res(
     rgba_stream: &[u8],
     alpha_threshold: u8,
-) -> (Vec<u32>, Vec<u8>, Option<u8>) {
+) -> QualityIndexResult {
     const HISTOGRAM_BITS: usize = 4;
     const HISTOGRAM_LEN: usize = 1 << (HISTOGRAM_BITS * 3);
     let pixel_count = rgba_stream.len() / 4;
@@ -5754,11 +5956,10 @@ fn index_rgba_frames_quality_low_res(
     let mut histogram = take_quality_histogram_u32(HISTOGRAM_LEN);
     // Keep the exact-prefix indices so <=256-color inputs do not require a
     // second full RGBA scan after the palette decision is known.
-    // The indexed stream is required by both the exact return and the
-    // quantized fallback. Allocate it once up front so an overflow can recycle
-    // this same capacity into the final mapped stream instead of growing it
-    // incrementally or allocating a second buffer.
-    let mut indexed = Vec::with_capacity(pixel_count);
+    // The indexed stream is needed only if the exact-color probe succeeds.
+    // Start with a small prefix buffer so the common quantized path does not
+    // reserve the entire RGBA image just to discard the prefix after overflow.
+    let mut indexed = Vec::with_capacity(pixel_count.min(4_096));
     let mut has_transparent_pixels = false;
     let rgba_pointer = rgba_stream.as_ptr();
     let mut overflow_offset = None;
@@ -5804,26 +6005,26 @@ fn index_rgba_frames_quality_low_res(
         histogram
     } else {
         recycle_quality_histogram_u32(histogram);
-        return finish_quality_exact_indexed(
+        return QualityIndexResult::Exact(finish_quality_exact_indexed(
             rgba_stream,
             alpha_threshold,
             has_transparent_pixels,
             palette,
             table,
             indexed,
-        );
+        ));
     };
     recycle_quantized_indexed(indexed);
     let colors = quality_colors_from_histogram_u32::<true>(&histogram);
     recycle_quality_color_index_table(table);
     recycle_quality_histogram_u32(histogram);
-    index_rgba_frames_median_cut_from_colors(
+    QualityIndexResult::Quantized(build_quality_index_plan_from_colors(
         rgba_stream,
         alpha_threshold,
         has_transparent_pixels,
         colors,
         HISTOGRAM_BITS,
-    )
+    ))
 }
 
 fn finish_quality_exact_indexed(
@@ -5879,13 +6080,54 @@ fn finish_quality_exact_indexed(
 fn index_rgba_frames_quality_high_res(
     rgba_stream: &[u8],
     alpha_threshold: u8,
-) -> (Vec<u32>, Vec<u8>, Option<u8>) {
+) -> QualityIndexResult {
     let pixel_count = rgba_stream.len() / 4;
     if pixel_count <= QUALITY_U32_PIXEL_LIMIT {
-        index_rgba_frames_quality_u32(rgba_stream, alpha_threshold)
+        if quality_prefers_high_precision_histogram(rgba_stream, alpha_threshold) {
+            index_rgba_frames_quality_u32::<5>(rgba_stream, alpha_threshold)
+        } else {
+            index_rgba_frames_quality_u32::<4>(rgba_stream, alpha_threshold)
+        }
     } else {
         index_rgba_frames_quality_u64(rgba_stream, alpha_threshold)
     }
+}
+
+/// Smooth gradients expose the one weakness of a coarse 4-bit histogram:
+/// image-q can spend its palette on those gradual ramps, while the coarse
+/// bins collapse nearby colors before median-cut sees them. Noisy/photo-like
+/// input has much larger local color deltas and gets the faster 4-bit pass.
+/// Sampling a few thousand adjacent pixels keeps this decision negligible
+/// compared with the mandatory full histogram scan.
+fn quality_prefers_high_precision_histogram(rgba_stream: &[u8], alpha_threshold: u8) -> bool {
+    let pixel_count = rgba_stream.len() / 4;
+    if pixel_count < 2 {
+        return false;
+    }
+    let sample_step = (pixel_count / 8_192).max(1);
+    let rgba_pointer = rgba_stream.as_ptr();
+    let mut total_delta = 0u64;
+    let mut samples = 0u64;
+    let mut pixel_index = 0usize;
+    while pixel_index + sample_step < pixel_count && samples < 8_192 {
+        let first = unsafe { rgba_pointer.add(pixel_index * 4) };
+        let second = unsafe { rgba_pointer.add((pixel_index + 1) * 4) };
+        let first_alpha = unsafe { *first.add(3) };
+        let second_alpha = unsafe { *second.add(3) };
+        if first_alpha >= alpha_threshold && second_alpha >= alpha_threshold {
+            for channel in 0..3 {
+                let left = unsafe { *first.add(channel) };
+                let right = unsafe { *second.add(channel) };
+                total_delta += u64::from(left.abs_diff(right));
+            }
+            samples += 1;
+        }
+        pixel_index += sample_step;
+    }
+    // A mean adjacent RGB delta below sixteen is a smooth/illustrated ramp in
+    // the normal-image corpus. Give those images the 5-bit quality path; the
+    // 4-bit path remains the default for noisy photos and stress textures.
+    samples > 0 && total_delta < samples * 3 * 16
 }
 
 fn take_quality_histogram_u32(length: usize) -> Vec<RgbHistogramBin32> {
@@ -5956,21 +6198,6 @@ fn recycle_quantized_indexed(mut indexed: Vec<u8>) {
 }
 
 #[inline(always)]
-fn add_quality_histogram_u32(histogram: &mut [RgbHistogramBin32], packed: u32) {
-    let red = packed as u8;
-    let green = (packed >> 8) as u8;
-    let blue = (packed >> 16) as u8;
-    let histogram_index = usize::from(
-        (((packed << 7) & 0x7c00) | ((packed >> 6) & 0x03e0) | ((packed >> 19) & 0x001f)) as u16,
-    );
-    let bin = unsafe { histogram.get_unchecked_mut(histogram_index) };
-    bin.count += 1;
-    bin.red += u32::from(red);
-    bin.green += u32::from(green);
-    bin.blue += u32::from(blue);
-}
-
-#[inline(always)]
 fn quality_histogram_index_packed<const BITS: usize>(packed: u32) -> usize {
     // RGBA input is little-endian in Wasm memory. Keep the hot scan in one
     // packed load instead of extracting three channels before shifting them.
@@ -5996,11 +6223,23 @@ fn add_quality_histogram_u32_bits_const<const BITS: usize>(
     let green = (packed >> 8) as u8;
     let blue = (packed >> 16) as u8;
     let histogram_index = quality_histogram_index_packed::<BITS>(packed);
-    let bin = unsafe { histogram.get_unchecked_mut(histogram_index) };
-    bin.count += 1;
-    bin.red += u32::from(red);
-    bin.green += u32::from(green);
-    bin.blue += u32::from(blue);
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    unsafe {
+        use core::arch::wasm32::{u32x4, u32x4_add, v128_load, v128_store};
+
+        let bin = histogram.get_unchecked_mut(histogram_index) as *mut RgbHistogramBin32;
+        let current = v128_load(bin.cast());
+        let increment = u32x4(1, u32::from(red), u32::from(green), u32::from(blue));
+        v128_store(bin.cast(), u32x4_add(current, increment));
+    }
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+    {
+        let bin = unsafe { histogram.get_unchecked_mut(histogram_index) };
+        bin.count += 1;
+        bin.red += u32::from(red);
+        bin.green += u32::from(green);
+        bin.blue += u32::from(blue);
+    }
 }
 
 #[inline(always)]
@@ -6014,95 +6253,6 @@ fn add_quality_histogram_u64(histogram: &mut [RgbHistogramBin], packed: u32) {
     bin.red += u64::from(red);
     bin.green += u64::from(green);
     bin.blue += u64::from(blue);
-}
-
-fn accumulate_quality_histogram_u32_remaining(
-    histogram: &mut [RgbHistogramBin32],
-    rgba_stream: &[u8],
-    start_offset: usize,
-    alpha_threshold: u8,
-) -> bool {
-    if alpha_threshold == 0 {
-        accumulate_quality_histogram_u32_bits_remaining_opaque::<QUALITY_HISTOGRAM_BITS>(
-            histogram,
-            rgba_stream,
-            start_offset,
-        );
-        return false;
-    }
-    let rgba_pointer = rgba_stream.as_ptr();
-    let mut has_transparent_pixels = false;
-    let mut offset = start_offset;
-    while offset + 32 <= rgba_stream.len() {
-        let packed0 =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset).cast()) });
-        let packed1 =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 4).cast()) });
-        let packed2 =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 8).cast()) });
-        let packed3 =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 12).cast()) });
-        let packed4 =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 16).cast()) });
-        let packed5 =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 20).cast()) });
-        let packed6 =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 24).cast()) });
-        let packed7 =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 28).cast()) });
-        if ((packed0 >> 24) as u8) < alpha_threshold {
-            has_transparent_pixels = true;
-        } else {
-            add_quality_histogram_u32(histogram, packed0);
-        }
-        if ((packed1 >> 24) as u8) < alpha_threshold {
-            has_transparent_pixels = true;
-        } else {
-            add_quality_histogram_u32(histogram, packed1);
-        }
-        if ((packed2 >> 24) as u8) < alpha_threshold {
-            has_transparent_pixels = true;
-        } else {
-            add_quality_histogram_u32(histogram, packed2);
-        }
-        if ((packed3 >> 24) as u8) < alpha_threshold {
-            has_transparent_pixels = true;
-        } else {
-            add_quality_histogram_u32(histogram, packed3);
-        }
-        if ((packed4 >> 24) as u8) < alpha_threshold {
-            has_transparent_pixels = true;
-        } else {
-            add_quality_histogram_u32(histogram, packed4);
-        }
-        if ((packed5 >> 24) as u8) < alpha_threshold {
-            has_transparent_pixels = true;
-        } else {
-            add_quality_histogram_u32(histogram, packed5);
-        }
-        if ((packed6 >> 24) as u8) < alpha_threshold {
-            has_transparent_pixels = true;
-        } else {
-            add_quality_histogram_u32(histogram, packed6);
-        }
-        if ((packed7 >> 24) as u8) < alpha_threshold {
-            has_transparent_pixels = true;
-        } else {
-            add_quality_histogram_u32(histogram, packed7);
-        }
-        offset += 32;
-    }
-    while offset < rgba_stream.len() {
-        let packed =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset).cast()) });
-        if ((packed >> 24) as u8) < alpha_threshold {
-            has_transparent_pixels = true;
-        } else {
-            add_quality_histogram_u32(histogram, packed);
-        }
-        offset += 4;
-    }
-    has_transparent_pixels
 }
 
 fn accumulate_quality_histogram_u32_bits_remaining<const BITS: usize>(
@@ -6329,14 +6479,16 @@ fn accumulate_quality_histogram_u64_remaining_opaque(
     }
 }
 
-fn index_rgba_frames_quality_u32(
+fn index_rgba_frames_quality_u32<const BITS: usize>(
     rgba_stream: &[u8],
     alpha_threshold: u8,
-) -> (Vec<u32>, Vec<u8>, Option<u8>) {
+) -> QualityIndexResult {
     let pixel_count = rgba_stream.len() / 4;
     let mut table = take_quality_color_index_table(COLOR_INDEX_CAP);
     let mut palette = Vec::with_capacity(256);
-    let mut indexed = Vec::with_capacity(pixel_count);
+    // Quantized inputs discard the exact-prefix indices, so avoid reserving a
+    // full-image buffer before the palette decision is known.
+    let mut indexed = Vec::with_capacity(pixel_count.min(4_096));
     let mut has_transparent_pixels = false;
     let rgba_pointer = rgba_stream.as_ptr();
     let mut overflow_offset = None;
@@ -6376,7 +6528,7 @@ fn index_rgba_frames_quality_u32(
     let histogram = if let Some(start_offset) = overflow_offset {
         // Keep the exact-prefix fast path allocation-free. Once overflow is
         // known, rebuild only that prefix and scan the remaining pixels once.
-        let mut histogram = take_quality_histogram_u32(QUALITY_HISTOGRAM_LEN);
+        let mut histogram = take_quality_histogram_u32(1 << (BITS * 3));
         let mut prefix_offset = 0usize;
         let rgba_pointer = rgba_stream.as_ptr();
         while prefix_offset < start_offset {
@@ -6384,11 +6536,11 @@ fn index_rgba_frames_quality_u32(
                 std::ptr::read_unaligned(rgba_pointer.add(prefix_offset).cast())
             });
             if ((packed >> 24) as u8) >= alpha_threshold {
-                add_quality_histogram_u32(&mut histogram, packed);
+                add_quality_histogram_u32_bits_const::<BITS>(&mut histogram, packed);
             }
             prefix_offset += 4;
         }
-        has_transparent_pixels |= accumulate_quality_histogram_u32_remaining(
+        has_transparent_pixels |= accumulate_quality_histogram_u32_bits_remaining::<BITS>(
             &mut histogram,
             rgba_stream,
             start_offset,
@@ -6396,14 +6548,14 @@ fn index_rgba_frames_quality_u32(
         );
         histogram
     } else {
-        return finish_quality_exact_indexed(
+        return QualityIndexResult::Exact(finish_quality_exact_indexed(
             rgba_stream,
             alpha_threshold,
             has_transparent_pixels,
             palette,
             table,
             indexed,
-        );
+        ));
     };
     recycle_quantized_indexed(indexed);
 
@@ -6412,19 +6564,19 @@ fn index_rgba_frames_quality_u32(
     let colors = quality_colors_from_histogram_u32::<true>(&histogram);
     recycle_quality_color_index_table(table);
     recycle_quality_histogram_u32(histogram);
-    index_rgba_frames_median_cut_from_colors(
+    QualityIndexResult::Quantized(build_quality_index_plan_from_colors(
         rgba_stream,
         alpha_threshold,
         has_transparent_pixels,
         colors,
-        QUALITY_HISTOGRAM_BITS,
-    )
+        BITS,
+    ))
 }
 
 fn index_rgba_frames_quality_u64(
     rgba_stream: &[u8],
     alpha_threshold: u8,
-) -> (Vec<u32>, Vec<u8>, Option<u8>) {
+) -> QualityIndexResult {
     let pixel_count = rgba_stream.len() / 4;
     let mut histogram = take_quality_histogram_u64(QUALITY_HISTOGRAM_LEN);
     let mut table = take_quality_color_index_table(COLOR_INDEX_CAP);
@@ -6476,37 +6628,41 @@ fn index_rgba_frames_quality_u64(
         );
     } else {
         recycle_quality_histogram_u64(histogram);
-        return finish_quality_exact_indexed(
+        return QualityIndexResult::Exact(finish_quality_exact_indexed(
             rgba_stream,
             alpha_threshold,
             has_transparent_pixels,
             palette,
             table,
             indexed,
-        );
+        ));
     }
 
     let colors = quality_colors_from_histogram_u64(&histogram);
     recycle_quality_color_index_table(table);
     recycle_quality_histogram_u64(histogram);
-    index_rgba_frames_median_cut_from_colors(
+    QualityIndexResult::Quantized(build_quality_index_plan_from_colors(
         rgba_stream,
         alpha_threshold,
         has_transparent_pixels,
         colors,
         QUALITY_HISTOGRAM_BITS,
-    )
+    ))
 }
 
-fn index_rgba_frames_median_cut_from_colors(
-    rgba_stream: &[u8],
-    alpha_threshold: u8,
+fn build_quality_index_plan_from_colors(
+    _rgba_stream: &[u8],
+    _alpha_threshold: u8,
     has_transparent_pixels: bool,
     mut colors: Vec<QuantizedColor>,
     histogram_bits: usize,
-) -> (Vec<u32>, Vec<u8>, Option<u8>) {
-    let pixel_count = rgba_stream.len() / 4;
-    let mapping_len = 1usize << (histogram_bits * 3);
+) -> QualityIndexPlan {
+    let mapping_bits = if histogram_bits == 5 && colors.len() > QUALITY_DOMINANT_COLOR_LIMIT {
+        4
+    } else {
+        histogram_bits
+    };
+    let mapping_len = 1usize << (mapping_bits * 3);
     let opaque_color_limit = if has_transparent_pixels { 255 } else { 256 };
 
     let (mut palette, histogram_to_palette) = if colors.len() <= QUALITY_DOMINANT_COLOR_LIMIT {
@@ -6532,6 +6688,7 @@ fn index_rgba_frames_median_cut_from_colors(
         }
         let initial_tree = PaletteKdTree::new(&palette);
         let initial_coarse_hints = initial_tree.coarse_hint_table(&palette);
+        let mut histogram_to_palette = take_quality_histogram_to_palette(mapping_len);
         let mut counts = [0u64; 256];
         let mut red_sums = [0u64; 256];
         let mut green_sums = [0u64; 256];
@@ -6547,37 +6704,42 @@ fn index_rgba_frames_median_cut_from_colors(
                 color.blue,
                 Some((hint_index, palette[usize::from(hint_index)])),
             ));
+            histogram_to_palette[usize::from(color.histogram_index)] = index as u8;
             counts[index] += color.count;
             red_sums[index] += u64::from(color.red) * color.count;
             green_sums[index] += u64::from(color.green) * color.count;
             blue_sums[index] += u64::from(color.blue) * color.count;
         }
+        let mut palette_changed = false;
         for index in 0..palette.len() {
             let count = counts[index];
             if count == 0 {
                 continue;
             }
-            palette[index] = rgb_key(
+            let representative = rgb_key(
                 ((red_sums[index] + count / 2) / count) as u8,
                 ((green_sums[index] + count / 2) / count) as u8,
                 ((blue_sums[index] + count / 2) / count) as u8,
             );
+            palette_changed |= palette[index] != representative;
+            palette[index] = representative;
         }
-        let palette_tree = PaletteKdTree::new(&palette);
-        let coarse_hints = palette_tree.coarse_hint_table(&palette);
-        let mut histogram_to_palette = take_quality_histogram_to_palette(mapping_len);
-        for color in &colors {
-            let coarse_index = (usize::from(color.red >> 5) << 6)
-                | (usize::from(color.green >> 5) << 3)
-                | usize::from(color.blue >> 5);
-            let hint_index = coarse_hints[coarse_index];
-            histogram_to_palette[usize::from(color.histogram_index)] = palette_tree
-                .nearest_with_hint(
-                    color.red,
-                    color.green,
-                    color.blue,
-                    Some((hint_index, palette[usize::from(hint_index)])),
-                );
+        if palette_changed {
+            let palette_tree = PaletteKdTree::new(&palette);
+            let coarse_hints = palette_tree.coarse_hint_table(&palette);
+            for color in &colors {
+                let coarse_index = (usize::from(color.red >> 5) << 6)
+                    | (usize::from(color.green >> 5) << 3)
+                    | usize::from(color.blue >> 5);
+                let hint_index = coarse_hints[coarse_index];
+                histogram_to_palette[usize::from(color.histogram_index)] = palette_tree
+                    .nearest_with_hint(
+                        color.red,
+                        color.green,
+                        color.blue,
+                        Some((hint_index, palette[usize::from(hint_index)])),
+                    );
+            }
         }
         recycle_quality_colors(colors);
         (palette, histogram_to_palette)
@@ -6612,17 +6774,70 @@ fn index_rgba_frames_median_cut_from_colors(
             palette.push(color_box.representative);
         }
 
-        let palette_tree = PaletteKdTree::new(&palette);
         let mut histogram_to_palette = take_quality_histogram_to_palette(mapping_len);
-        for (box_index, color_box) in boxes.iter().enumerate() {
-            for color in &colors[color_box.start..color_box.end] {
-                let index = palette_tree.nearest_with_hint(
-                    color.red,
-                    color.green,
-                    color.blue,
-                    Some((box_index as u8, palette[box_index])),
-                );
-                histogram_to_palette[usize::from(color.histogram_index)] = index;
+        if histogram_bits == 4 {
+            let palette_tree = PaletteKdTree::new(&palette);
+            let coarse_hints = palette_tree.coarse_hint_table(&palette);
+            let mut coarse_nearest = [0u8; 1 << 12];
+            for red in 0..16u8 {
+                for green in 0..16u8 {
+                    for blue in 0..16u8 {
+                        let index =
+                            (usize::from(red) << 8) | (usize::from(green) << 4) | usize::from(blue);
+                        let hint_index = coarse_hints[(usize::from(red >> 1) << 6)
+                            | (usize::from(green >> 1) << 3)
+                            | usize::from(blue >> 1)];
+                        coarse_nearest[index] = palette_tree.nearest_with_hint(
+                            (red << 4) | 8,
+                            (green << 4) | 8,
+                            (blue << 4) | 8,
+                            Some((hint_index, palette[usize::from(hint_index)])),
+                        );
+                    }
+                }
+            }
+            for color_box in &boxes {
+                for color in &colors[color_box.start..color_box.end] {
+                    let index = (usize::from(color.red >> 4) << 8)
+                        | (usize::from(color.green >> 4) << 4)
+                        | usize::from(color.blue >> 4);
+                    histogram_to_palette[usize::from(color.histogram_index)] =
+                        coarse_nearest[index];
+                }
+            }
+        } else {
+            let palette_tree = PaletteKdTree::new(&palette);
+            let coarse_hints = palette_tree.coarse_hint_table(&palette);
+            let mut coarse_nearest = [0u8; 1 << 12];
+            for red in 0..16u8 {
+                for green in 0..16u8 {
+                    for blue in 0..16u8 {
+                        let index =
+                            (usize::from(red) << 8) | (usize::from(green) << 4) | usize::from(blue);
+                        let hint_index = coarse_hints[(usize::from(red >> 1) << 6)
+                            | (usize::from(green >> 1) << 3)
+                            | usize::from(blue >> 1)];
+                        coarse_nearest[index] = palette_tree.nearest_with_hint(
+                            (red << 4) | 8,
+                            (green << 4) | 8,
+                            (blue << 4) | 8,
+                            Some((hint_index, palette[usize::from(hint_index)])),
+                        );
+                    }
+                }
+            }
+            for color_box in &boxes {
+                for color in &colors[color_box.start..color_box.end] {
+                    let coarse_index = (usize::from(color.red >> 4) << 8)
+                        | (usize::from(color.green >> 4) << 4)
+                        | usize::from(color.blue >> 4);
+                    let mapping_index = if histogram_bits == 5 {
+                        coarse_index
+                    } else {
+                        usize::from(color.histogram_index)
+                    };
+                    histogram_to_palette[mapping_index] = coarse_nearest[coarse_index];
+                }
             }
         }
         recycle_quality_colors(colors);
@@ -6639,28 +6854,12 @@ fn index_rgba_frames_median_cut_from_colors(
         palette.push(0);
     }
 
-    let mut indexed = take_quantized_indexed(pixel_count);
-    match histogram_bits {
-        4 => map_quality_pixels::<4>(
-            rgba_stream,
-            alpha_threshold,
-            has_transparent_pixels,
-            transparent_index,
-            &histogram_to_palette,
-            &mut indexed,
-        ),
-        5 => map_quality_pixels::<5>(
-            rgba_stream,
-            alpha_threshold,
-            has_transparent_pixels,
-            transparent_index,
-            &histogram_to_palette,
-            &mut indexed,
-        ),
-        _ => unreachable!("unsupported quality histogram precision"),
+    QualityIndexPlan {
+        palette,
+        histogram_to_palette,
+        transparent_index,
+        mapping_bits,
     }
-    recycle_quality_histogram_to_palette(histogram_to_palette);
-    (palette, indexed, transparent_index)
 }
 
 fn try_index_rgba_frames_exact(
@@ -6977,6 +7176,7 @@ struct PaletteKdNode {
     blue: u8,
     palette_index: u8,
     axis: u8,
+    split: u8,
     left: usize,
     right: usize,
 }
@@ -7049,6 +7249,7 @@ impl PaletteKdTree {
                 blue: color as u8,
                 palette_index: palette_index as u8,
                 axis,
+                split: component(color, axis),
                 left,
                 right,
             });
@@ -7071,16 +7272,37 @@ impl PaletteKdTree {
     /// its branch-and-bound distance for dense 5-bit histograms.
     fn coarse_hint_table(&self, palette_rgb: &[u32]) -> [u8; 512] {
         let mut table = [0u8; 512];
+        let mut occupied = [false; 512];
+        let mut best_distance = [u32::MAX; 512];
+        for (palette_index, &color) in palette_rgb.iter().enumerate() {
+            let red = (color >> 16) as u8;
+            let green = (color >> 8) as u8;
+            let blue = color as u8;
+            let cell = (usize::from(red >> 5) << 6)
+                | (usize::from(green >> 5) << 3)
+                | usize::from(blue >> 5);
+            let dr = i32::from(red) - i32::from((red >> 5) * 32 + 16);
+            let dg = i32::from(green) - i32::from((green >> 5) * 32 + 16);
+            let db = i32::from(blue) - i32::from((blue >> 5) * 32 + 16);
+            let distance = (dr * dr + dg * dg + db * db) as u32;
+            if distance < best_distance[cell] {
+                best_distance[cell] = distance;
+                table[cell] = palette_index as u8;
+                occupied[cell] = true;
+            }
+        }
         for red in 0..8u8 {
             for green in 0..8u8 {
                 for blue in 0..8u8 {
                     let index = usize::from(red) << 6 | usize::from(green) << 3 | usize::from(blue);
-                    table[index] = nearest_palette_index(
-                        (red << 5) | 16,
-                        (green << 5) | 16,
-                        (blue << 5) | 16,
-                        palette_rgb,
-                    );
+                    if !occupied[index] {
+                        table[index] = self.nearest_with_hint(
+                            (red << 5) | 16,
+                            (green << 5) | 16,
+                            (blue << 5) | 16,
+                            None,
+                        );
+                    }
                 }
             }
         }
@@ -7142,22 +7364,22 @@ impl PaletteKdTree {
                 1 => g,
                 _ => b,
             };
-            let split = match node.axis {
-                0 => i32::from(node.red),
-                1 => i32::from(node.green),
-                _ => i32::from(node.blue),
-            };
+            let split = i32::from(node.split);
             let (near, far) = if value < split {
                 (node.left, node.right)
             } else {
                 (node.right, node.left)
             };
-            let delta = value - split;
-            let split_distance = (delta * delta) as u32;
-            if split_distance <= best_distance {
-                if far != PALETTE_KD_EMPTY {
+            if far != PALETTE_KD_EMPTY {
+                // The split-plane distance is a valid lower bound for every
+                // point in the far subtree. It avoids loading and checking
+                // the subtree's full RGB bounds on every branch; the exact
+                // KD search still visits any branch whose bound can win.
+                let delta = (value - split).unsigned_abs();
+                let far_distance = (delta * delta) as u32;
+                if far_distance <= best_distance {
                     debug_assert!(stack_len < stack.len());
-                    stack[stack_len].write((far, split_distance));
+                    stack[stack_len].write((far, far_distance));
                     stack_len += 1;
                 }
             }
@@ -7165,8 +7387,8 @@ impl PaletteKdTree {
             if next == PALETTE_KD_EMPTY {
                 while stack_len > 0 {
                     stack_len -= 1;
-                    let (far_index, split_distance) = unsafe { stack[stack_len].assume_init() };
-                    if split_distance <= best_distance {
+                    let (far_index, far_distance) = unsafe { stack[stack_len].assume_init() };
+                    if far_distance <= best_distance {
                         next = far_index;
                         break;
                     }
@@ -9069,8 +9291,13 @@ fn encode_nine_bit_literal_lzw_direct_to(
         .div_ceil(8);
     let block_count = raw_length.div_ceil(255);
     let output_start = output.len();
-    output.resize(output_start + 2 + block_count + raw_length + 8, 0);
-    output[output_start] = 8;
+    // Reserve a small write-ahead pad for the final unaligned u64 store, but
+    // do not extend the Vec length until every actual output byte is written.
+    // This keeps the spare-capacity fast path free of a multi-megabyte zero fill.
+    output.reserve(2 + block_count + raw_length + 8);
+    unsafe {
+        output.as_mut_ptr().add(output_start).write(8);
+    }
     let mut writer = DirectGifSubblockWriter {
         output: unsafe { output.as_mut_ptr().add(output_start) },
         position: 2,
@@ -9130,11 +9357,223 @@ fn encode_nine_bit_literal_lzw_direct_to(
     let mut raw_offset = 0usize;
     for block in 0..block_count {
         let length = (raw_length - raw_offset).min(255);
-        output[output_start + 1 + block * 256] = length as u8;
+        unsafe {
+            output
+                .as_mut_ptr()
+                .add(output_start + 1 + block * 256)
+                .write(length as u8);
+        }
         raw_offset += length;
     }
-    output.truncate(output_start + 2 + block_count + raw_length);
+    unsafe {
+        output
+            .as_mut_ptr()
+            .add(output_start + 1 + block_count + raw_length)
+            .write(0);
+        output.set_len(output_start + 2 + block_count + raw_length);
+    }
     Ok(())
+}
+
+/// Encode the 256-color literal stream directly from RGBA input. The quality
+/// palette has already been built, so retaining a full indexed scratch buffer
+fn encode_nine_bit_literal_lzw_mapped_to<const BITS: usize, const HAS_TRANSPARENT: bool>(
+    output: &mut Vec<u8>,
+    rgba_stream: &[u8],
+    alpha_threshold: u8,
+    transparent_index: u8,
+    histogram_to_palette: &[u8],
+) -> Result<(), String> {
+    if rgba_stream.is_empty() || rgba_stream.len() % 4 != 0 {
+        return Err("RGBA frame stream is empty or misaligned".to_string());
+    }
+    let pixel_count = rgba_stream.len() / 4;
+    let clear_count = pixel_count.div_ceil(254);
+    let raw_length = pixel_count
+        .checked_add(clear_count)
+        .and_then(|codes| codes.checked_add(1))
+        .and_then(|codes| codes.checked_mul(9))
+        .ok_or_else(|| "Encoded GIF size overflow".to_string())?
+        .div_ceil(8);
+    let block_count = raw_length.div_ceil(255);
+    let output_start = output.len();
+    output.reserve(2 + block_count + raw_length + 8);
+    unsafe {
+        output.as_mut_ptr().add(output_start).write(8);
+    }
+    let mut writer = DirectGifSubblockWriter {
+        output: unsafe { output.as_mut_ptr().add(output_start) },
+        position: 2,
+        block_remaining: 255,
+        raw_position: 0,
+    };
+    let mut bits = 0u64;
+    let mut bit_count = 0usize;
+    let rgba_pointer = rgba_stream.as_ptr();
+
+    for chunk_start in (0..pixel_count).step_by(254) {
+        append_nine_bit_literal_code_to_direct(
+            &mut writer,
+            &mut bits,
+            &mut bit_count,
+            256,
+        );
+        let chunk_end = (chunk_start + 254).min(pixel_count);
+        let mut pixel_index = chunk_start;
+        while pixel_index + 7 <= chunk_end {
+            let packed0 = u32::from_le(unsafe {
+                std::ptr::read_unaligned(rgba_pointer.add(pixel_index * 4).cast())
+            });
+            let packed1 = u32::from_le(unsafe {
+                std::ptr::read_unaligned(rgba_pointer.add((pixel_index + 1) * 4).cast())
+            });
+            let packed2 = u32::from_le(unsafe {
+                std::ptr::read_unaligned(rgba_pointer.add((pixel_index + 2) * 4).cast())
+            });
+            let packed3 = u32::from_le(unsafe {
+                std::ptr::read_unaligned(rgba_pointer.add((pixel_index + 3) * 4).cast())
+            });
+            let packed4 = u32::from_le(unsafe {
+                std::ptr::read_unaligned(rgba_pointer.add((pixel_index + 4) * 4).cast())
+            });
+            let packed5 = u32::from_le(unsafe {
+                std::ptr::read_unaligned(rgba_pointer.add((pixel_index + 5) * 4).cast())
+            });
+            let packed6 = u32::from_le(unsafe {
+                std::ptr::read_unaligned(rgba_pointer.add((pixel_index + 6) * 4).cast())
+            });
+            let code0 = mapped_quality_pixel::<BITS, HAS_TRANSPARENT>(
+                packed0,
+                alpha_threshold,
+                transparent_index,
+                histogram_to_palette,
+            );
+            let code1 = mapped_quality_pixel::<BITS, HAS_TRANSPARENT>(
+                packed1,
+                alpha_threshold,
+                transparent_index,
+                histogram_to_palette,
+            );
+            let code2 = mapped_quality_pixel::<BITS, HAS_TRANSPARENT>(
+                packed2,
+                alpha_threshold,
+                transparent_index,
+                histogram_to_palette,
+            );
+            let code3 = mapped_quality_pixel::<BITS, HAS_TRANSPARENT>(
+                packed3,
+                alpha_threshold,
+                transparent_index,
+                histogram_to_palette,
+            );
+            let code4 = mapped_quality_pixel::<BITS, HAS_TRANSPARENT>(
+                packed4,
+                alpha_threshold,
+                transparent_index,
+                histogram_to_palette,
+            );
+            let code5 = mapped_quality_pixel::<BITS, HAS_TRANSPARENT>(
+                packed5,
+                alpha_threshold,
+                transparent_index,
+                histogram_to_palette,
+            );
+            let code6 = mapped_quality_pixel::<BITS, HAS_TRANSPARENT>(
+                packed6,
+                alpha_threshold,
+                transparent_index,
+                histogram_to_palette,
+            );
+            let packed_codes = u64::from(code0)
+                | (u64::from(code1) << 9)
+                | (u64::from(code2) << 18)
+                | (u64::from(code3) << 27)
+                | (u64::from(code4) << 36)
+                | (u64::from(code5) << 45)
+                | (u64::from(code6) << 54);
+            let combined = bits | (packed_codes << bit_count);
+            let total_bits = bit_count + 63;
+            if total_bits >= 64 {
+                writer.write_fixed(&combined.to_le_bytes(), 8);
+                bits = if bit_count == 0 {
+                    0
+                } else {
+                    packed_codes >> (64 - bit_count)
+                };
+                bit_count = total_bits - 64;
+            } else {
+                debug_assert_eq!(bit_count, 0);
+                writer.write_fixed(&combined.to_le_bytes(), 7);
+                bits = combined >> 56;
+                bit_count = total_bits - 56;
+            }
+            pixel_index += 7;
+        }
+        while pixel_index < chunk_end {
+            let packed = u32::from_le(unsafe {
+                std::ptr::read_unaligned(rgba_pointer.add(pixel_index * 4).cast())
+            });
+            let code = mapped_quality_pixel::<BITS, HAS_TRANSPARENT>(
+                packed,
+                alpha_threshold,
+                transparent_index,
+                histogram_to_palette,
+            );
+            append_nine_bit_literal_code_to_direct(
+                &mut writer,
+                &mut bits,
+                &mut bit_count,
+                u16::from(code),
+            );
+            pixel_index += 1;
+        }
+    }
+    append_nine_bit_literal_code_to_direct(
+        &mut writer,
+        &mut bits,
+        &mut bit_count,
+        257,
+    );
+    while bit_count > 0 {
+        writer.write_byte(bits as u8);
+        bits >>= 8;
+        bit_count = bit_count.saturating_sub(8);
+    }
+    debug_assert_eq!(writer.raw_position, raw_length);
+    let mut raw_offset = 0usize;
+    for block in 0..block_count {
+        let length = (raw_length - raw_offset).min(255);
+        unsafe {
+            output
+                .as_mut_ptr()
+                .add(output_start + 1 + block * 256)
+                .write(length as u8);
+        }
+        raw_offset += length;
+    }
+    unsafe {
+        output
+            .as_mut_ptr()
+            .add(output_start + 1 + block_count + raw_length)
+            .write(0);
+        output.set_len(output_start + 2 + block_count + raw_length);
+    }
+    Ok(())
+}
+
+#[inline(always)]
+fn mapped_quality_pixel<const BITS: usize, const HAS_TRANSPARENT: bool>(
+    packed: u32,
+    alpha_threshold: u8,
+    transparent_index: u8,
+    histogram_to_palette: &[u8],
+) -> u8 {
+    if HAS_TRANSPARENT && ((packed >> 24) as u8) < alpha_threshold {
+        transparent_index
+    } else {
+        let index = quality_histogram_index_packed::<BITS>(packed);
+        unsafe { *histogram_to_palette.get_unchecked(index) }
+    }
 }
 
 #[inline(always)]
@@ -10340,10 +10779,69 @@ fn blit_indices_to_canvas_u32(
                 let destination = (frame_y + y) * canvas_width + frame_x;
                 let destination_row = &mut canvas[destination..destination + frame_width];
                 if full_byte_palette {
-                    for (pixel, &index) in destination_row.iter_mut().zip(source_row) {
-                        if index != transparent_index {
-                            *pixel = unsafe { *palette.get_unchecked(usize::from(index)) };
+                    let source_pointer = source_row.as_ptr();
+                    let palette_pointer = palette.as_ptr();
+                    let destination_pointer = destination_row.as_mut_ptr();
+                    let transparent_bytes =
+                        u64::from(transparent_index).wrapping_mul(0x0101_0101_0101_0101);
+                    let mut pixel_index = 0usize;
+                    while pixel_index + 8 <= frame_width {
+                        let packed_indices = unsafe {
+                            std::ptr::read_unaligned(source_pointer.add(pixel_index).cast::<u64>())
+                        };
+                        if packed_indices == transparent_bytes {
+                            pixel_index += 8;
+                            continue;
                         }
+                        let compared = packed_indices ^ transparent_bytes;
+                        let transparent_lanes = compared.wrapping_sub(0x0101_0101_0101_0101)
+                            & !compared
+                            & 0x8080_8080_8080_8080;
+                        if transparent_lanes == 0 {
+                            let colors = unsafe {
+                                [
+                                    *palette_pointer.add((packed_indices & 0xff) as usize),
+                                    *palette_pointer.add(((packed_indices >> 8) & 0xff) as usize),
+                                    *palette_pointer.add(((packed_indices >> 16) & 0xff) as usize),
+                                    *palette_pointer.add(((packed_indices >> 24) & 0xff) as usize),
+                                    *palette_pointer.add(((packed_indices >> 32) & 0xff) as usize),
+                                    *palette_pointer.add(((packed_indices >> 40) & 0xff) as usize),
+                                    *palette_pointer.add(((packed_indices >> 48) & 0xff) as usize),
+                                    *palette_pointer.add(((packed_indices >> 56) & 0xff) as usize),
+                                ]
+                            };
+                            unsafe {
+                                std::ptr::copy_nonoverlapping(
+                                    colors.as_ptr(),
+                                    destination_pointer.add(pixel_index),
+                                    colors.len(),
+                                );
+                            }
+                            pixel_index += 8;
+                            continue;
+                        }
+                        for lane in 0..8 {
+                            let index = unsafe { *source_pointer.add(pixel_index + lane) };
+                            if index != transparent_index {
+                                unsafe {
+                                    destination_pointer
+                                        .add(pixel_index + lane)
+                                        .write(*palette_pointer.add(usize::from(index)));
+                                }
+                            }
+                        }
+                        pixel_index += 8;
+                    }
+                    while pixel_index < frame_width {
+                        let index = unsafe { *source_pointer.add(pixel_index) };
+                        if index != transparent_index {
+                            unsafe {
+                                destination_pointer
+                                    .add(pixel_index)
+                                    .write(*palette_pointer.add(usize::from(index)));
+                            }
+                        }
+                        pixel_index += 1;
                     }
                     continue;
                 }
@@ -11951,6 +12449,88 @@ mod tests {
     }
 
     #[test]
+    fn quality_precision_guard_keeps_smooth_ramps_on_the_fine_histogram() {
+        let mut gradient = Vec::new();
+        let mut noisy = Vec::new();
+        for y in 0..64u16 {
+            for x in 0..64u16 {
+                gradient.extend_from_slice(&[
+                    (x * 255 / 63) as u8,
+                    (y * 255 / 63) as u8,
+                    ((x + y) * 127 / 126) as u8,
+                    255,
+                ]);
+                noisy.extend_from_slice(&[
+                    ((x * 73 + y * 151) & 255) as u8,
+                    ((x * 193 + y * 47) & 255) as u8,
+                    ((x * 11 + y * 223) & 255) as u8,
+                    255,
+                ]);
+            }
+        }
+
+        assert!(quality_prefers_high_precision_histogram(
+            &gradient,
+            TRANSPARENT_ALPHA_THRESHOLD,
+        ));
+        assert!(!quality_prefers_high_precision_histogram(
+            &noisy,
+            TRANSPARENT_ALPHA_THRESHOLD,
+        ));
+    }
+
+    #[test]
+    fn fused_quality_literal_encoding_matches_indexed_encoding() {
+        let width = 64u16;
+        let height = 64u16;
+        let mut rgba = Vec::with_capacity(usize::from(width) * usize::from(height) * 4);
+        for y in 0..height {
+            for x in 0..width {
+                rgba.extend_from_slice(&[
+                    ((x * 73 + y * 151) & 255) as u8,
+                    ((x * 193 + y * 47) & 255) as u8,
+                    ((x * 11 + y * 223) & 255) as u8,
+                    if (x + y) % 5 == 0 { 0 } else { 255 },
+                ]);
+            }
+        }
+        let delays = [10u16];
+        let (palette, indexed, transparent_index) =
+            index_rgba_frames_quality(&rgba, TRANSPARENT_ALPHA_THRESHOLD);
+        let indexed_output = encode_indexed_literal_gif_inner_with_output(
+            Vec::new(),
+            &indexed,
+            width,
+            height,
+            1,
+            &palette,
+            DelaySource::PerFrame(&delays),
+            0,
+            transparent_index,
+        )
+        .unwrap();
+        recycle_quantized_indexed(indexed);
+
+        let plan = match index_rgba_frames_quality_result(&rgba, TRANSPARENT_ALPHA_THRESHOLD) {
+            QualityIndexResult::Quantized(plan) => plan,
+            QualityIndexResult::Exact(_) => panic!("fixture should overflow the exact palette"),
+        };
+        let fused_output = encode_quality_index_plan_literal_gif(
+            Vec::new(),
+            &rgba,
+            width,
+            height,
+            1,
+            DelaySource::PerFrame(&delays),
+            0,
+            TRANSPARENT_ALPHA_THRESHOLD,
+            plan,
+        )
+        .unwrap();
+        assert_eq!(fused_output, indexed_output);
+    }
+
+    #[test]
     fn opaque_quality_scan_is_identical_for_zero_alpha_threshold() {
         let mut rgba = Vec::new();
         for y in 0..48u16 {
@@ -12035,4 +12615,5 @@ mod tests {
             }
         }
     }
+
 }

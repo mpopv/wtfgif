@@ -9,6 +9,7 @@ import {
 	isWasmReady,
 	setWasmCoreModule,
 } from "../src/wasm/runtime";
+import { supportsWasmSimd } from "../src/wasm/simd";
 
 const fakeCoreModule = {
 	WtfGifCore: class {
@@ -83,7 +84,7 @@ describe("WebAssembly runtime integration", () => {
 	test("reports runtime WebAssembly capabilities", () => {
 		expect(getWasmFeatures()).toEqual({
 			supported: typeof WebAssembly !== "undefined",
-			simd: false,
+			simd: supportsWasmSimd(),
 			threads: typeof SharedArrayBuffer !== "undefined",
 		});
 	});

@@ -1,4 +1,5 @@
 import { WasmCoreModule, WasmEncodeCoreModule } from "../types";
+import { supportsWasmSimd } from "./simd";
 
 let cachedWasmCoreModule: WasmEncodeCoreModule | null | undefined;
 let wasmInitPromise: Promise<void> | null = null;
@@ -56,6 +57,9 @@ const loadWasmCoreModule = (): WasmEncodeCoreModule | null => {
 	}
 
 	const loaded =
+		(supportsWasmSimd()
+			? tryRequire("./wasm-encode-simd/wtfgif_core.js")
+			: null) ??
 		tryRequire("./wasm-encode/wtfgif_core.js") ??
 		tryRequire("../crates/wtfgif-core/pkg-encode/wtfgif_core.js") ??
 		tryRequire("../../crates/wtfgif-core/pkg-encode/wtfgif_core.js");
@@ -99,15 +103,26 @@ const loadBrowserWasmCoreModule = async (
 		return null;
 	}
 
-	const moduleUrl = new URL(
+	const moduleUrls = [
+		...(supportsWasmSimd() ? ["./wasm-encode-web-simd/wtfgif_core.js"] : []),
 		"./wasm-encode-web/wtfgif_core.js",
-		import.meta.url,
-	).href;
-	const loaded = (await import(/* @vite-ignore */ moduleUrl)) as WasmEncodeWebModule;
-	if (typeof loaded.default === "function") {
-		await loaded.default(moduleOrPath);
+	].map((path) => new URL(path, import.meta.url).href);
+	for (const moduleUrl of moduleUrls) {
+		try {
+			const loaded = (await import(/* @vite-ignore */ moduleUrl)) as WasmEncodeWebModule;
+			if (typeof loaded.default === "function") {
+				await loaded.default(moduleOrPath);
+			}
+			const wasm = asWasmEncodeCoreModule(loaded);
+			if (wasm) {
+				return wasm;
+			}
+		} catch {
+			// A package built without the optional SIMD artifact falls through to
+			// the portable scalar module.
+		}
 	}
-	return asWasmEncodeCoreModule(loaded);
+	return null;
 };
 
 export const initializeGlobalWasm = (moduleOrPath?: unknown): Promise<void> => {
@@ -180,7 +195,7 @@ export function getWasmFeatures(): {
 } {
 	return {
 		supported: typeof WebAssembly !== "undefined",
-		simd: false,
+		simd: supportsWasmSimd(),
 		threads:
 			typeof SharedArrayBuffer !== "undefined" &&
 			(typeof crossOriginIsolated === "undefined" || crossOriginIsolated),

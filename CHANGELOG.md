@@ -2,6 +2,25 @@
 
 All notable changes to wtfgif are documented here.
 
+## 2.2.0 - 2026-08-01
+
+- Add SIMD Wasm artifacts for Node and browsers with runtime feature detection
+  and a scalar fallback, so the fast path is portable rather than native-only.
+- Route smooth large-image ramps through the finer 5-bit quality histogram and
+  keep the 4-bit/table path for noisy/photo-like inputs; dense 5-bit palettes
+  use a compact 4-bit parent-cell map. Add a regression test for the quality
+  decision.
+- Fuse RGBA palette mapping directly into the literal 9-bit LZW writer for the
+  normal 256-color path, removing the intermediate indexed-pixel write/read;
+  byte-for-byte parity is covered for transparent and opaque pixels.
+- Current initialized receipts are 128.67× on the real-image fixture, 108.69×
+  with opaque alpha, and 1,333.26× on the 512×512×10 arbitrary-RGBA stress
+  fixture. The latter still has higher measured PSNR and is a valid GIF.
+- The current direct indexed writer receipt is 222.07×; decode remains
+  workload-dependent at 2.08×–4.27× on the targeted larger fixtures. Strict
+  cold startup is 19.04× for the full entry and 22.88× for encode-only because
+  both include process and Wasm initialization.
+
 ## 2.1.0 - 2026-08-01
 
 - Ship a genuinely encode-only `wtfgif/encode` bundle and Node/browser Wasm
