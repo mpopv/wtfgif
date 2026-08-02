@@ -29,6 +29,8 @@ const gif = encodeRgbaGifFrames({
 	frameCount,
 	delay: 10,
 	loop: 0,
+	compression: "fast",
+	quantization: "quality",
 });
 ```
 
@@ -42,9 +44,13 @@ initializers: each entry owns its own Wasm module.
 GIF itself is limited to 256 colors per palette and binary transparency, so no
 GIF encoder can preserve every full-color source pixel exactly.
 
-The RGBA path uses one quality-first pipeline: adaptive palette quantization
+The quality-first RGBA pipeline is selected explicitly with
+`compression: "fast", quantization: "quality"`: adaptive palette quantization
 followed by literal LZW. Literal LZW is lossless for the indexed GIF pixels, so
 it never trades away visual quality for speed; it only produces larger files.
+For backwards compatibility, omitting `quantization` keeps the older exact
+fast-mode behavior; use the quality options above for arbitrary full-color
+input.
 The Wasm build selects a SIMD artifact when the runtime supports it and falls
 back to the portable scalar artifact otherwise. Large noisy/photo-like inputs
 use a fast 4-bit histogram/table pass; smooth ramps use the finer 5-bit
