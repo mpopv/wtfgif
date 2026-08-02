@@ -8002,9 +8002,24 @@ fn rgba_stream_has_transparent_pixels(rgba_stream: &[u8], alpha_threshold: u8) -
         return false;
     }
     let pointer = rgba_stream.as_ptr();
-    let mut offset = 3usize;
+    let mut offset = 0usize;
+    while offset + 32 <= rgba_stream.len() {
+        if unsafe {
+            *pointer.add(offset + 3) < alpha_threshold
+                || *pointer.add(offset + 7) < alpha_threshold
+                || *pointer.add(offset + 11) < alpha_threshold
+                || *pointer.add(offset + 15) < alpha_threshold
+                || *pointer.add(offset + 19) < alpha_threshold
+                || *pointer.add(offset + 23) < alpha_threshold
+                || *pointer.add(offset + 27) < alpha_threshold
+                || *pointer.add(offset + 31) < alpha_threshold
+        } {
+            return true;
+        }
+        offset += 32;
+    }
     while offset < rgba_stream.len() {
-        if unsafe { *pointer.add(offset) } < alpha_threshold {
+        if unsafe { *pointer.add(offset + 3) < alpha_threshold } {
             return true;
         }
         offset += 4;
