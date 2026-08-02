@@ -125,11 +125,12 @@ wtfgif is **222.58× faster** in the current 200-sample run: 16.541 ms for
 omggif versus 0.074 ms for wtfgif.
 That result is byte-decoded and checked for exact RGBA equality before timing.
 Across the 2–256-color typed-output sweep, the minimum measured speedup is
-**109.65×** (32 colors).
+**110.57×** (32 colors), with a **167× geometric mean** in the latest
+180-sample receipt.
 
-Decode remains workload-dependent rather than 100×: the current 100-sample
-fixture sweep ranges from **0.91×** on a tiny frame to **4.60×** on a larger
-input (2.23× geometric mean), with exact composited RGBA parity. Large GIFs
+Decode remains workload-dependent rather than 100×: the latest 50-sample
+fixture sweep ranges from **0.96×** on a tiny frame to **4.37×** on a larger
+input (**2.19× geometric mean**), with exact composited RGBA parity. Large GIFs
 with partial transparent rectangles also use a rectangle-only Wasm path so the
 caller canvas is not copied through Wasm for every frame.
 The one-off `decodeGifFramesRgba` API reaches **4.98×** on an all-full-canvas,

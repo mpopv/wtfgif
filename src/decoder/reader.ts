@@ -81,6 +81,12 @@ export class GifReader {
   private lastDecodeTargetByteLength!: number;
   private lastDecodeTarget32!: Uint32Array | null;
   private lastDecodedFrame!: number;
+  // Small legacy frames benefit from a compact one-table decoder that reads
+  // GIF subblocks in place.  These are lazy so the normal prepared/Wasm paths
+  // pay nothing for the tiny-frame specialization.
+  private directCodeTable!: Int32Array;
+  private directIndices!: Uint8Array;
+  private directStack!: Uint8Array;
   private static decodeBackend: GifDecodeBackend | null = null;
 
   static createPooled(buf: GifBinary): GifReader {
@@ -111,30 +117,15 @@ export class GifReader {
   constructor(buf: GifBinary, _usePooling: boolean = false) {
     const data = buf instanceof Uint8Array ? buf : Uint8Array.from(buf);
     this.buf = data;
-    this.width_ = 0;
-    this.height_ = 0;
     this.globalPaletteOffset = null;
     this.globalPaletteSize = null;
     this.frames = [];
     this.loop_count = null;
-    this.pooledTables = null;
-    this.decTable = new Int32Array(0);
-    this.stack = new Uint8Array(0);
-    this.firstByte = new Int16Array(0);
-    this.activePreparedFrames = new Set();
-    this.wasmCore = null;
-    this.wasmMemory = null;
-    this.sequentialCompositedFrames = null;
-    this.sequentialCompositedOrder = null;
-    this.sequentialInitialCanvasZero = null;
-    this.sequentialInitialCanvasBuffer = null;
-    this.sequentialInitialCanvasByteOffset = 0;
-    this.sequentialInitialCanvasByteLength = 0;
-    this.sequentialInitialCanvasOrder = null;
-    this.lastDecodeTargetBuffer = null;
-    this.lastDecodeTargetByteOffset = 0;
-    this.lastDecodeTargetByteLength = 0;
-    this.lastDecodeTarget32 = null;
+    // Decoder tables, Wasm state, playback caches, and the prepared-frame
+    // registry are all lazy.  The legacy GifReader path is often used for a
+    // single tiny GIF; avoiding a dozen sentinel writes and three empty typed
+    // arrays keeps construction close to omggif's deliberately minimal
+    // object setup.  Every consumer initializes its state before use.
     this.lastDecodedFrame = -1;
 
     let p = 0;
@@ -692,7 +683,7 @@ export class GifReader {
         disposeBackendResult();
       },
     };
-    this.activePreparedFrames.add(result);
+    (this.activePreparedFrames ??= new Set()).add(result);
     return result;
   }
 
@@ -917,7 +908,7 @@ export class GifReader {
         frames.length = 0;
       },
     };
-    this.activePreparedFrames.add(result);
+    (this.activePreparedFrames ??= new Set()).add(result);
     return result;
   }
 
@@ -1294,10 +1285,13 @@ export class GifReader {
 
   /* Return decoder tables to pool for reuse (call when done with this GifReader) */
   dispose(): void {
-    for (const prepared of Array.from(this.activePreparedFrames)) {
-      prepared.dispose();
+    const activePreparedFrames = this.activePreparedFrames;
+    if (activePreparedFrames) {
+      for (const prepared of Array.from(activePreparedFrames)) {
+        prepared.dispose();
+      }
+      activePreparedFrames.clear();
     }
-    this.activePreparedFrames.clear();
     this.clearFrameCaches();
     this.releaseWasmCore();
 
@@ -1510,13 +1504,21 @@ export class GifReader {
 
     const out32 = this.getDecodeTarget32(pixels);
 
-    if (this.tryDecodeSequentialCompositedFrame(frameNum, out32, order)) {
+    if (
+      this.frames.length >= 8 &&
+      this.tryDecodeSequentialCompositedFrame(frameNum, out32, order)
+    ) {
       return;
     }
 
     const frame = this.frames[frameNum]!;
     const framePixels = frame.width * frame.height;
     const canvasPixels = this.width_ * this.height_;
+    if (framePixels <= 4096) {
+      this.lzwDecodeAndBlitSmallFrame(frame, out32, order);
+      this.lastDecodedFrame = frameNum;
+      return;
+    }
     // The Rust decoder is already faster for medium partial frames; the old
     // full-frame-only cutoff left measurable work on the JS path.
     if (
@@ -1659,6 +1661,325 @@ export class GifReader {
       trans
     );
     this.lastDecodedFrame = frameNum;
+  }
+
+  /**
+   * Decode a small frame without materializing concatenated LZW subblocks or
+   * a 256-entry palette.  omggif's tiny-frame timings are dominated by those
+   * two setup allocations; a reusable dictionary plus compact scratch keeps
+   * the hot path cheap while retaining the exact legacy blit behavior.
+   */
+  private lzwDecodeAndBlitSmallFrame(
+    frame: FrameInfo,
+    out32: Uint32Array,
+    order: "rgba" | "bgra",
+  ): void {
+    const paletteOffset = frame.palette_offset;
+    if (paletteOffset === null || paletteOffset === undefined) {
+      throw new Error("GIF frame has no color palette.");
+    }
+
+    if (!frame.interlaced) {
+      this.lzwDecodeSmallNonInterlacedDirect(
+        frame,
+        out32,
+        order,
+        paletteOffset,
+      );
+      return;
+    }
+
+    const framePixels = (frame.width * frame.height) | 0;
+    let indices = this.directIndices;
+    if (!indices || indices.length < framePixels) {
+      indices = new Uint8Array(framePixels);
+      this.directIndices = indices;
+    }
+
+    let table = this.directCodeTable;
+    if (!table) {
+      table = new Int32Array(GIF.MAX_CODE);
+      this.directCodeTable = table;
+    }
+
+    const data = this.buf;
+    let p = (frame.data_offset | 0) + 1;
+    let blockRemaining = data[p++]! | 0;
+    const minCodeSize = data[frame.data_offset]! | 0;
+    const clearCode = 1 << minCodeSize;
+    const eoiCode = clearCode + 1;
+    let nextCode = eoiCode + 1;
+    let codeSize = (minCodeSize + 1) | 0;
+    let codeMask = (1 << codeSize) - 1;
+    let bitBuffer = 0;
+    let bitCount = 0;
+    let outputLength = 0;
+    let previousCode: number | null = null;
+    let firstCode = true;
+
+    while (true) {
+      while (bitCount < codeSize) {
+        if (blockRemaining === 0) {
+          blockRemaining = data[p++]! | 0;
+          if (blockRemaining === 0) {
+            bitCount = 0;
+            break;
+          }
+        }
+        bitBuffer |= (data[p++]! | 0) << bitCount;
+        bitCount += 8;
+        blockRemaining--;
+      }
+      if (bitCount < codeSize) break;
+
+      const code = bitBuffer & codeMask;
+      bitBuffer >>>= codeSize;
+      bitCount -= codeSize;
+
+      if (firstCode) {
+        firstCode = false;
+        if (code !== clearCode) {
+          table.fill(0);
+        }
+      }
+
+      if (code === clearCode) {
+        nextCode = eoiCode + 1;
+        codeSize = (minCodeSize + 1) | 0;
+        codeMask = (1 << codeSize) - 1;
+        previousCode = null;
+        continue;
+      }
+      if (code === eoiCode) break;
+
+      const chaseCode: number | null = code < nextCode ? code : previousCode;
+      if (chaseCode === null) break;
+
+      // Find the first byte and the sequence length, then write the sequence
+      // backwards into the index scratch.  This is the same compact linked
+      // dictionary layout as omggif, but it avoids a second temporary table.
+      let chase = chaseCode;
+      let chaseLength = 0;
+      while (chase > clearCode) {
+        chase = table[chase]! >>> 8;
+        chaseLength++;
+      }
+      const first = chase & 0xff;
+      const sequenceLength = chaseLength + (chaseCode !== code ? 1 : 0) + 1;
+      const outputEnd = outputLength + sequenceLength;
+      if (outputEnd > framePixels) break;
+
+      // Keep the backwards-write cursor before the optional KwKwK suffix;
+      // that suffix occupies outputEnd - 1 but must not be overwritten by the
+      // dictionary walk below.
+      let output = outputLength + chaseLength + 1;
+      indices[outputLength] = first;
+      if (chaseCode !== code) {
+        indices[outputEnd - 1] = first;
+      }
+
+      chase = chaseCode;
+      while (chaseLength--) {
+        const entry = table[chase]! | 0;
+        indices[--output] = entry & 0xff;
+        chase = entry >>> 8;
+      }
+      outputLength = outputEnd;
+
+      if (previousCode !== null && nextCode < GIF.MAX_CODE) {
+        table[nextCode++] = (previousCode << 8) | first;
+        if (nextCode >= codeMask + 1 && codeSize < 12) {
+          codeSize++;
+          codeMask = (codeMask << 1) | 1;
+        }
+      }
+      previousCode = code;
+    }
+
+    const width = this.width_ | 0;
+    const frameWidth = frame.width | 0;
+    const frameHeight = frame.height | 0;
+    const transparent = frame.transparent_index ?? 256;
+    const rgba = order === "rgba";
+    const palette = paletteOffset | 0;
+
+    // Interlaced frames keep the decoder's stream order.  Mirror omggif's
+    // byte cursor exactly here (including its historical pass offsets) so
+    // drop-in callers get identical output for this uncommon frame shape.
+    const outputBytes = new Uint8Array(
+      out32.buffer,
+      out32.byteOffset,
+      out32.byteLength,
+    );
+    let xleft = frameWidth;
+    const opbeg = (((frame.y | 0) * width + (frame.x | 0)) * 4) | 0;
+    const opend = ((((frame.y | 0) + frameHeight) * width + (frame.x | 0)) * 4) | 0;
+    let destination = opbeg;
+    let scanStride = ((width - frameWidth) * 4) | 0;
+    scanStride += width * 4 * 7;
+    let interlaceSkip = 8;
+    for (let i = 0; i < framePixels; i++) {
+      if (xleft === 0) {
+        destination += scanStride;
+        xleft = frameWidth;
+        if (destination >= opend) {
+          scanStride =
+            (width - frameWidth) * 4 + width * 4 * (interlaceSkip - 1);
+          // This intentionally follows omggif's byte-offset formula, which
+          // does not multiply the pass jump by four.
+          destination =
+            opbeg + (frameWidth + (width - frameWidth)) * (interlaceSkip << 1);
+          interlaceSkip >>= 1;
+        }
+      }
+      const index = indices[i]! | 0;
+      if (index !== transparent) {
+        const color = (palette + index * 3) | 0;
+        const r = data[color]! | 0;
+        const g = data[color + 1]! | 0;
+        const b = data[color + 2]! | 0;
+        if (rgba) {
+          outputBytes[destination++] = r;
+          outputBytes[destination++] = g;
+          outputBytes[destination++] = b;
+          outputBytes[destination++] = 255;
+        } else {
+          outputBytes[destination++] = b;
+          outputBytes[destination++] = g;
+          outputBytes[destination++] = r;
+          outputBytes[destination++] = 255;
+        }
+      } else {
+        destination += 4;
+      }
+      xleft--;
+    }
+  }
+
+  private lzwDecodeSmallNonInterlacedDirect(
+    frame: FrameInfo,
+    out32: Uint32Array,
+    order: "rgba" | "bgra",
+    paletteOffset: number,
+  ): void {
+    const framePixels = (frame.width * frame.height) | 0;
+    let table = this.directCodeTable;
+    if (!table) {
+      table = new Int32Array(GIF.MAX_CODE);
+      this.directCodeTable = table;
+    }
+    let stack = this.directStack;
+    if (!stack) {
+      stack = new Uint8Array(GIF.MAX_CODE);
+      this.directStack = stack;
+    }
+
+    const data = this.buf;
+    let p = (frame.data_offset | 0) + 1;
+    let blockRemaining = data[p++]! | 0;
+    const minCodeSize = data[frame.data_offset]! | 0;
+    const clearCode = 1 << minCodeSize;
+    const eoiCode = clearCode + 1;
+    let nextCode = eoiCode + 1;
+    let codeSize = (minCodeSize + 1) | 0;
+    let codeMask = (1 << codeSize) - 1;
+    let bitBuffer = 0;
+    let bitCount = 0;
+    let pixelIndex = 0;
+    let previousCode: number | null = null;
+    let firstCode = true;
+
+    const width = this.width_ | 0;
+    const frameWidth = frame.width | 0;
+    let destination = ((frame.y | 0) * width + (frame.x | 0)) | 0;
+    let xleft = frameWidth;
+    const rowStride = (width - frameWidth) | 0;
+    const transparent = frame.transparent_index ?? 256;
+    const rgba = order === "rgba";
+    const palette = paletteOffset | 0;
+    const emit = (index: number): void => {
+      if (pixelIndex >= framePixels) return;
+      if (index !== transparent) {
+        const color = (palette + (index & 0xff) * 3) | 0;
+        const r = data[color]! | 0;
+        const g = data[color + 1]! | 0;
+        const b = data[color + 2]! | 0;
+        out32[destination] = rgba
+          ? ((r | (g << 8) | (b << 16) | 0xff000000) >>> 0)
+          : ((b | (g << 8) | (r << 16) | 0xff000000) >>> 0);
+      }
+      pixelIndex++;
+      destination++;
+      if (--xleft === 0) {
+        destination += rowStride;
+        xleft = frameWidth;
+      }
+    };
+
+    while (true) {
+      while (bitCount < codeSize) {
+        if (blockRemaining === 0) {
+          blockRemaining = data[p++]! | 0;
+          if (blockRemaining === 0) {
+            bitCount = 0;
+            break;
+          }
+        }
+        bitBuffer |= (data[p++]! | 0) << bitCount;
+        bitCount += 8;
+        blockRemaining--;
+      }
+      if (bitCount < codeSize) break;
+
+      const code = bitBuffer & codeMask;
+      bitBuffer >>>= codeSize;
+      bitCount -= codeSize;
+
+      if (firstCode) {
+        firstCode = false;
+        if (code !== clearCode) {
+          // A few real-world GIFs omit the initial clear code.  Do not let a
+          // reused reader dictionary leak entries from the previous frame.
+          table.fill(0);
+        }
+      }
+      if (code === clearCode) {
+        nextCode = eoiCode + 1;
+        codeSize = (minCodeSize + 1) | 0;
+        codeMask = (1 << codeSize) - 1;
+        previousCode = null;
+        continue;
+      }
+      if (code === eoiCode) break;
+
+      const chaseCode: number | null = code < nextCode ? code : previousCode;
+      if (chaseCode === null) break;
+
+      let chase = chaseCode;
+      let stackLength = 0;
+      while (chase > clearCode) {
+        const entry = table[chase]! | 0;
+        stack[stackLength++] = entry & 0xff;
+        chase = entry >>> 8;
+      }
+      const first = chase & 0xff;
+      emit(first);
+      while (stackLength) {
+        emit(stack[--stackLength]!);
+      }
+      if (chaseCode !== code) {
+        emit(first);
+      }
+
+      if (previousCode !== null && nextCode < GIF.MAX_CODE) {
+        table[nextCode++] = (previousCode << 8) | first;
+        if (nextCode >= codeMask + 1 && codeSize < 12) {
+          codeSize++;
+          codeMask = (codeMask << 1) | 1;
+        }
+      }
+      previousCode = code;
+    }
   }
 
   private decodeAndBlitCompatibleFrame(

@@ -100,15 +100,15 @@ pixels. This is a real 100× result, but it applies only after palette creation
 and pixel indexing have already happened.
 
 The same typed-output sweep across 2, 4, 8, 16, 32, 64, 128, and 256-color
-palettes measured a minimum of **109.65×** (32 colors) and a geometric mean of
-about **170×**. Low-color literal streams use a dedicated fixed-width writer;
-all output still decodes to the same indexed pixels.
+palettes measured a minimum of **110.57×** (32 colors) and a geometric mean of
+**167×** in the latest 180-sample receipt. Low-color literal streams use a
+dedicated fixed-width writer; all output still decodes to the same indexed
+pixels.
 
 ## Decode
 
 ```bash
-BENCH_GIF_FILTER=GIGACHAD BENCH_ITERATIONS=100 npm run bench:decode
-BENCH_GIF_FILTER=tenor BENCH_ITERATIONS=50 npm run bench:decode
+BENCH_ITERATIONS=50 BENCH_WARMUP_ITERATIONS=5 BENCH_TARGET_SAMPLE_MS=1 npm run bench:decode
 ```
 
 Reader construction, GIF parsing, and decoding every composited RGBA frame are
@@ -117,12 +117,12 @@ omggif usage. Every final byte must match omggif before timing.
 
 | Fixture | Shape | omggif | wtfgif | Speedup |
 | --- | ---: | ---: | ---: | ---: |
-| GIGACHAD | 198 × 128×128 | 30.391 ms | 16.345 ms | **1.86×** |
-| tenor | 16 × 498×498 | 36.675 ms | 7.967 ms | **4.60×** |
+| GIGACHAD | 198 × 128×128 | 31.341 ms | 16.569 ms | **1.89×** |
+| tenor | 16 × 498×498 | 36.785 ms | 8.423 ms | **4.37×** |
 
-The 100-sample targeted sweep ranged from **0.91×** on the tiny Clap fixture to
-**4.60×** on tenor, with a **2.23× geometric mean**. Every decoded byte was
-still checked for composited RGBA parity.
+The latest 50-sample all-fixture sweep ranged from **0.96×** on the tiny Clap
+fixture to **4.37×** on tenor, with a **2.19× geometric mean**. Every decoded
+byte was still checked for composited RGBA parity.
 
 For large canvases with partial transparent rectangles, the drop-in reader can
 decode only the frame rectangle into Wasm scratch storage and overlay it onto

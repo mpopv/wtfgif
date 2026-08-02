@@ -10567,6 +10567,13 @@ fn encode_indexed_literal_lzw_direct_to_impl<const VALIDATE: bool>(
     if min_code_size == 3 {
         return encode_four_bit_literal_lzw_direct_to::<VALIDATE>(output, index_stream, color_count);
     }
+    if min_code_size == 5 {
+        return encode_six_bit_literal_lzw_direct_to::<VALIDATE>(
+            output,
+            index_stream,
+            color_count,
+        );
+    }
     if min_code_size == 6 {
         return encode_seven_bit_literal_lzw_direct_to::<VALIDATE>(
             output,
@@ -10597,6 +10604,100 @@ fn encode_indexed_literal_lzw_direct_to_impl<const VALIDATE: bool>(
         let destination_start = compressed_start + block * 256;
         output.copy_within(source_start..source_start + length, destination_start + 1);
         output[destination_start] = length as u8;
+    }
+    Ok(())
+}
+
+fn encode_six_bit_literal_lzw_direct_to<const VALIDATE: bool>(
+    output: &mut Vec<u8>,
+    index_stream: &[u8],
+    color_count: usize,
+) -> Result<(), String> {
+    if color_count == 0 || color_count > 32 {
+        return Err("Invalid color count".to_string());
+    }
+    if index_stream.is_empty() {
+        return Err("Indexed pixel stream is empty".to_string());
+    }
+    if VALIDATE && !indices_fit_color_count(index_stream, color_count) {
+        return Err("Pixel index out of range".to_string());
+    }
+
+    const CODE_SIZE: usize = 6;
+    const CLEAR: u16 = 32;
+    const EOI: u16 = 33;
+    const LITERALS_PER_CLEAR: usize = 30;
+    let clear_count = index_stream.len().div_ceil(LITERALS_PER_CLEAR);
+    let raw_length = ((index_stream.len() + clear_count + 1) * CODE_SIZE).div_ceil(8);
+    let block_count = raw_length.div_ceil(255);
+    let output_start = output.len();
+    output.reserve(2 + block_count + raw_length + 8);
+    unsafe {
+        output.as_mut_ptr().add(output_start).write(5);
+    }
+    let mut writer = DirectGifSubblockWriter {
+        output: unsafe { output.as_mut_ptr().add(output_start) },
+        position: 2,
+        block_remaining: 255,
+        raw_position: 0,
+    };
+    let mut bits = 0u64;
+    let mut bit_count = 0usize;
+
+    for literals in index_stream.chunks(LITERALS_PER_CLEAR) {
+        append_six_bit_literal_code_to_direct(&mut writer, &mut bits, &mut bit_count, CLEAR);
+        let mut groups = literals.chunks_exact(8);
+        for group in &mut groups {
+            let packed = u64::from(group[0])
+                | (u64::from(group[1]) << 6)
+                | (u64::from(group[2]) << 12)
+                | (u64::from(group[3]) << 18)
+                | (u64::from(group[4]) << 24)
+                | (u64::from(group[5]) << 30)
+                | (u64::from(group[6]) << 36)
+                | (u64::from(group[7]) << 42);
+            let combined = bits | (packed << bit_count);
+            let total_bits = bit_count + 48;
+            let byte_count = total_bits / 8;
+            let bytes = combined.to_le_bytes();
+            writer.write_fixed(&bytes, byte_count);
+            bits = combined >> (byte_count * 8);
+            bit_count = total_bits - byte_count * 8;
+        }
+        for &pixel in groups.remainder() {
+            append_six_bit_literal_code_to_direct(
+                &mut writer,
+                &mut bits,
+                &mut bit_count,
+                u16::from(pixel),
+            );
+        }
+    }
+    append_six_bit_literal_code_to_direct(&mut writer, &mut bits, &mut bit_count, EOI);
+    while bit_count > 0 {
+        writer.write_byte(bits as u8);
+        bits >>= 8;
+        bit_count = bit_count.saturating_sub(8);
+    }
+    debug_assert_eq!(writer.raw_position, raw_length);
+
+    let mut raw_offset = 0usize;
+    for block in 0..block_count {
+        let length = (raw_length - raw_offset).min(255);
+        unsafe {
+            output
+                .as_mut_ptr()
+                .add(output_start + 1 + block * 256)
+                .write(length as u8);
+        }
+        raw_offset += length;
+    }
+    unsafe {
+        output
+            .as_mut_ptr()
+            .add(output_start + 1 + block_count + raw_length)
+            .write(0);
+        output.set_len(output_start + 2 + block_count + raw_length);
     }
     Ok(())
 }
@@ -11405,6 +11506,22 @@ fn mapped_quality_pixel<const BITS: usize, const HAS_TRANSPARENT: bool>(
     } else {
         let index = quality_histogram_index_packed::<BITS>(packed);
         unsafe { *histogram_to_palette.get_unchecked(index) }
+    }
+}
+
+#[inline(always)]
+fn append_six_bit_literal_code_to_direct(
+    writer: &mut DirectGifSubblockWriter,
+    bits: &mut u64,
+    bit_count: &mut usize,
+    code: u16,
+) {
+    *bits |= u64::from(code) << *bit_count;
+    *bit_count += 6;
+    while *bit_count >= 8 {
+        writer.write_byte(*bits as u8);
+        *bits >>= 8;
+        *bit_count -= 8;
     }
 }
 
@@ -14372,6 +14489,24 @@ mod tests {
             let mut buffered = Vec::new();
             let mut compressed = Vec::new();
             encode_indexed_literal_lzw_to(&mut buffered, &indices, 6, 64, &mut compressed)
+                .unwrap();
+
+            assert_eq!(direct, buffered, "length {length}");
+        }
+    }
+
+    #[test]
+    fn six_bit_literal_direct_subblocks_match_buffered_writer() {
+        for length in [1usize, 30, 31, 255, 508, 4096] {
+            let indices: Vec<u8> = (0..length)
+                .map(|index| ((index * 73 + index / 11) & 31) as u8)
+                .collect();
+            let mut direct = Vec::new();
+            encode_indexed_literal_lzw_direct_to(&mut direct, &indices, 5, 32).unwrap();
+
+            let mut buffered = Vec::new();
+            let mut compressed = Vec::new();
+            encode_indexed_literal_lzw_to(&mut buffered, &indices, 5, 32, &mut compressed)
                 .unwrap();
 
             assert_eq!(direct, buffered, "length {length}");

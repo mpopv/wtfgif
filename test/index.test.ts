@@ -61,6 +61,43 @@ describe("Palette edge cases", () => {
   });
 });
 
+describe("Small-frame streaming decoder", () => {
+
+	test("matches omggif for interlaced frames", () => {
+		const width = 5;
+		const height = 5;
+		const palette = [0x000000, 0xff0000, 0x00ff00, 0xffffff];
+		const output = new Uint8Array(4096);
+		const writer = new OmgGifWriter(output, width, height, { palette });
+		const pixels = Array.from(
+			{ length: width * height },
+			(_, index) => index & 3,
+		);
+		writer.addFrame(0, 0, width, height, pixels, { delay: 1 });
+		const gif = output.slice(0, writer.end());
+		for (let index = 0; index < gif.length; index++) {
+			if (gif[index] === 0x2c) {
+				gif[index + 9] = gif[index + 9]! | 0x40;
+				break;
+			}
+		}
+
+		const omg = new OmgGifReader(gif);
+		const wtf = new WtfGifReader(gif);
+		const omgPixels = new Uint8Array(width * height * 4);
+		const wtfPixels = new Uint8Array(width * height * 4);
+		omg.decodeAndBlitFrameRGBA(0, omgPixels);
+		wtf.decodeAndBlitFrameRGBA(0, wtfPixels);
+		expect(wtfPixels).toStrictEqual(omgPixels);
+
+		const omgBgra = new Uint8Array(width * height * 4);
+		const wtfBgra = new Uint8Array(width * height * 4);
+		omg.decodeAndBlitFrameBGRA(0, omgBgra);
+		wtf.decodeAndBlitFrameBGRA(0, wtfBgra);
+		expect(wtfBgra).toStrictEqual(omgBgra);
+	});
+});
+
 describe("GifReader parity with omggif", () => {
   for (const file of gifFiles) {
     test(file, () => {
