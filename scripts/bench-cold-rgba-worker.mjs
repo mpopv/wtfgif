@@ -152,7 +152,10 @@ if (implementation === "baseline") {
 	]);
 	output = encodeBaselineGif(GifWriter, quantizeImageQGlobal(ImageQ));
 } else if (implementation === "wtfgif") {
-	const { encodeRgbaGifFrames, initializeWasmGlobally } = await import("../dist/index.mjs");
+	const entry = process.env.BENCH_WTFFIG_ENTRY === "encode"
+		? "../dist/encode.mjs"
+		: "../dist/index.mjs";
+	const { encodeRgbaGifFrames, initializeWasmGlobally } = await import(entry);
 	await initializeWasmGlobally();
 	output = encodeRgbaGifFrames({
 		alphaThreshold,

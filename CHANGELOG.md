@@ -2,6 +2,40 @@
 
 All notable changes to wtfgif are documented here.
 
+## 2.0.1 - 2026-08-01
+
+- Add the `wtfgif/encode` entry for encode-only apps; it avoids parsing the
+  decoder and structural-remux exports during startup.
+- Speed up adaptive RGBA quantization with packed histogram indexing,
+  unrolled pixel mapping, selection-based palette trees, reusable quantized
+  color storage, and one-pass exact-palette indexing. The quality contract is
+  unchanged: the real-image fixture remains 34.12 dB PSNR.
+- Replace dense median-cut comparison selection with byte-axis weighted
+  partitioning and one-pass child statistics; packed color records keep the
+  large-image arena compact without changing the adaptive palette contract.
+- Add an opaque-input fast scan for `alphaThreshold: 0`, removing per-pixel
+  alpha checks while preserving the same adaptive palette and literal output.
+- Feed two packed bytes at a time to the Wasm LZW decoder on 32-bit targets,
+  reducing bit-buffer refill overhead while preserving exact decoded pixels.
+- Select only the dominant histogram colors before sorting the palette tail;
+  fixture outputs remain byte-for-byte identical.
+- Reuse the histogram-to-palette table without clearing bins that cannot be
+  referenced, seed refinement lookups from their first-pass palette index, and
+  remove overflow checks from the bounded 4-bit histogram averages.
+- Defer histogram allocation for exact-palette RGBA inputs and recycle the
+  single full-size indexed scratch buffer through quantization, preserving
+  output bytes while removing avoidable scans, growth, and allocation.
+- Choose each KD split axis from the largest current RGB range and seed exact
+  nearest-color searches from each median-cut representative; the nearest
+  result remains exact.
+- Unroll eight packed pixels in the quality histogram scans, preserving the
+  same adaptive palette and output pixels.
+- Refresh the benchmark receipts: 122.57× initialized real-image encode,
+  120.23× opaque real-image encode, 641.93× initialized stress encode,
+  180.48× already-indexed encode, 1.90–4.46× decode, and 20.46×/21.55×
+  strict-cold real encode (164.36× on strict-cold stress). Strict-cold timing
+  remains a separate startup-inclusive contract.
+
 ## 2.0.0 - 2026-08-01
 
 ### Breaking changes
