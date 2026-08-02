@@ -32,6 +32,9 @@ const gif = encodeRgbaGifFrames({
 });
 ```
 
+Initialization includes a tiny internal Wasm warmup (no user data) so the
+first real encode uses the same hot path as later calls.
+
 If you also decode GIFs, import `initializeWasmGlobally` and
 `encodeRgbaGifFrames` from `wtfgif` instead. Do not mix the two entrypoints'
 initializers: each entry owns its own Wasm module.
@@ -64,14 +67,14 @@ for (let frame = 0; frame < reader.numFrames(); frame += 1) {
 
 ## How fast?
 
-The default benchmark uses eight real MakeEmoji images, normalized to
-128×128 RGBA frames, with 100 timed samples after 20 warmups. Palette creation,
+The snapshot below uses eight real MakeEmoji images, normalized to
+128×128 RGBA frames, with 120 timed samples after 20 warmups. Palette creation,
 pixel mapping, and GIF compression are all timed. WebAssembly initialization and
 image loading are not.
 
 | Real-image quality encode | Baseline | wtfgif | Speedup | wtfgif output |
 | --- | ---: | ---: | ---: | ---: |
-| Adaptive global palette | 100.907 ms | 0.491 ms | **205.41×** | 149,601 bytes / 34.12 dB |
+| Adaptive global palette | 97.306 ms | 0.439 ms | **221.76×** | 149,601 bytes / 34.12 dB |
 
 The baseline is `image-q` plus omggif with balanced LZW. Both implementations
 create an adaptive global palette and map every RGBA pixel. WebAssembly is
@@ -88,19 +91,19 @@ wtfgif), with 2,973,381 output bytes and 26.12 dB PSNR versus the baseline's
 BENCH_RGBA_FIXTURE=stress BENCH_ITERATIONS=3 BENCH_WARMUP_ITERATIONS=1 node scripts/bench-rgba.mjs
 ```
 
-That 1,316× result is not a cache trick: both encoders read all 2,621,440
+That 1,259× result is not a cache trick: both encoders read all 2,621,440
 source pixels and produce a valid GIF. The ratio grows on this larger fixture
 because wtfgif's histogram, lookup, and literal writer stay linear.
 
 The same run with every source pixel treated as opaque
-(`BENCH_ALPHA_THRESHOLD=0`) measured 109.066 ms for image-q + omggif versus
-0.637 ms for wtfgif: **171.20×**, at 33.91 dB PSNR.
+(`BENCH_ALPHA_THRESHOLD=0`) measured 106.538 ms for image-q + omggif versus
+0.542 ms for wtfgif: **196.64×**, at 33.91 dB PSNR.
 
 For a true no-cache measurement, run `BENCH_ITERATIONS=10 node scripts/bench-cold-rgba.mjs`; it starts a new
 Node process for every sample and includes imports, Wasm initialization, and
-the complete encode. The current ten-process median is 148.428 ms for the
-full entry versus 7.274 ms for wtfgif (20.41×). A ten-process encode-only
-run measured 149.346 ms versus 6.280 ms (**23.78×**). Cold process startup is
+the complete encode. The current ten-process median is 145.838 ms for the
+full entry versus 8.717 ms for wtfgif (**16.73×**). A ten-process encode-only
+run measured 145.081 ms versus 7.259 ms (**19.99×**). Cold process startup is
 a separate boundary; initialize Wasm during page or worker startup for the hot
 numbers above:
 
@@ -112,13 +115,13 @@ This includes process startup and Wasm initialization. Initialize Wasm during
 page or worker startup when measuring the hot path above.
 
 If your frames are already palette-indexed—the direct `GifWriter` contract—
-wtfgif is **223.16× faster** in the current 60-sample run: 16.672 ms for
-omggif versus 0.075 ms for wtfgif.
+wtfgif is **223.50× faster** in the current 300-sample run: 16.222 ms for
+omggif versus 0.073 ms for wtfgif.
 That result is byte-decoded and checked for exact RGBA equality before timing.
 
 Decode remains workload-dependent rather than 100×: the current fixture sweep
-ranges from roughly parity on tiny frames to about **4×** on the larger
-inputs, with exact composited RGBA parity.
+ranges from **0.77×** on a tiny frame to **3.36×** on a larger input, with
+exact composited RGBA parity.
 
 ```bash
 npm run bench

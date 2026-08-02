@@ -6334,15 +6334,16 @@ fn index_rgba_frames_quality_result(
     rgba_stream: &[u8],
     alpha_threshold: u8,
 ) -> QualityIndexResult {
+    let all_opaque = !rgba_stream_has_transparent_pixels(rgba_stream, alpha_threshold);
     let pixel_count = rgba_stream.len() / 4;
     if pixel_count <= QUALITY_LOW_RES_PIXEL_LIMIT {
-        return if alpha_threshold == 0 {
+        return if all_opaque {
             index_rgba_frames_quality_low_res::<false>(rgba_stream, alpha_threshold)
         } else {
             index_rgba_frames_quality_low_res::<true>(rgba_stream, alpha_threshold)
         };
     }
-    index_rgba_frames_quality_high_res(rgba_stream, alpha_threshold)
+    index_rgba_frames_quality_high_res(rgba_stream, alpha_threshold, all_opaque)
 }
 
 fn index_rgba_frames_quality_low_res<const HAS_TRANSPARENT: bool>(
@@ -6505,16 +6506,17 @@ fn finish_quality_exact_indexed(
 fn index_rgba_frames_quality_high_res(
     rgba_stream: &[u8],
     alpha_threshold: u8,
+    all_opaque: bool,
 ) -> QualityIndexResult {
     let pixel_count = rgba_stream.len() / 4;
     if pixel_count <= QUALITY_U32_PIXEL_LIMIT {
         if quality_prefers_high_precision_histogram(rgba_stream, alpha_threshold) {
-            index_rgba_frames_quality_u32::<5>(rgba_stream, alpha_threshold)
+            index_rgba_frames_quality_u32::<5>(rgba_stream, alpha_threshold, all_opaque)
         } else {
-            index_rgba_frames_quality_u32::<4>(rgba_stream, alpha_threshold)
+            index_rgba_frames_quality_u32::<4>(rgba_stream, alpha_threshold, all_opaque)
         }
     } else {
-        index_rgba_frames_quality_u64(rgba_stream, alpha_threshold)
+        index_rgba_frames_quality_u64(rgba_stream, alpha_threshold, all_opaque)
     }
 }
 
@@ -7258,6 +7260,7 @@ fn accumulate_quality_histogram_u64_remaining_opaque(
 fn index_rgba_frames_quality_u32<const BITS: usize>(
     rgba_stream: &[u8],
     alpha_threshold: u8,
+    all_opaque: bool,
 ) -> QualityIndexResult {
     let pixel_count = rgba_stream.len() / 4;
     let mut table = take_quality_color_index_table(COLOR_INDEX_CAP);
@@ -7322,14 +7325,23 @@ fn index_rgba_frames_quality_u32<const BITS: usize>(
             };
             prefix_offset += 4;
         }
-        has_transparent_pixels |=
-            accumulate_quality_histogram_u32_bits_remaining::<BITS, true>(
+        if all_opaque {
+            accumulate_quality_histogram_u32_bits_remaining_opaque::<BITS, true>(
                 &mut histogram,
                 rgba_stream,
                 start_offset,
-                alpha_threshold,
                 &mut histogram_indices,
             );
+        } else {
+            has_transparent_pixels |=
+                accumulate_quality_histogram_u32_bits_remaining::<BITS, true>(
+                    &mut histogram,
+                    rgba_stream,
+                    start_offset,
+                    alpha_threshold,
+                    &mut histogram_indices,
+                );
+        }
         recycle_quantized_indexed(indexed);
 
         let colors = quality_colors_from_histogram_u32::<true>(&histogram);
@@ -7358,6 +7370,7 @@ fn index_rgba_frames_quality_u32<const BITS: usize>(
 fn index_rgba_frames_quality_u64(
     rgba_stream: &[u8],
     alpha_threshold: u8,
+    all_opaque: bool,
 ) -> QualityIndexResult {
     let pixel_count = rgba_stream.len() / 4;
     let mut histogram = take_quality_histogram_u64(QUALITY_HISTOGRAM_LEN);
@@ -7402,12 +7415,20 @@ fn index_rgba_frames_quality_u64(
     }
 
     if let Some(start_offset) = overflow_offset {
-        has_transparent_pixels |= accumulate_quality_histogram_u64_remaining(
-            &mut histogram,
-            rgba_stream,
-            start_offset,
-            alpha_threshold,
-        );
+        if all_opaque {
+            accumulate_quality_histogram_u64_remaining_opaque(
+                &mut histogram,
+                rgba_stream,
+                start_offset,
+            );
+        } else {
+            has_transparent_pixels |= accumulate_quality_histogram_u64_remaining(
+                &mut histogram,
+                rgba_stream,
+                start_offset,
+                alpha_threshold,
+            );
+        }
     } else {
         recycle_quality_histogram_u64(histogram);
         return QualityIndexResult::Exact(finish_quality_exact_indexed(
@@ -7898,10 +7919,15 @@ fn map_rgba_rect_to_palette(
     }
 }
 
+#[inline(always)]
 fn rgba_stream_has_transparent_pixels(rgba_stream: &[u8], alpha_threshold: u8) -> bool {
+    if alpha_threshold == 0 {
+        return false;
+    }
+    let pointer = rgba_stream.as_ptr();
     let mut offset = 3usize;
     while offset < rgba_stream.len() {
-        if rgba_stream[offset] < alpha_threshold {
+        if unsafe { *pointer.add(offset) } < alpha_threshold {
             return true;
         }
         offset += 4;
@@ -14211,6 +14237,29 @@ mod tests {
         let thresholded = index_rgba_frames_quality(&rgba, TRANSPARENT_ALPHA_THRESHOLD);
         let opaque = index_rgba_frames_quality(&rgba, 0);
         assert_eq!(thresholded, opaque);
+    }
+
+    #[test]
+    fn opaque_quality_histogram_fast_scan_matches_alpha_checked_scan() {
+        let mut rgba = Vec::new();
+        for y in 0..64u16 {
+            for x in 0..64u16 {
+                rgba.extend_from_slice(&[
+                    ((x * 13 + y * 7) & 255) as u8,
+                    ((x * 5 + y * 17) & 255) as u8,
+                    ((x * 19 + y * 3) & 255) as u8,
+                    255,
+                ]);
+            }
+        }
+
+        let materialize = |result| match result {
+            QualityIndexResult::Exact(indexed) => indexed,
+            QualityIndexResult::Quantized(plan) => plan.into_indexed(&rgba, 179),
+        };
+        let fast = materialize(index_rgba_frames_quality_u32::<4>(&rgba, 179, true));
+        let checked = materialize(index_rgba_frames_quality_u32::<4>(&rgba, 179, false));
+        assert_eq!(fast, checked);
     }
 
     #[test]

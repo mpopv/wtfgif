@@ -1,5 +1,6 @@
 import { WasmCoreModule, WasmEncodeCoreModule } from "../types";
 import { supportsWasmSimd } from "./simd";
+import { warmupWasmCore } from "./warmup";
 
 let cachedWasmCoreModule: WasmEncodeCoreModule | null | undefined;
 let wasmInitPromise: Promise<void> | null = null;
@@ -71,6 +72,7 @@ export function setWasmEncodeCoreModule(
 	module: WasmEncodeCoreModule | null,
 ): void {
 	cachedWasmCoreModule = module;
+	warmupWasmCore(module);
 }
 
 export function getWasmEncodeCoreModule(): WasmEncodeCoreModule | null {

@@ -1,5 +1,6 @@
 import { WasmCoreModule } from "../types";
 import { supportsWasmSimd } from "./simd";
+import { warmupWasmCore } from "./warmup";
 
 let cachedWasmCoreModule: WasmCoreModule | null | undefined;
 let wasmInitPromise: Promise<void> | null = null;
@@ -63,6 +64,7 @@ const loadWasmCoreModule = (): WasmCoreModule | null => {
 
 export function setWasmCoreModule(module: WasmCoreModule | null): void {
 	cachedWasmCoreModule = module;
+	warmupWasmCore(module);
 }
 
 export function getWasmCoreModule(): WasmCoreModule | null {
@@ -72,7 +74,8 @@ export function getWasmCoreModule(): WasmCoreModule | null {
 // Node's generated wasm-pack binding loads synchronously. Start that module
 // load as soon as this runtime module is evaluated so package parsing and wasm
 // compilation can overlap; initialization still awaits this promise before a
-// caller can encode. This performs no encode/decode/remux work.
+// caller can encode. Module installation then pays a bounded synthetic
+// encode/decode warmup so the first real operation uses the hot Wasm paths.
 const preloadedNodeWasmCore =
 	typeof process !== "undefined" && process.versions?.node
 		? Promise.resolve().then(() => getWasmCoreModule())
