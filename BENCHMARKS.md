@@ -112,11 +112,11 @@ omggif usage. Every final byte must match omggif before timing.
 
 | Fixture | Shape | omggif | wtfgif | Speedup |
 | --- | ---: | ---: | ---: | ---: |
-| GIGACHAD | 198 × 128×128 | 30.959 ms | 16.573 ms | **1.87×** |
-| tenor | 16 × 498×498 | 36.496 ms | 8.878 ms | **4.11×** |
+| GIGACHAD | 198 × 128×128 | 30.997 ms | 16.124 ms | **1.92×** |
+| tenor | 16 × 498×498 | 34.859 ms | 8.308 ms | **4.20×** |
 
-The targeted sweep ranged from **0.88×** on the tiny Clap fixture to
-**4.11×** on tenor. Every decoded byte was
+The 60-sample targeted sweep ranged from **0.84×** on the tiny Clap fixture to
+**4.20×** on tenor, with a **2.21× geometric mean**. Every decoded byte was
 still checked for composited RGBA parity.
 
 The one-off `decodeGifFramesRgba` API has an additional direct-output path for

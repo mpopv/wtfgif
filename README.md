@@ -125,9 +125,9 @@ wtfgif is **203.66× faster** in the current 120-sample run: 17.013 ms for
 omggif versus 0.084 ms for wtfgif.
 That result is byte-decoded and checked for exact RGBA equality before timing.
 
-Decode remains workload-dependent rather than 100×: the current fixture sweep
-ranges from **0.88×** on a tiny frame to **4.11×** on a larger input, with
-exact composited RGBA parity.
+Decode remains workload-dependent rather than 100×: the current 60-sample
+fixture sweep ranges from **0.84×** on a tiny frame to **4.20×** on a larger
+input (2.21× geometric mean), with exact composited RGBA parity.
 The one-off `decodeGifFramesRgba` API reaches **4.98×** on an all-full-canvas,
 opaque animation by writing frames directly into the final stream.
 

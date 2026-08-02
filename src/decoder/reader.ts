@@ -72,6 +72,14 @@ export class GifReader {
   private sequentialCompositedFrames!: Uint32Array | null;
   private sequentialCompositedOrder!: "rgba" | "bgra" | null;
   private sequentialInitialCanvasZero!: boolean | null;
+  private sequentialInitialCanvasBuffer!: ArrayBufferLike | null;
+  private sequentialInitialCanvasByteOffset!: number;
+  private sequentialInitialCanvasByteLength!: number;
+  private sequentialInitialCanvasOrder!: "rgba" | "bgra" | null;
+  private lastDecodeTargetBuffer!: ArrayBufferLike | null;
+  private lastDecodeTargetByteOffset!: number;
+  private lastDecodeTargetByteLength!: number;
+  private lastDecodeTarget32!: Uint32Array | null;
   private lastDecodedFrame!: number;
   private static decodeBackend: GifDecodeBackend | null = null;
 
@@ -119,6 +127,14 @@ export class GifReader {
     this.sequentialCompositedFrames = null;
     this.sequentialCompositedOrder = null;
     this.sequentialInitialCanvasZero = null;
+    this.sequentialInitialCanvasBuffer = null;
+    this.sequentialInitialCanvasByteOffset = 0;
+    this.sequentialInitialCanvasByteLength = 0;
+    this.sequentialInitialCanvasOrder = null;
+    this.lastDecodeTargetBuffer = null;
+    this.lastDecodeTargetByteOffset = 0;
+    this.lastDecodeTargetByteLength = 0;
+    this.lastDecodeTarget32 = null;
     this.lastDecodedFrame = -1;
 
     let p = 0;
@@ -1289,6 +1305,10 @@ export class GifReader {
     this.decTable = new Int32Array(0);
     this.stack = new Uint8Array(0);
     this.firstByte = new Int16Array(0);
+    this.lastDecodeTargetBuffer = null;
+    this.lastDecodeTargetByteOffset = 0;
+    this.lastDecodeTargetByteLength = 0;
+    this.lastDecodeTarget32 = null;
   }
 
   private releaseWasmCore(): void {
@@ -1313,6 +1333,10 @@ export class GifReader {
     this.sequentialCompositedFrames = null;
     this.sequentialCompositedOrder = null;
     this.sequentialInitialCanvasZero = null;
+    this.sequentialInitialCanvasBuffer = null;
+    this.sequentialInitialCanvasByteOffset = 0;
+    this.sequentialInitialCanvasByteLength = 0;
+    this.sequentialInitialCanvasOrder = null;
     this.lastDecodedFrame = -1;
   }
 
@@ -1353,7 +1377,7 @@ export class GifReader {
     const totalPixels = canvasPixels * this.frames.length;
     const cacheCandidate =
       this.frames.length >= 8 &&
-      canvasPixels >= 4_096 &&
+      canvasPixels >= 512 &&
       Number.isSafeInteger(totalPixels) &&
       totalPixels <= 8_000_000;
     if (
@@ -1369,17 +1393,27 @@ export class GifReader {
         }
       }
       this.sequentialInitialCanvasZero = zero;
+      if (zero) {
+        this.sequentialInitialCanvasBuffer = out32.buffer;
+        this.sequentialInitialCanvasByteOffset = out32.byteOffset;
+        this.sequentialInitialCanvasByteLength = out32.byteLength;
+        this.sequentialInitialCanvasOrder = order;
+      }
     }
 
     // Do not turn an isolated frame read into a whole-animation decode. The
-    // cache is deliberately armed only by the first sequential triple, and is
-    // bounded to keep a legacy reader from unexpectedly retaining a large
-    // animation in memory.
+    // cache is deliberately armed only by the first sequential pair into the
+    // same caller-owned canvas, and is bounded to keep a legacy reader from
+    // unexpectedly retaining a large animation in memory.
     if (
-      frameNum !== 2 ||
-      this.lastDecodedFrame !== 1 ||
+      frameNum !== 1 ||
+      this.lastDecodedFrame !== 0 ||
       !cacheCandidate ||
-      this.sequentialInitialCanvasZero !== true
+      this.sequentialInitialCanvasZero !== true ||
+      this.sequentialInitialCanvasBuffer !== out32.buffer ||
+      this.sequentialInitialCanvasByteOffset !== out32.byteOffset ||
+      this.sequentialInitialCanvasByteLength !== out32.byteLength ||
+      this.sequentialInitialCanvasOrder !== order
     ) {
       return false;
     }
@@ -1441,6 +1475,28 @@ export class GifReader {
   }
 
   /* Fused LZW decode → Uint32 blit with precomputed pal32, transparency, interlace. */
+  private getDecodeTarget32(pixels: Uint8Array): Uint32Array {
+    if (
+      this.lastDecodeTarget32 &&
+      this.lastDecodeTargetBuffer === pixels.buffer &&
+      this.lastDecodeTargetByteOffset === pixels.byteOffset &&
+      this.lastDecodeTargetByteLength === pixels.byteLength
+    ) {
+      return this.lastDecodeTarget32;
+    }
+
+    const target = new Uint32Array(
+      pixels.buffer,
+      pixels.byteOffset,
+      pixels.byteLength >>> 2,
+    );
+    this.lastDecodeTargetBuffer = pixels.buffer;
+    this.lastDecodeTargetByteOffset = pixels.byteOffset;
+    this.lastDecodeTargetByteLength = pixels.byteLength;
+    this.lastDecodeTarget32 = target;
+    return target;
+  }
+
   private decodeAndBlitFrame32(
     frameNum: number,
     pixels: Uint8Array,
@@ -1449,11 +1505,7 @@ export class GifReader {
     if (frameNum < 0 || frameNum >= this.frames.length)
       throw new Error("Frame index out of range.");
 
-    const out32 = new Uint32Array(
-      pixels.buffer,
-      pixels.byteOffset,
-      pixels.byteLength >>> 2
-    );
+    const out32 = this.getDecodeTarget32(pixels);
 
     if (this.tryDecodeSequentialCompositedFrame(frameNum, out32, order)) {
       return;
