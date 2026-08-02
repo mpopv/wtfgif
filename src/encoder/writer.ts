@@ -162,6 +162,21 @@ export function encodeIndexedGifFrames(
 				colorCount,
 				false,
 			);
+			if (fastCompression && !options.delta) {
+				const scratchOutput = tryEncodeIndexedGifWithWasmScratch(
+					wasmCore,
+					flatFrames,
+					width,
+					height,
+					frameCount,
+					paletteToUint32Array(options.palette),
+					delays,
+					loop === null ? -1 : loop,
+				);
+				if (scratchOutput) {
+					return scratchOutput;
+				}
+			}
 			return encodeIndexedGif(
 				flatFrames,
 				width,
@@ -2209,4 +2224,56 @@ function tryEncodeLzwWithWasm(
 	return wasmCore?.encode_indexed_lzw
 		? wasmCore.encode_indexed_lzw(indexStream, minCodeSize, colorCount)
 		: null;
+}
+
+function tryEncodeIndexedGifWithWasmScratch(
+	wasmCore: WasmCoreModule | WasmEncodeCoreModule | null,
+	indexStream: Uint8Array,
+	width: number,
+	height: number,
+	frameCount: number,
+	palette: Uint32Array,
+	delay: number,
+	loopCount: number,
+): Uint8Array | null {
+	const reserve = wasmCore?.indexed_lzw_input_scratch_reserve;
+	const encode = wasmCore?.encode_indexed_literal_gif_scratch_from_input;
+	const outputScratchPtr = wasmCore?.gif_output_scratch_ptr;
+	const memory = wasmCore?.wasm_memory;
+	if (!reserve || !encode || !outputScratchPtr || !memory) {
+		return null;
+	}
+	if (lzwScratchMemoryModule !== wasmCore || !lzwScratchMemory) {
+		lzwScratchMemoryModule = wasmCore;
+		lzwScratchMemory = memory();
+		lzwInputScratchPointer = 0;
+		lzwInputScratchCapacity = 0;
+	}
+	if (!lzwScratchMemory) {
+		return null;
+	}
+	if (lzwInputScratchCapacity < indexStream.length) {
+		lzwInputScratchPointer = reserve(indexStream.length);
+		lzwInputScratchCapacity = indexStream.length;
+	}
+	new Uint8Array(
+		lzwScratchMemory.buffer,
+		lzwInputScratchPointer,
+		indexStream.length,
+	).set(indexStream);
+	const outputLength = encode(
+		indexStream.length,
+		width,
+		height,
+		frameCount,
+		palette,
+		delay,
+		loopCount,
+	);
+	const outputPointer = outputScratchPtr();
+	return new Uint8Array(
+		lzwScratchMemory.buffer,
+		outputPointer,
+		outputLength,
+	).slice();
 }

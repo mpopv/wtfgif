@@ -63,6 +63,16 @@ export class GifReader {
   private firstByte!: Int16Array;
   private activePreparedFrames!: Set<PreparedGifFrames>;
   private wasmCore!: WasmCoreInstance | null;
+  private wasmMemory!: WebAssembly.Memory | null;
+  // A legacy caller that walks every frame in order pays one Wasm boundary
+  // crossing per frame. Once that access pattern is proven, cache the full
+  // composited stream and serve the remaining frames as cheap typed-array
+  // copies. The bounded cache is opt-in by observed access order, so random
+  // single-frame reads keep their existing memory and latency behavior.
+  private sequentialCompositedFrames!: Uint32Array | null;
+  private sequentialCompositedOrder!: "rgba" | "bgra" | null;
+  private sequentialInitialCanvasZero!: boolean | null;
+  private lastDecodedFrame!: number;
   private static decodeBackend: GifDecodeBackend | null = null;
 
   static createPooled(buf: GifBinary): GifReader {
@@ -105,6 +115,11 @@ export class GifReader {
     this.firstByte = new Int16Array(0);
     this.activePreparedFrames = new Set();
     this.wasmCore = null;
+    this.wasmMemory = null;
+    this.sequentialCompositedFrames = null;
+    this.sequentialCompositedOrder = null;
+    this.sequentialInitialCanvasZero = null;
+    this.lastDecodedFrame = -1;
 
     let p = 0;
     const readByte = (): number => {
@@ -1270,6 +1285,7 @@ export class GifReader {
     this.clearFrameCaches();
     this.wasmCore?.free();
     this.wasmCore = null;
+    this.wasmMemory = null;
 
     this.pooledTables = null;
     this.decTable = new Int32Array(0);
@@ -1289,6 +1305,10 @@ export class GifReader {
       delete frame.opaquePositions;
       delete frame.decodeCount;
     }
+    this.sequentialCompositedFrames = null;
+    this.sequentialCompositedOrder = null;
+    this.sequentialInitialCanvasZero = null;
+    this.lastDecodedFrame = -1;
   }
 
   /* Alias for dispose() to match expected pooling API */
@@ -1311,6 +1331,105 @@ export class GifReader {
     };
   }
 
+  private tryDecodeSequentialCompositedFrame(
+    frameNum: number,
+    out32: Uint32Array,
+    order: "rgba" | "bgra",
+  ): boolean {
+    const canvasPixels = this.width_ * this.height_;
+    const cached = this.sequentialCompositedFrames;
+    if (cached && this.sequentialCompositedOrder === order) {
+      const start = frameNum * canvasPixels;
+      out32.set(cached.subarray(start, start + canvasPixels), 0);
+      this.lastDecodedFrame = frameNum;
+      return true;
+    }
+
+    const totalPixels = canvasPixels * this.frames.length;
+    const cacheCandidate =
+      this.frames.length >= 32 &&
+      canvasPixels >= 8_192 &&
+      Number.isSafeInteger(totalPixels) &&
+      totalPixels <= 8_000_000;
+    if (
+      frameNum === 0 &&
+      this.lastDecodedFrame === -1 &&
+      cacheCandidate
+    ) {
+      let zero = true;
+      for (let index = 0; index < canvasPixels; index++) {
+        if (out32[index] !== 0) {
+          zero = false;
+          break;
+        }
+      }
+      this.sequentialInitialCanvasZero = zero;
+    }
+
+    // Do not turn an isolated frame read into a whole-animation decode. The
+    // cache is deliberately armed only by the first sequential triple, and is
+    // bounded to keep a legacy reader from unexpectedly retaining a large
+    // animation in memory.
+    if (
+      frameNum !== 2 ||
+      this.lastDecodedFrame !== 1 ||
+      !cacheCandidate ||
+      this.sequentialInitialCanvasZero !== true
+    ) {
+      return false;
+    }
+
+    const wasmModule = getWasmCoreModule();
+    if (!wasmModule) {
+      return false;
+    }
+    this.wasmCore ??= new wasmModule.WtfGifCore(this.buf);
+    this.wasmMemory ??= wasmModule.wasm_memory?.() ?? null;
+    const requestedFrames = new Uint8Array(this.frames.length).fill(1);
+    const prepareScratch =
+      order === "rgba"
+        ? this.wasmCore.prepare_composited_rgba_scratch
+        : this.wasmCore.prepare_composited_bgra_scratch;
+    const scratchPointer = this.wasmCore.composited_scratch_ptr;
+    if (prepareScratch && scratchPointer && this.wasmMemory) {
+      const preparedLength = prepareScratch.call(
+        this.wasmCore,
+        requestedFrames,
+      );
+      const preparedPointer = scratchPointer.call(this.wasmCore);
+      if (
+        preparedLength === totalPixels &&
+        preparedPointer > 0 &&
+        (preparedPointer & 3) === 0
+      ) {
+        const prepared = new Uint32Array(
+          this.wasmMemory.buffer,
+          preparedPointer,
+          totalPixels,
+        );
+        this.sequentialCompositedFrames = prepared;
+        this.sequentialCompositedOrder = order;
+        const start = frameNum * canvasPixels;
+        out32.set(prepared.subarray(start, start + canvasPixels), 0);
+        this.lastDecodedFrame = frameNum;
+        return true;
+      }
+    }
+    const prepared =
+      order === "rgba"
+        ? this.wasmCore.prepare_composited_rgba(requestedFrames)
+        : this.wasmCore.prepare_composited_bgra(requestedFrames);
+    if (prepared.length !== totalPixels) {
+      return false;
+    }
+    this.sequentialCompositedFrames = prepared;
+    this.sequentialCompositedOrder = order;
+    const start = frameNum * canvasPixels;
+    out32.set(prepared.subarray(start, start + canvasPixels), 0);
+    this.lastDecodedFrame = frameNum;
+    return true;
+  }
+
   /* Fused LZW decode → Uint32 blit with precomputed pal32, transparency, interlace. */
   private decodeAndBlitFrame32(
     frameNum: number,
@@ -1326,6 +1445,10 @@ export class GifReader {
       pixels.byteLength >>> 2
     );
 
+    if (this.tryDecodeSequentialCompositedFrame(frameNum, out32, order)) {
+      return;
+    }
+
     const frame = this.frames[frameNum]!;
     const framePixels = frame.width * frame.height;
     const canvasPixels = this.width_ * this.height_;
@@ -1339,6 +1462,42 @@ export class GifReader {
       const wasmModule = getWasmCoreModule();
       if (wasmModule) {
         this.wasmCore ??= new wasmModule.WtfGifCore(this.buf);
+        this.wasmMemory ??= wasmModule.wasm_memory?.() ?? null;
+        const scratchDecode =
+          order === "rgba"
+            ? this.wasmCore.decode_frame_rgba_scratch
+            : this.wasmCore.decode_frame_bgra_scratch;
+        const scratchPtr = this.wasmCore.decode_scratch_ptr;
+        if (
+          !frame.interlaced &&
+          frame.transparent_index === null &&
+          frame.x === 0 &&
+          frame.y === 0 &&
+          frame.width === this.width_ &&
+          frame.height === this.height_ &&
+          scratchDecode &&
+          scratchPtr &&
+          this.wasmMemory
+        ) {
+          try {
+            const outputLength = scratchDecode.call(this.wasmCore, frameNum);
+            const outputPointer = scratchPtr.call(this.wasmCore);
+            if (outputLength === canvasPixels * 4 && outputPointer > 0) {
+              pixels.set(
+                new Uint8Array(
+                  this.wasmMemory.buffer,
+                  outputPointer,
+                  outputLength,
+                ),
+              );
+              this.lastDecodedFrame = frameNum;
+              return;
+            }
+          } catch {
+            // Older/custom Wasm modules may expose the optional symbols but
+            // reject this frame shape. Fall through to the compatible path.
+          }
+        }
         const decodeAndBlit =
           order === "rgba"
             ? this.wasmCore.decode_and_blit_frame_rgba
@@ -1349,6 +1508,7 @@ export class GifReader {
             frameNum,
             pixels.subarray(0, canvasPixels * 4)
           );
+          this.lastDecodedFrame = frameNum;
           return;
         }
       }
@@ -1365,6 +1525,7 @@ export class GifReader {
       pal32,
       trans
     );
+    this.lastDecodedFrame = frameNum;
   }
 
   private decodeAndBlitCompatibleFrame(

@@ -14,10 +14,16 @@ export interface WasmCoreInstance {
 		frameIndex: number,
 		pixels: Uint8Array,
 	) => void;
+	decode_frame_rgba_scratch?: (frameIndex: number) => number;
+	decode_frame_bgra_scratch?: (frameIndex: number) => number;
+	decode_scratch_ptr?: () => number;
 	decode_all_rgba?: () => Uint32Array;
 	reencode_gif_pixel_perfect?: () => Uint8Array;
 	prepare_composited_rgba: (requestedFrames: Uint8Array) => Uint32Array;
 	prepare_composited_bgra: (requestedFrames: Uint8Array) => Uint32Array;
+	prepare_composited_rgba_scratch?: (requestedFrames: Uint8Array) => number;
+	prepare_composited_bgra_scratch?: (requestedFrames: Uint8Array) => number;
+	composited_scratch_ptr?: () => number;
 	prepare_composited_delta_rgba: (requestedFrames: Uint8Array) => Uint32Array;
 	prepare_composited_delta_bgra: (requestedFrames: Uint8Array) => Uint32Array;
 	free: () => void;
@@ -100,6 +106,15 @@ export interface WasmCoreModule {
 		delay: number,
 		loopCount: number,
 	) => Uint8Array;
+	encode_indexed_literal_gif_scratch_from_input?: (
+		length: number,
+		width: number,
+		height: number,
+		frameCount: number,
+		paletteRgb: Uint32Array,
+		delay: number,
+		loopCount: number,
+	) => number;
 	encode_indexed_literal_gif_with_delays?: (
 		indexStream: Uint8Array,
 		width: number,
