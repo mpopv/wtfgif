@@ -12761,7 +12761,10 @@ fn lzw_decode_to_indices_direct_with_scratch(
     // sees a dictionary code.  Keeping this check here also makes decoding
     // our larger lossless GIFs a straight bit-unpack instead of constructing
     // one dictionary entry per pixel.
-    if min_code_size == 8 && decode_literal_9_bit_stream(image_data, output) {
+    if min_code_size == 8
+        && image_data.len() >= output.len()
+        && decode_literal_9_bit_stream(image_data, output)
+    {
         return Ok(());
     }
     let clear = 1usize << min_code_size;
@@ -13022,6 +13025,16 @@ fn lzw_decode_to_indices_copy_with_scratch(
 ) -> Result<(), String> {
     if min_code_size > 11 {
         return Err(format!("Invalid LZW minimum code size {min_code_size}"));
+    }
+    // wtfgif's literal writer emits one fixed-width 9-bit code per output
+    // index, making the payload at least as large as the decoded frame. This
+    // conservative size gate avoids probing ordinary compressed GIF streams
+    // while letting our own full-palette output skip dictionary construction.
+    if min_code_size == 8
+        && image_data.len() >= output.len()
+        && decode_literal_9_bit_stream(image_data, output)
+    {
+        return Ok(());
     }
     let clear = 1usize << min_code_size;
     let eoi = clear + 1;
@@ -13777,6 +13790,22 @@ mod tests {
 
             assert_eq!(direct, buffered, "length {length}");
         }
+    }
+
+    #[test]
+    fn nine_bit_literal_copy_decoder_matches_indices() {
+        let indices: Vec<u8> = (0..4096u32)
+            .map(|index| ((index * 73 + index / 11) & 0xff) as u8)
+            .collect();
+        let mut image_data = Vec::new();
+        encode_nine_bit_literal_codes(&mut image_data, &indices).unwrap();
+        let mut output = vec![0u8; indices.len()];
+        let mut scratch = LzwStackScratch::default();
+
+        lzw_decode_to_indices_copy_with_scratch(8, &image_data, &mut output, &mut scratch)
+            .unwrap();
+
+        assert_eq!(output, indices);
     }
 
     #[test]

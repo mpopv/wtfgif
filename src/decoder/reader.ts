@@ -1283,14 +1283,19 @@ export class GifReader {
     }
     this.activePreparedFrames.clear();
     this.clearFrameCaches();
-    this.wasmCore?.free();
-    this.wasmCore = null;
-    this.wasmMemory = null;
+    this.releaseWasmCore();
 
     this.pooledTables = null;
     this.decTable = new Int32Array(0);
     this.stack = new Uint8Array(0);
     this.firstByte = new Int16Array(0);
+  }
+
+  private releaseWasmCore(): void {
+    const core = this.wasmCore;
+    this.wasmCore = null;
+    this.wasmMemory = null;
+    core?.free();
   }
 
   private clearFrameCaches(): void {
@@ -1402,11 +1407,14 @@ export class GifReader {
         preparedPointer > 0 &&
         (preparedPointer & 3) === 0
       ) {
-        const prepared = new Uint32Array(
+        const preparedView = new Uint32Array(
           this.wasmMemory.buffer,
           preparedPointer,
           totalPixels,
         );
+        const prepared = new Uint32Array(totalPixels);
+        prepared.set(preparedView);
+        this.releaseWasmCore();
         this.sequentialCompositedFrames = prepared;
         this.sequentialCompositedOrder = order;
         const start = frameNum * canvasPixels;
@@ -1422,10 +1430,12 @@ export class GifReader {
     if (prepared.length !== totalPixels) {
       return false;
     }
-    this.sequentialCompositedFrames = prepared;
+    const cachedFrames = new Uint32Array(prepared);
+    this.releaseWasmCore();
+    this.sequentialCompositedFrames = cachedFrames;
     this.sequentialCompositedOrder = order;
     const start = frameNum * canvasPixels;
-    out32.set(prepared.subarray(start, start + canvasPixels), 0);
+    out32.set(cachedFrames.subarray(start, start + canvasPixels), 0);
     this.lastDecodedFrame = frameNum;
     return true;
   }
