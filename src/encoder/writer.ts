@@ -2101,31 +2101,25 @@ function tryEncodeRgbaAdvancedWithWasmScratch(
 			);
 		}
 	}
-	if (encodeScratch && outputScratchPtr) {
-		const outputLength = specializedQuality
-			? encodeScratch(
-					frameByteSize * frameCount,
-					width,
-					height,
-					frameCount,
-					delays,
-					loop,
-					alphaThreshold,
-				)
-			: encodeScratch(
-					frameByteSize * frameCount,
-					width,
-					height,
-					frameCount,
-					palette,
-					delays,
-					loop,
-					deltas,
-					alphaThreshold,
-					literal,
-					quantization,
-					paletteMode,
-				);
+	// The specialized quality export already returns one owned Vec. On the
+	// normal RGBA workload that ABI is faster than copying the scratch range
+	// back into a second JS-owned buffer; keep scratch output for the generic
+	// advanced/indexed paths where it still wins.
+	if (encodeScratch && outputScratchPtr && !specializedQuality) {
+		const outputLength = encodeScratch(
+			frameByteSize * frameCount,
+			width,
+			height,
+			frameCount,
+			palette,
+			delays,
+			loop,
+			deltas,
+			alphaThreshold,
+			literal,
+			quantization,
+			paletteMode,
+		);
 		const outputPointer = outputScratchPtr();
 		return new Uint8Array(
 			wasmMemory.buffer,
