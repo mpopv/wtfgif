@@ -1,5 +1,11 @@
 import { getWasmCoreModule } from "../wasm/runtime";
 import type { WasmCoreModule } from "../types";
+import {
+	getNativeAddonModule,
+	setNativeAddonModule as setEncodeNativeAddonModule,
+} from "./encodeRuntime";
+import type { NativeAddonModule } from "./encodeRuntime";
+export type { NativeAddonModule } from "./encodeRuntime";
 
 export interface NativeDecodedRgbaFrames {
 	width: number;
@@ -8,32 +14,6 @@ export interface NativeDecodedRgbaFrames {
 	pixels: Uint8Array;
 }
 
-export interface NativeAddonModule {
-	decodeFramesRgba: (gifData: Uint8Array) => NativeDecodedRgbaFrames;
-	encodeIndexedFast: (
-		indexedFrames: Uint8Array,
-		width: number,
-		height: number,
-		frameCount: number,
-		palette: Uint32Array,
-		delays: Uint16Array,
-		loopCount: number,
-		delta: boolean,
-	) => Uint8Array;
-	encodeRgbaFast: (
-		rgbaFrames: Uint8Array,
-		width: number,
-		height: number,
-		frameCount: number,
-		palette: Uint32Array,
-		delays: Uint16Array,
-		loopCount: number,
-		delta: boolean,
-	) => Uint8Array;
-	reencodeGifFast: (gifData: Uint8Array) => Uint8Array;
-}
-
-let nativeAddonModule: NativeAddonModule | null = null;
 let preparedWasmRemux:
 	| ((gifData: Uint8Array) => Uint8Array)
 	| null = null;
@@ -47,6 +27,7 @@ const unavailable = (operation: string): never => {
 export function decodeGifFramesRgba(
 	gifData: Uint8Array,
 ): NativeDecodedRgbaFrames {
+	const nativeAddonModule = getNativeAddonModule();
 	if (nativeAddonModule) {
 		return nativeAddonModule.decodeFramesRgba(gifData);
 	}
@@ -76,6 +57,7 @@ export function decodeGifFramesRgba(
 }
 
 export function reencodeGifPixelPerfect(gifData: Uint8Array): Uint8Array {
+	const nativeAddonModule = getNativeAddonModule();
 	if (nativeAddonModule) {
 		return nativeAddonModule.reencodeGifFast(gifData);
 	}
@@ -114,11 +96,7 @@ export function prepareWasmOneOffApi(module: WasmCoreModule | null): void {
 }
 
 export function setNativeAddonModule(module: NativeAddonModule | null): void {
-	nativeAddonModule = module;
-}
-
-export function getNativeAddonModule(): NativeAddonModule | null {
-	return nativeAddonModule;
+	setEncodeNativeAddonModule(module);
 }
 
 export function getNativeAddonStatus(): {
@@ -127,7 +105,7 @@ export function getNativeAddonStatus(): {
 } {
 	return {
 		name: "wtfgif-rust-native",
-		available: nativeAddonModule !== null,
+		available: getNativeAddonModule() !== null,
 	};
 }
 
@@ -135,7 +113,7 @@ export function getFastBackendStatus(): {
 	name: "wtfgif-rust-native" | "wtfgif-rust-wasm" | null;
 	available: boolean;
 } {
-	if (nativeAddonModule) {
+	if (getNativeAddonModule()) {
 		return { name: "wtfgif-rust-native", available: true };
 	}
 	if (getWasmCoreModule()) {

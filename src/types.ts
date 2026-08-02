@@ -246,8 +246,32 @@ export interface WasmCoreModule {
 		quantization: number,
 		paletteMode: number,
 	) => number;
+	encode_rgba_quality_gif_from_input?: (
+		length: number,
+		width: number,
+		height: number,
+		frameCount: number,
+		delays: Uint16Array,
+		loopCount: number,
+		alphaThreshold: number,
+	) => Uint8Array;
+	encode_rgba_quality_gif_scratch_from_input?: (
+		length: number,
+		width: number,
+		height: number,
+		frameCount: number,
+		delays: Uint16Array,
+		loopCount: number,
+		alphaThreshold: number,
+	) => number;
 	gif_output_scratch_ptr?: () => number;
 }
+
+// The encode-only Wasm entry intentionally omits GifReader's WtfGifCore
+// class. Encoder internals use only the optional encode/scratch exports, so a
+// partial view keeps that smaller module assignable without weakening the
+// decoder-facing WasmCoreModule contract.
+export type WasmEncodeCoreModule = Partial<Omit<WasmCoreModule, "WtfGifCore">>;
 
 export interface PooledDecoderTables {
 	decTable: Int32Array;

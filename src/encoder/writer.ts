@@ -1,19 +1,23 @@
 import { GIF } from "../constants/gif";
-import { getNativeAddonModule } from "../native/runtime";
+import { getNativeAddonModule } from "../native/encodeRuntime";
 import {
 	FrameOptions,
 	GifBinary,
 	GifOptions,
 	PaletteRGB,
+	WasmEncodeCoreModule,
 	WasmCoreModule,
 } from "../types";
 import { writeNetscapeLoopCount } from "../utils/netscape";
 import { checkPalette, log2Pow2 } from "../utils/palette";
-import { getWasmCoreModule } from "../wasm/runtime";
+import { getWasmEncodeCoreModule } from "../wasm/encodeRuntime";
 
 const WASM_LZW_MIN_INDEX_COUNT = 8192;
 const TRANSPARENT_ALPHA_THRESHOLD = 128;
-let lzwScratchMemoryModule: WasmCoreModule | null = null;
+let lzwScratchMemoryModule:
+	| WasmCoreModule
+	| WasmEncodeCoreModule
+	| null = null;
 let lzwScratchMemory: WebAssembly.Memory | null = null;
 let lzwInputScratchPointer = 0;
 let lzwInputScratchCapacity = 0;
@@ -21,6 +25,13 @@ const EMPTY_PALETTE_UINT32 = new Uint32Array(0);
 const EMPTY_PALETTE: PaletteRGB = [];
 let uniformDelayCache = new Uint16Array(0);
 let uniformDelayCacheValue = -1;
+
+function getEncoderWasmCoreModule():
+	| WasmCoreModule
+	| WasmEncodeCoreModule
+	| null {
+	return getWasmEncodeCoreModule();
+}
 
 export type IndexedGifFrame = Uint8Array | number[];
 export type IndexedGifFrames = Uint8Array | IndexedGifFrame[];
@@ -102,7 +113,7 @@ export function encodeIndexedGifFrames(
 			: checkedU16(options.loop, "Loop count invalid.");
 
 	const backend = options.backend ?? "auto";
-	const wasmCore = backend === "javascript" ? null : getWasmCoreModule();
+	const wasmCore = backend === "javascript" ? null : getEncoderWasmCoreModule();
 	const fastCompression = options.compression === "fast";
 	const nativeAddon =
 		backend === "javascript" || backend === "wasm"
@@ -230,7 +241,7 @@ export function encodeRgbaGifFrames(
 			: checkedU16(options.loop, "Loop count invalid.");
 
 	const backend = options.backend ?? "auto";
-	const wasmCore = backend === "javascript" ? null : getWasmCoreModule();
+	const wasmCore = backend === "javascript" ? null : getEncoderWasmCoreModule();
 	// The normal RGBA path is quality quantization with literal LZW: it is
 	// lossless at the GIF-pixel level and avoids spending time building a
 	// compression dictionary. Keep the explicit `compression: "fast"` behavior
@@ -261,6 +272,36 @@ export function encodeRgbaGifFrames(
 		throw new Error(
 			"Fast Rust backend unavailable. Initialize WebAssembly or install the native addon before encoding.",
 		);
+	}
+	const useSpecializedQualityEncoder =
+		useAdvancedEncoder &&
+		fastCompression &&
+		quantization === "quality" &&
+		paletteMode === "global" &&
+		options.palette === undefined &&
+		options.delta !== true &&
+		wasmCore?.encode_rgba_quality_gif_scratch_from_input !== undefined;
+	if (useSpecializedQualityEncoder) {
+		const scratchOutput = tryEncodeRgbaAdvancedWithWasmScratch(
+			wasmCore,
+			options.frames,
+			frameByteSize,
+			width,
+			height,
+			frameCount,
+			EMPTY_PALETTE_UINT32,
+			delayArray(delays, frameCount),
+			loop === null ? -1 : loop,
+			false,
+			alphaThreshold,
+			true,
+			quantizationCode(quantization),
+			0,
+			true,
+		);
+		if (scratchOutput) {
+			return scratchOutput;
+		}
 	}
 	if (useAdvancedEncoder && wasmCore?.encode_rgba_gif_advanced_from_input) {
 		const scratchOutput = tryEncodeRgbaAdvancedWithWasmScratch(
@@ -1980,7 +2021,7 @@ namespace GifWriterOutputLZWCodeStream_fast {
 }
 
 function tryEncodeRgbaAdvancedWithWasmScratch(
-	wasmCore: WasmCoreModule,
+	wasmCore: WasmCoreModule | WasmEncodeCoreModule,
 	frames: RgbaGifFrames,
 	frameByteSize: number,
 	width: number,
@@ -1994,10 +2035,19 @@ function tryEncodeRgbaAdvancedWithWasmScratch(
 	literal: boolean,
 	quantization: number,
 	paletteMode: number,
+	specializedQuality = false,
 ): Uint8Array | null {
 	const reserve = wasmCore.indexed_lzw_input_scratch_reserve;
-	const encode = wasmCore.encode_rgba_gif_advanced_from_input;
-	const encodeScratch = wasmCore.encode_rgba_gif_advanced_scratch_from_input;
+	const encode = (specializedQuality
+		? wasmCore.encode_rgba_quality_gif_from_input
+		: wasmCore.encode_rgba_gif_advanced_from_input) as
+		| ((...args: unknown[]) => Uint8Array)
+		| undefined;
+	const encodeScratch = (specializedQuality
+		? wasmCore.encode_rgba_quality_gif_scratch_from_input
+		: wasmCore.encode_rgba_gif_advanced_scratch_from_input) as
+		| ((...args: unknown[]) => number)
+		| undefined;
 	const outputScratchPtr = wasmCore.gif_output_scratch_ptr;
 	const memory = wasmCore.wasm_memory;
 	if (!reserve || !encode || !memory) {
@@ -2034,20 +2084,30 @@ function tryEncodeRgbaAdvancedWithWasmScratch(
 		}
 	}
 	if (encodeScratch && outputScratchPtr) {
-		const outputLength = encodeScratch(
-			frameByteSize * frameCount,
-			width,
-			height,
-			frameCount,
-			palette,
-			delays,
-			loop,
-			deltas,
-			alphaThreshold,
-			literal,
-			quantization,
-			paletteMode,
-		);
+		const outputLength = specializedQuality
+			? encodeScratch(
+					frameByteSize * frameCount,
+					width,
+					height,
+					frameCount,
+					delays,
+					loop,
+					alphaThreshold,
+				)
+			: encodeScratch(
+					frameByteSize * frameCount,
+					width,
+					height,
+					frameCount,
+					palette,
+					delays,
+					loop,
+					deltas,
+					alphaThreshold,
+					literal,
+					quantization,
+					paletteMode,
+				);
 		const outputPointer = outputScratchPtr();
 		return new Uint8Array(
 			wasmMemory.buffer,
@@ -2055,20 +2115,30 @@ function tryEncodeRgbaAdvancedWithWasmScratch(
 			outputLength,
 		).slice();
 	}
-	return encode(
-		frameByteSize * frameCount,
-		width,
-		height,
-		frameCount,
-		palette,
-		delays,
-		loop,
-		deltas,
-		alphaThreshold,
-		literal,
-		quantization,
-		paletteMode,
-	);
+	return specializedQuality
+		? encode(
+				frameByteSize * frameCount,
+				width,
+				height,
+				frameCount,
+				delays,
+				loop,
+				alphaThreshold,
+			)
+		: encode(
+				frameByteSize * frameCount,
+				width,
+				height,
+				frameCount,
+				palette,
+				delays,
+				loop,
+				deltas,
+				alphaThreshold,
+				literal,
+				quantization,
+				paletteMode,
+			);
 }
 
 function tryEncodeLzwWithWasm(
@@ -2084,7 +2154,7 @@ function tryEncodeLzwWithWasm(
 		return null;
 	}
 
-	const wasmCore = getWasmCoreModule();
+	const wasmCore = getEncoderWasmCoreModule();
 	const wasmMinCodeSize =
 		fastCompression && minCodeSize === 4 ? 7 : minCodeSize;
 	const encodeIntoScratch = fastCompression

@@ -2,10 +2,29 @@
 
 All notable changes to wtfgif are documented here.
 
+## 2.1.0 - 2026-08-01
+
+- Ship a genuinely encode-only `wtfgif/encode` bundle and Node/browser Wasm
+  artifacts. The full `wtfgif` entry keeps its decoder/remux runtime and uses
+  the encode module as a lazy fallback, so existing imports keep working.
+- Add a fixed quality/global/literal RGBA Wasm entry for the normal arbitrary
+  image pipeline. It removes mode dispatch from the hot call graph without
+  changing palette quality, transparency handling, or GIF output pixels.
+- Keep the quality histogram populated during the exact-color probe, removing
+  a redundant prefix scan when arbitrary images exceed the 256-color GIF limit.
+- Split the ESM/CJS bundles so importing `wtfgif/encode` no longer evaluates
+  the full decoder Wasm loader. The packaged encode entry is now the smallest
+  path for image-stitching apps while preserving the existing public options.
+- Refresh the receipts: 131.72× initialized real-image RGBA encode, 124.31×
+  opaque real-image encode, 633.37× initialized stress encode, 188.01×
+  indexed encode, 1.90–4.07× decode, and 21.15× strict-cold real encode from
+  the encode-only entry. Strict-cold timing still includes process and Wasm
+  startup and is intentionally reported separately from the initialized race.
+
 ## 2.0.1 - 2026-08-01
 
-- Add the `wtfgif/encode` entry for encode-only apps; it avoids parsing the
-  decoder and structural-remux exports during startup.
+- Document the `wtfgif/encode` entry for encode-only apps; 2.1.0 packages the
+  isolated encoder runtime so that entry no longer evaluates decoder Wasm.
 - Speed up adaptive RGBA quantization with packed histogram indexing,
   unrolled pixel mapping, selection-based palette trees, reusable quantized
   color storage, and one-pass exact-palette indexing. The quality contract is

@@ -1,6 +1,6 @@
 {
   "name": "wtfgif",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "main": "dist/index.cjs",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -49,6 +49,27 @@
       "node": "./dist/wasm-core/wtfgif_core_bg.wasm",
       "default": "./dist/wasm-web/wtfgif_core_bg.wasm"
     },
+    "./wasm-encode": {
+      "types": "./dist/wasm-encode/wtfgif_core.d.ts",
+      "browser": {
+        "types": "./dist/wasm-encode-web/wtfgif_core.d.ts",
+        "import": "./dist/wasm-encode-web/wtfgif_core.js",
+        "default": "./dist/wasm-encode-web/wtfgif_core.js"
+      },
+      "node": {
+        "types": "./dist/wasm-encode/wtfgif_core.d.ts",
+        "import": "./dist/wasm-encode/wtfgif_core.js",
+        "require": "./dist/wasm-encode/wtfgif_core.js"
+      },
+      "import": "./dist/wasm-encode-web/wtfgif_core.js",
+      "require": "./dist/wasm-encode/wtfgif_core.js",
+      "default": "./dist/wasm-encode-web/wtfgif_core.js"
+    },
+    "./wasm-encode/wasm": {
+      "browser": "./dist/wasm-encode-web/wtfgif_core_bg.wasm",
+      "node": "./dist/wasm-encode/wtfgif_core_bg.wasm",
+      "default": "./dist/wasm-encode-web/wtfgif_core_bg.wasm"
+    },
     "./wasm-web": {
       "types": "./dist/wasm-web/wtfgif_core.d.ts",
       "import": "./dist/wasm-web/wtfgif_core.js",
@@ -59,9 +80,12 @@
   "scripts": {
     "build": "tsup && tsc -p tsconfig.build.json --emitDeclarationOnly && node scripts/copy-wasm-core.mjs",
     "build:site": "npm run build && node scripts/build-site.mjs",
-    "build:wasm": "npm run build:wasm:node && npm run build:wasm:web",
+    "build:wasm": "npm run build:wasm:node && npm run build:wasm:web && npm run build:wasm:encode",
     "build:wasm:node": "wasm-pack build crates/wtfgif-core --target nodejs --out-dir pkg --release",
     "build:wasm:web": "wasm-pack build crates/wtfgif-core --target web --out-dir pkg-web --release",
+    "build:wasm:encode": "npm run build:wasm:node:encode && npm run build:wasm:web:encode",
+    "build:wasm:node:encode": "wasm-pack build crates/wtfgif-core --target nodejs --out-dir pkg-encode --release -- --features encode-only",
+    "build:wasm:web:encode": "wasm-pack build crates/wtfgif-core --target web --out-dir pkg-encode-web --release -- --features encode-only",
     "typecheck": "tsc -p tsconfig.build.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "test": "vitest run --coverage",
     "test:wasm-core": "cargo test --manifest-path crates/wtfgif-core/Cargo.toml && npm run validate:wasm-core && vitest run test/wasm-core-backend.test.ts",

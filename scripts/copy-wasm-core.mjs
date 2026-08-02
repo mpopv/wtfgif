@@ -23,6 +23,18 @@ const packages = [
 		label: "browser",
 		moduleType: "module",
 	},
+	{
+		source: "pkg-encode",
+		target: "wasm-encode",
+		label: "encode Node",
+		moduleType: "commonjs",
+	},
+	{
+		source: "pkg-encode-web",
+		target: "wasm-encode-web",
+		label: "encode browser",
+		moduleType: "module",
+	},
 ];
 
 for (const wasmPackage of packages) {

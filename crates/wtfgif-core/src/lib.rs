@@ -1,3 +1,5 @@
+#![cfg_attr(feature = "encode-only", allow(dead_code))]
+
 use wasm_bindgen::prelude::*;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -568,6 +570,7 @@ impl<'a> DelaySource<'a> {
     }
 }
 
+#[cfg(not(feature = "encode-only"))]
 #[wasm_bindgen]
 pub struct WtfGifCore {
     data: Vec<u8>,
@@ -591,6 +594,7 @@ pub fn core_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+#[cfg(not(feature = "encode-only"))]
 #[wasm_bindgen]
 pub fn parse_metadata_json(data: &[u8]) -> Result<String, JsValue> {
     parse_metadata(data)
@@ -598,6 +602,7 @@ pub fn parse_metadata_json(data: &[u8]) -> Result<String, JsValue> {
         .map_err(|message| JsValue::from_str(&message))
 }
 
+#[cfg(not(feature = "encode-only"))]
 #[wasm_bindgen]
 pub fn decode_frame_indices(data: &[u8], frame_index: usize) -> Result<Vec<u8>, JsValue> {
     let metadata = parse_metadata(data).map_err(|message| JsValue::from_str(&message))?;
@@ -608,6 +613,7 @@ pub fn decode_frame_indices(data: &[u8], frame_index: usize) -> Result<Vec<u8>, 
     decode_frame_indices_inner(data, frame).map_err(|message| JsValue::from_str(&message))
 }
 
+#[cfg(not(feature = "encode-only"))]
 #[wasm_bindgen]
 pub fn decode_frame_rgba(data: &[u8], frame_index: usize) -> Result<Vec<u8>, JsValue> {
     let metadata = parse_metadata(data).map_err(|message| JsValue::from_str(&message))?;
@@ -615,6 +621,7 @@ pub fn decode_frame_rgba(data: &[u8], frame_index: usize) -> Result<Vec<u8>, JsV
         .map_err(|message| JsValue::from_str(&message))
 }
 
+#[cfg(not(feature = "encode-only"))]
 #[wasm_bindgen]
 pub fn decode_frame_bgra(data: &[u8], frame_index: usize) -> Result<Vec<u8>, JsValue> {
     let metadata = parse_metadata(data).map_err(|message| JsValue::from_str(&message))?;
@@ -622,6 +629,7 @@ pub fn decode_frame_bgra(data: &[u8], frame_index: usize) -> Result<Vec<u8>, JsV
         .map_err(|message| JsValue::from_str(&message))
 }
 
+#[cfg(not(feature = "encode-only"))]
 #[wasm_bindgen]
 pub fn decode_all_rgba(data: &[u8]) -> Result<Vec<u32>, JsValue> {
     let metadata = parse_metadata(data).map_err(|message| JsValue::from_str(&message))?;
@@ -629,6 +637,7 @@ pub fn decode_all_rgba(data: &[u8]) -> Result<Vec<u32>, JsValue> {
         .map_err(|message| JsValue::from_str(&message))
 }
 
+#[cfg(not(feature = "encode-only"))]
 #[wasm_bindgen]
 pub fn reencode_gif_pixel_perfect(data: &[u8]) -> Result<Vec<u8>, JsValue> {
     let metadata = parse_metadata(data).map_err(|message| JsValue::from_str(&message))?;
@@ -644,6 +653,7 @@ pub fn reencode_gif_pixel_perfect(data: &[u8]) -> Result<Vec<u8>, JsValue> {
         .map_err(|message| JsValue::from_str(&message))
 }
 
+#[cfg(not(feature = "encode-only"))]
 #[wasm_bindgen]
 pub fn remux_gif_pixel_perfect(data: &[u8]) -> Result<Vec<u8>, JsValue> {
     if data.len() <= 4_096 {
@@ -656,6 +666,7 @@ pub fn remux_gif_pixel_perfect(data: &[u8]) -> Result<Vec<u8>, JsValue> {
         .map_err(|message| JsValue::from_str(&message))
 }
 
+#[cfg(not(feature = "encode-only"))]
 #[wasm_bindgen]
 pub fn prepare_composited_rgba(data: &[u8], requested_frames: &[u8]) -> Result<Vec<u32>, JsValue> {
     let metadata = parse_metadata(data).map_err(|message| JsValue::from_str(&message))?;
@@ -663,6 +674,7 @@ pub fn prepare_composited_rgba(data: &[u8], requested_frames: &[u8]) -> Result<V
         .map_err(|message| JsValue::from_str(&message))
 }
 
+#[cfg(not(feature = "encode-only"))]
 #[wasm_bindgen]
 pub fn prepare_composited_bgra(data: &[u8], requested_frames: &[u8]) -> Result<Vec<u32>, JsValue> {
     let metadata = parse_metadata(data).map_err(|message| JsValue::from_str(&message))?;
@@ -670,6 +682,7 @@ pub fn prepare_composited_bgra(data: &[u8], requested_frames: &[u8]) -> Result<V
         .map_err(|message| JsValue::from_str(&message))
 }
 
+#[cfg(not(feature = "encode-only"))]
 #[wasm_bindgen]
 pub fn prepare_composited_delta_rgba(
     data: &[u8],
@@ -680,6 +693,7 @@ pub fn prepare_composited_delta_rgba(
         .map_err(|message| JsValue::from_str(&message))
 }
 
+#[cfg(not(feature = "encode-only"))]
 #[wasm_bindgen]
 pub fn prepare_composited_delta_bgra(
     data: &[u8],
@@ -1233,11 +1247,86 @@ pub fn encode_rgba_gif_advanced_scratch_from_input(
     Ok(length)
 }
 
+/// Quality/global/literal RGBA encoding with the mode decisions removed from
+/// the hot call graph. The public TypeScript API selects this only for the
+/// normal arbitrary-image contract; other combinations use the generic
+/// advanced entry above.
+#[wasm_bindgen]
+pub fn encode_rgba_quality_gif_from_input(
+    length: usize,
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    delays: &[u16],
+    loop_count: i32,
+    alpha_threshold: u8,
+) -> Result<Vec<u8>, JsValue> {
+    let input_ptr = REUSABLE_LZW_SCRATCH.with(|scratch| {
+        let scratch = scratch.borrow();
+        if length > scratch.input.len() {
+            return Err(JsValue::from_str("RGBA input scratch buffer is too short"));
+        }
+        Ok(scratch.input.as_ptr())
+    })?;
+    let rgba_stream = unsafe { std::slice::from_raw_parts(input_ptr, length) };
+    encode_rgba_quality_gif_inner_with_output(
+        rgba_stream,
+        width,
+        height,
+        frame_count,
+        delays,
+        loop_count,
+        alpha_threshold,
+        Vec::new(),
+    )
+    .map_err(|message| JsValue::from_str(&message))
+}
+
+/// Scratch-output form of the specialized quality encoder. The returned
+/// length refers to `gif_output_scratch_ptr()` in Wasm memory.
+#[wasm_bindgen]
+pub fn encode_rgba_quality_gif_scratch_from_input(
+    length: usize,
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    delays: &[u16],
+    loop_count: i32,
+    alpha_threshold: u8,
+) -> Result<usize, JsValue> {
+    let input_ptr = REUSABLE_LZW_SCRATCH.with(|scratch| {
+        let scratch = scratch.borrow();
+        if length > scratch.input.len() {
+            return Err(JsValue::from_str("RGBA input scratch buffer is too short"));
+        }
+        Ok(scratch.input.as_ptr())
+    })?;
+    let rgba_stream = unsafe { std::slice::from_raw_parts(input_ptr, length) };
+    let output = REUSABLE_GIF_OUTPUT.with(|scratch| std::mem::take(&mut *scratch.borrow_mut()));
+    let encoded = encode_rgba_quality_gif_inner_with_output(
+        rgba_stream,
+        width,
+        height,
+        frame_count,
+        delays,
+        loop_count,
+        alpha_threshold,
+        output,
+    )
+    .map_err(|message| JsValue::from_str(&message))?;
+    let length = encoded.len();
+    REUSABLE_GIF_OUTPUT.with(|scratch| {
+        *scratch.borrow_mut() = encoded;
+    });
+    Ok(length)
+}
+
 #[wasm_bindgen]
 pub fn gif_output_scratch_ptr() -> usize {
     REUSABLE_GIF_OUTPUT.with(|scratch| scratch.borrow().as_ptr() as usize)
 }
 
+#[cfg(not(feature = "encode-only"))]
 #[wasm_bindgen]
 impl WtfGifCore {
     #[wasm_bindgen(constructor)]
@@ -4500,6 +4589,35 @@ fn encode_rgba_gif_advanced_inner_with_output(
     encoded
 }
 
+fn encode_rgba_quality_gif_inner_with_output(
+    rgba_stream: &[u8],
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    delays: &[u16],
+    loop_count: i32,
+    alpha_threshold: u8,
+    output: Vec<u8>,
+) -> Result<Vec<u8>, String> {
+    let delays = DelaySource::PerFrame(delays);
+    validate_rgba_stream(rgba_stream, width, height, frame_count, delays, loop_count)?;
+    let (palette, indexed, transparent_index) =
+        index_rgba_frames_quality(rgba_stream, alpha_threshold);
+    let encoded = encode_indexed_literal_gif_inner_with_output(
+        output,
+        &indexed,
+        width,
+        height,
+        frame_count,
+        &palette,
+        delays,
+        loop_count,
+        transparent_index,
+    );
+    recycle_quantized_indexed(indexed);
+    encoded
+}
+
 fn validate_rgba_stream(
     rgba_stream: &[u8],
     width: u16,
@@ -5630,6 +5748,10 @@ fn index_rgba_frames_quality_low_res(
     let pixel_count = rgba_stream.len() / 4;
     let mut table = take_quality_color_index_table(COLOR_INDEX_CAP);
     let mut palette = Vec::with_capacity(256);
+    // Keep the quality histogram in lockstep with the exact-color probe. If
+    // the probe overflows (the normal photo/image case), this avoids replaying
+    // the prefix through a second histogram pass.
+    let mut histogram = take_quality_histogram_u32(HISTOGRAM_LEN);
     // Keep the exact-prefix indices so <=256-color inputs do not require a
     // second full RGBA scan after the palette decision is known.
     // The indexed stream is required by both the exact return and the
@@ -5654,6 +5776,7 @@ fn index_rgba_frames_quality_low_res(
             }
             continue;
         }
+        add_quality_histogram_u32_bits_const::<HISTOGRAM_BITS>(&mut histogram, packed);
         let rgb = rgb_key(packed as u8, (packed >> 8) as u8, (packed >> 16) as u8);
         if let Some(index) = table.get(rgb) {
             indexed.push(index);
@@ -5670,22 +5793,8 @@ fn index_rgba_frames_quality_low_res(
         indexed.push(index);
     }
     let histogram = if let Some(start_offset) = overflow_offset {
-        // The exact-prefix scan above is the common path for small-palette
-        // images. Defer histogram allocation and writes until overflow is
-        // proven; for a quantized image, rebuild only the short prefix before
-        // continuing with the already-complete remainder scan.
-        let mut histogram = take_quality_histogram_u32(HISTOGRAM_LEN);
-        let mut prefix_offset = 0usize;
-        let rgba_pointer = rgba_stream.as_ptr();
-        while prefix_offset < start_offset {
-            let packed = u32::from_le(unsafe {
-                std::ptr::read_unaligned(rgba_pointer.add(prefix_offset).cast())
-            });
-            if ((packed >> 24) as u8) >= alpha_threshold {
-                add_quality_histogram_u32_bits_const::<HISTOGRAM_BITS>(&mut histogram, packed);
-            }
-            prefix_offset += 4;
-        }
+        // The exact-prefix scan above already populated the histogram; finish
+        // only the suffix after the palette limit was exceeded.
         has_transparent_pixels |= accumulate_quality_histogram_u32_bits_remaining::<HISTOGRAM_BITS>(
             &mut histogram,
             rgba_stream,
@@ -5694,6 +5803,7 @@ fn index_rgba_frames_quality_low_res(
         );
         histogram
     } else {
+        recycle_quality_histogram_u32(histogram);
         return finish_quality_exact_indexed(
             rgba_stream,
             alpha_threshold,

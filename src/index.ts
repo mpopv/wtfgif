@@ -12,6 +12,7 @@ import {
 	initializeWasmModule as initializeStaticWasmModule,
 	setWasmCoreModule as setWasmCoreModuleRuntime,
 } from "./wasm/runtime";
+import { setWasmEncodeFallback } from "./wasm/encodeRuntime";
 import { createWasmCoreDecodeBackend } from "./wasm/coreBackend";
 import {
 	getFastBackendStatus,
@@ -31,6 +32,10 @@ import {
 	reverseGifPixelPerfect,
 	retimeGifPixelPerfect,
 } from "./compiled";
+
+// Keep the full package's historical auto-backend behavior without making
+// the encode-only entry import the decoder/remux Wasm runtime.
+setWasmEncodeFallback(() => getWasmCoreModule());
 
 const bindPublicWasmApi = () => {
 	prepareWasmOneOffApi(getWasmCoreModule());

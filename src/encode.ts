@@ -6,16 +6,16 @@ export {
 
 export {
 	cleanupWasm,
-	getWasmCoreModule,
+	getWasmEncodeCoreModule as getWasmCoreModule,
 	getWasmInitPromise,
 	getWasmStatus,
 	getWasmFeatures,
 	initializeGlobalWasm as initializeWasmGlobally,
 	initializeWasmModule,
 	isWasmReady,
-	setWasmCoreModule,
+	setWasmEncodeCoreModule as setWasmCoreModule,
 	setWasmInitPromise,
-} from "./wasm/runtime";
+} from "./wasm/encodeRuntime";
 
 export type {
 	EncodeIndexedGifFramesBackend,
@@ -31,4 +31,4 @@ export type {
 	RgbaGifFrames,
 } from "./encoder/writer";
 
-export type { WasmWebModule } from "./wasm/runtime";
+export type { WasmEncodeWebModule as WasmWebModule } from "./wasm/encodeRuntime";

@@ -88,6 +88,10 @@ try {
 				type GifPaletteMode,
 				type GifQuantizationMode,
 			} from "wtfgif";
+			import {
+				encodeRgbaGifFrames as encodeOnlyRgbaGifFrames,
+				initializeWasmGlobally as initializeEncodeWasm,
+			} from "wtfgif/encode";
 
 			const output: number[] = new Array(256).fill(0);
 			const options: GifOptions = { palette: [0, 0xffffff], loop: 0 };
@@ -118,6 +122,8 @@ try {
 				paletteMode,
 			});
 			void rgbaGif;
+			void encodeOnlyRgbaGifFrames;
+			void initializeEncodeWasm;
 		`,
 	);
 	writeFileSync(
@@ -283,6 +289,38 @@ try {
 		);
 	}
 
+	const encodeOnlyResult = JSON.parse(
+		run("node", [
+			"-e",
+			`
+				(async () => {
+					const encode = require("wtfgif/encode");
+					await encode.initializeWasmGlobally();
+					const gif = encode.encodeRgbaGifFrames({
+						width: 2,
+						height: 1,
+						frames: Uint8Array.of(
+							255, 0, 0, 255,
+							0, 0, 255, 255,
+						),
+						frameCount: 1,
+						delay: 7,
+						loop: 0,
+					});
+					process.stdout.write(JSON.stringify({
+						initialized: encode.getWasmStatus().initialized,
+						bytes: gif.length,
+					}));
+				})();
+			`,
+		]),
+	);
+	if (!encodeOnlyResult.initialized || encodeOnlyResult.bytes <= 0) {
+		throw new Error(
+			`Encode-only package validation failed: ${JSON.stringify(encodeOnlyResult)}`,
+		);
+	}
+
 	const esmResult = JSON.parse(
 		run("node", [
 			"--input-type=module",
@@ -328,10 +366,14 @@ try {
 				import { readFileSync } from "node:fs";
 				import { fileURLToPath } from "node:url";
 				const wtfgif = await import("wtfgif");
+				const encodeOnly = await import("wtfgif/encode");
 				wtfgif.cleanupWasm();
 				const wasmUrl = import.meta.resolve("wtfgif/wasm-web/wasm");
 				const wasmBytes = readFileSync(fileURLToPath(wasmUrl));
 				await wtfgif.initializeWasmGlobally(wasmBytes);
+				const encodeWasmUrl = import.meta.resolve("wtfgif/wasm-encode/wasm");
+				const encodeWasmBytes = readFileSync(fileURLToPath(encodeWasmUrl));
+				await encodeOnly.initializeWasmGlobally(encodeWasmBytes);
 				const status = wtfgif.installWasmCoreBackend();
 				const source = wtfgif.encodeIndexedGifFrames({
 					width: 2,
@@ -363,6 +405,17 @@ try {
 						backend: "wasm",
 					}),
 				);
+				const encodeOnlyGif = encodeOnly.encodeRgbaGifFrames({
+					width: 2,
+					height: 1,
+					frames: Uint8Array.of(
+						255, 0, 0, 255,
+						0, 0, 255, 255,
+					),
+					frameCount: 1,
+					delay: 7,
+					loop: 0,
+				});
 				process.stdout.write(JSON.stringify({
 					available: status.available,
 					initialized: wtfgif.getWasmStatus().initialized,
@@ -377,6 +430,8 @@ try {
 						arbitrary.width === 300 &&
 						arbitrary.height === 1 &&
 						arbitrary.frameCount === 1,
+					encodeOnlyInitialized: encodeOnly.getWasmStatus().initialized,
+					encodeOnlyBytes: encodeOnlyGif.length,
 				}));
 			`,
 		]),
@@ -385,7 +440,9 @@ try {
 		!browserWasmResult.available ||
 		!browserWasmResult.initialized ||
 		!browserWasmResult.pixelPerfect ||
-		!browserWasmResult.arbitraryRgba
+		!browserWasmResult.arbitraryRgba ||
+		!browserWasmResult.encodeOnlyInitialized ||
+		browserWasmResult.encodeOnlyBytes <= 0
 	) {
 		throw new Error(
 			`Browser Wasm package validation failed: ${JSON.stringify(browserWasmResult)}`,
