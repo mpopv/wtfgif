@@ -2,6 +2,26 @@
 
 All notable changes to wtfgif are documented here.
 
+## 2.2.3 - 2026-08-02
+
+- Specialize the ordinary RGBA quality path for opaque input, use compact u32
+  histogram/remap accumulators, and avoid redundant color-count and coarse-hint
+  work. Palette selection, transparency, nearest-color mapping, and output
+  pixels remain exact for the existing contract.
+- Improve palette nearest-color lookup with variance-aware KD splits, direct
+  subtree bounds, and a guarded literal 9-bit decode path for the common
+  min-code-size-8 stream. Keep the portable fallback for every other GIF.
+- Keep fast literal LZW as the default indexed writer compression while leaving
+  explicit `compression: "balanced"` available for smaller output.
+- Fresh initialized receipts are 205.41× on the real-image fixture, 171.20×
+  with opaque alpha, and 1,259.25× on the 512×512×10 arbitrary-RGBA stress
+  fixture. Output remains 149,601 bytes / 34.12 dB on the real fixture and
+  2,973,381 bytes / 26.12 dB on stress.
+- The indexed writer is 223.16×. Strict-cold full-entry and encode-only
+  receipts are 20.41× and 23.78× because they include process and Wasm
+  initialization; decode remains workload-dependent (2.03× on GIGACHAD and
+  4.43× on tenor in the targeted receipts).
+
 ## 2.2.2 - 2026-08-02
 
 - Keep the reusable byte-addressed encoder input scratch allocation four-byte

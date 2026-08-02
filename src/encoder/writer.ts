@@ -114,7 +114,10 @@ export function encodeIndexedGifFrames(
 
 	const backend = options.backend ?? "auto";
 	const wasmCore = backend === "javascript" ? null : getEncoderWasmCoreModule();
-	const fastCompression = options.compression === "fast";
+	// Literal LZW is lossless for indexed pixels and is the fast default. Keep
+	// the dictionary compressor available as an explicit `balanced` opt-in.
+	const fastCompression =
+		options.compression === undefined || options.compression === "fast";
 	const nativeAddon =
 		backend === "javascript" || backend === "wasm"
 			? null
@@ -489,7 +492,7 @@ export class GifWriter {
 		const go = gopts ?? {};
 		this.loopCount = go.loop === undefined ? null : go.loop;
 		this.globalPalette = go.palette === undefined ? null : go.palette;
-		this.compression = go.compression ?? "balanced";
+		this.compression = go.compression ?? "fast";
 
 		if (width <= 0 || height <= 0 || width > 65535 || height > 65535)
 			throw new Error("Width/Height invalid.");
