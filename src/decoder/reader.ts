@@ -1492,12 +1492,16 @@ export class GifReader {
           try {
             const outputLength = scratchDecode.call(this.wasmCore, frameNum);
             const outputPointer = scratchPtr.call(this.wasmCore);
-            if (outputLength === canvasPixels * 4 && outputPointer > 0) {
-              pixels.set(
-                new Uint8Array(
+            if (
+              outputLength === canvasPixels * 4 &&
+              outputPointer > 0 &&
+              (outputPointer & 3) === 0
+            ) {
+              out32.set(
+                new Uint32Array(
                   this.wasmMemory.buffer,
                   outputPointer,
-                  outputLength,
+                  canvasPixels,
                 ),
               );
               this.lastDecodedFrame = frameNum;
