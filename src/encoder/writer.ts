@@ -2173,8 +2173,10 @@ function tryEncodeLzwWithWasm(
 	}
 
 	const wasmCore = getEncoderWasmCoreModule();
+	// Fixed-width 8-bit literals beat tiny bit-packed streams in the fast
+	// Wasm path. GIF permits a larger minimum code size than the palette needs.
 	const wasmMinCodeSize =
-		fastCompression && minCodeSize === 4 ? 7 : minCodeSize;
+		fastCompression && minCodeSize <= 4 ? 7 : minCodeSize;
 	const encodeIntoScratch = fastCompression
 		? wasmCore?.encode_indexed_literal_lzw_scratch
 		: wasmCore?.encode_indexed_lzw_scratch;
