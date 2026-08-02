@@ -2093,6 +2093,42 @@ fn decode_frame_to_scratch(
         scratch.output.resize(output_len, 0);
     }
 
+    let (prefix, canvas, suffix) = unsafe { scratch.output.align_to_mut::<u32>() };
+    if prefix.is_empty() && suffix.is_empty() {
+        if scratch.palette_offset != frame.palette_offset
+            || scratch.palette_size != frame.palette_size
+            || scratch.palette_format != Some(format)
+        {
+            scratch.palette = build_palette_u32(data, frame, format)?;
+            scratch.palette_offset = frame.palette_offset;
+            scratch.palette_size = frame.palette_size;
+            scratch.palette_format = Some(format);
+        }
+        let image_data_slice;
+        if let Some(range) = single_image_data_range(data, frame.data_offset) {
+            image_data_slice = &data[range];
+        } else {
+            if scratch.image_data.capacity() < frame.data_length {
+                scratch
+                    .image_data
+                    .reserve(frame.data_length.saturating_sub(scratch.image_data.len()));
+            }
+            collect_image_data_into(data, frame.data_offset, &mut scratch.image_data)?;
+            image_data_slice = scratch.image_data.as_slice();
+        }
+        if lzw_decode_to_pixels_copy_with_scratch(
+            frame.min_code_size,
+            image_data_slice,
+            &scratch.palette,
+            canvas,
+            &mut scratch.lzw,
+        )
+        .is_ok()
+        {
+            return Ok(output_len);
+        }
+    }
+
     decode_frame_indices_reusing_output(
         data,
         frame,
@@ -2153,6 +2189,50 @@ fn decode_and_blit_frame_reusing_scratch(
         .ok_or_else(|| "Frame index out of range".to_string())?;
 
     let target = &mut pixels[..expected_length];
+    let (prefix, canvas, suffix) = unsafe { target.align_to_mut::<u32>() };
+    if prefix.is_empty()
+        && suffix.is_empty()
+        && !frame.interlaced
+        && frame.transparent_index.is_none()
+        && frame.x == 0
+        && frame.y == 0
+        && frame.width == metadata.width
+        && frame.height == metadata.height
+    {
+        if scratch.palette_offset != frame.palette_offset
+            || scratch.palette_size != frame.palette_size
+            || scratch.palette_format != Some(format)
+        {
+            scratch.palette = build_palette_u32(data, frame, format)?;
+            scratch.palette_offset = frame.palette_offset;
+            scratch.palette_size = frame.palette_size;
+            scratch.palette_format = Some(format);
+        }
+        let image_data_slice;
+        if let Some(range) = single_image_data_range(data, frame.data_offset) {
+            image_data_slice = &data[range];
+        } else {
+            if scratch.image_data.capacity() < frame.data_length {
+                scratch
+                    .image_data
+                    .reserve(frame.data_length.saturating_sub(scratch.image_data.len()));
+            }
+            collect_image_data_into(data, frame.data_offset, &mut scratch.image_data)?;
+            image_data_slice = scratch.image_data.as_slice();
+        }
+        if lzw_decode_to_pixels_copy_with_scratch(
+            frame.min_code_size,
+            image_data_slice,
+            &scratch.palette,
+            canvas,
+            &mut scratch.lzw,
+        )
+        .is_ok()
+        {
+            return Ok(());
+        }
+    }
+
     decode_frame_indices_reusing_output(
         data,
         frame,
@@ -2340,6 +2420,32 @@ fn decode_full_opaque_frames_direct(
             palette_storage = build_palette_u32(data, frame, format)?;
             &palette_storage
         };
+        let destination =
+            &mut output[frame_index * canvas_pixels..(frame_index + 1) * canvas_pixels];
+        let destination_u32 = unsafe {
+            std::slice::from_raw_parts_mut(destination.as_mut_ptr().cast::<u32>(), canvas_pixels)
+        };
+        let image_data_slice;
+        if let Some(range) = single_image_data_range(data, frame.data_offset) {
+            image_data_slice = &data[range];
+        } else {
+            if image_data.capacity() < frame.data_length {
+                image_data.reserve(frame.data_length.saturating_sub(image_data.len()));
+            }
+            collect_image_data_into(data, frame.data_offset, &mut image_data)?;
+            image_data_slice = image_data.as_slice();
+        }
+        if lzw_decode_to_pixels_copy_with_scratch(
+            frame.min_code_size,
+            image_data_slice,
+            palette,
+            destination_u32,
+            &mut lzw_scratch,
+        )
+        .is_ok()
+        {
+            continue;
+        }
         decode_frame_indices_reusing_output(
             data,
             frame,
@@ -2347,7 +2453,6 @@ fn decode_full_opaque_frames_direct(
             &mut lzw_scratch,
             &mut indices_scratch,
         )?;
-        let destination = &mut output[frame_index * canvas_pixels..(frame_index + 1) * canvas_pixels];
         blit_indices_to_uninit_full_canvas_u32(palette, &indices_scratch, destination)?;
     }
     let pointer = output.as_mut_ptr().cast::<u32>();
@@ -13032,6 +13137,223 @@ unsafe fn copy_lzw_dictionary_string(
     }
 }
 
+#[inline(always)]
+unsafe fn copy_lzw_dictionary_color_string(
+    source: *const u32,
+    destination: *mut u32,
+    length: usize,
+) {
+    std::ptr::copy_nonoverlapping(source, destination, length);
+}
+
+/// Decode an opaque full-canvas frame directly into palette colors. The
+/// ordinary decoder first writes one byte index per pixel and then performs a
+/// second palette lookup pass; this keeps the same LZW dictionary algorithm
+/// while making that mapping part of the output loop.
+fn lzw_decode_to_pixels_copy_with_scratch(
+    min_code_size: u8,
+    image_data: &[u8],
+    palette: &[u32],
+    output: &mut [u32],
+    scratch: &mut LzwStackScratch,
+) -> Result<(), String> {
+    if min_code_size > 11 {
+        return Err(format!("Invalid LZW minimum code size {min_code_size}"));
+    }
+    if min_code_size == 8
+        && image_data.len() >= output.len()
+        && decode_literal_9_bit_pixels(image_data, palette, output)
+    {
+        return Ok(());
+    }
+
+    let clear = 1usize << min_code_size;
+    let eoi = clear + 1;
+    let mut next_code = eoi + 1;
+    let mut code_size = usize::from(min_code_size) + 1;
+    let mut code_mask = (1usize << code_size) - 1;
+    let string_length = &mut scratch.string_length;
+    let string_start = &mut scratch.string_start;
+
+    let mut output_index = 0usize;
+    let mut q = 0usize;
+    let mut bits = 0usize;
+    let mut bit_count = 0usize;
+    let mut have_previous = false;
+    let mut previous_start = 0usize;
+    let mut previous_length = 0usize;
+    let mut previous_first = 0u32;
+
+    loop {
+        #[cfg(target_pointer_width = "32")]
+        if bit_count < code_size && image_data.len().saturating_sub(q) >= 2 {
+            let word =
+                unsafe { std::ptr::read_unaligned(image_data.as_ptr().add(q).cast::<u16>()) };
+            bits |= usize::from(u16::from_le(word)) << bit_count;
+            bit_count += 16;
+            q += 2;
+        }
+        #[cfg(target_pointer_width = "64")]
+        if bit_count < code_size && image_data.len().saturating_sub(q) >= 4 {
+            let word =
+                unsafe { std::ptr::read_unaligned(image_data.as_ptr().add(q).cast::<u32>()) };
+            bits |= usize::try_from(u32::from_le(word)).unwrap() << bit_count;
+            bit_count += 32;
+            q += 4;
+        }
+        while bit_count < code_size && q < image_data.len() {
+            bits |= usize::from(image_data[q]) << bit_count;
+            bit_count += 8;
+            q += 1;
+        }
+        if bit_count < code_size {
+            break;
+        }
+
+        let code = bits & code_mask;
+        bits >>= code_size;
+        bit_count -= code_size;
+        if code == clear {
+            next_code = eoi + 1;
+            code_size = usize::from(min_code_size) + 1;
+            code_mask = (1usize << code_size) - 1;
+            have_previous = false;
+            continue;
+        }
+        if code == eoi {
+            break;
+        }
+
+        let current_start = output_index;
+        let (decoded_length, out_first) = if code < clear {
+            if output_index >= output.len() {
+                return Err("LZW decoded output exceeds frame dimensions".to_string());
+            }
+            let color = palette
+                .get(code)
+                .copied()
+                .ok_or_else(|| format!("Palette index {code} exceeds palette size"))?;
+            output[output_index] = color;
+            output_index += 1;
+            (1usize, color)
+        } else if code < next_code {
+            let decoded_length =
+                usize::from(unsafe { string_length.get_unchecked(code).assume_init() });
+            let source_start =
+                usize::try_from(unsafe { string_start.get_unchecked(code).assume_init() })
+                    .unwrap();
+            let source_end = source_start + decoded_length;
+            let decoded_end = output_index + decoded_length;
+            if source_end > current_start || decoded_end > output.len() {
+                return Err("LZW dictionary string exceeds decoded output".to_string());
+            }
+            let out_first = unsafe { *output.get_unchecked(source_start) };
+            unsafe {
+                copy_lzw_dictionary_color_string(
+                    output.as_ptr().add(source_start),
+                    output.as_mut_ptr().add(output_index),
+                    decoded_length,
+                );
+            }
+            output_index = decoded_end;
+            (decoded_length, out_first)
+        } else if code == next_code && have_previous {
+            let decoded_length = previous_length + 1;
+            let decoded_end = output_index + decoded_length;
+            let previous_end = previous_start + previous_length;
+            if previous_end > current_start || decoded_end > output.len() {
+                return Err("LZW dictionary string exceeds decoded output".to_string());
+            }
+            unsafe {
+                copy_lzw_dictionary_color_string(
+                    output.as_ptr().add(previous_start),
+                    output.as_mut_ptr().add(output_index),
+                    previous_length,
+                );
+                output
+                    .as_mut_ptr()
+                    .add(output_index + previous_length)
+                    .write(previous_first);
+            }
+            output_index = decoded_end;
+            (decoded_length, previous_first)
+        } else {
+            return Err("Invalid LZW dictionary code".to_string());
+        };
+
+        if have_previous && next_code < 4096 {
+            let dictionary_length = previous_length + 1;
+            unsafe {
+                string_start
+                    .get_unchecked_mut(next_code)
+                    .write(previous_start as u32);
+                string_length
+                    .get_unchecked_mut(next_code)
+                    .write(dictionary_length as u16);
+            }
+            next_code += 1;
+            if next_code >= code_mask + 1 && code_size < 12 {
+                code_size += 1;
+                code_mask = (1usize << code_size) - 1;
+            }
+        }
+        previous_start = current_start;
+        previous_length = decoded_length;
+        previous_first = out_first;
+        have_previous = true;
+    }
+
+    if output_index != output.len() {
+        return Err("LZW decoded output is shorter than frame dimensions".to_string());
+    }
+    Ok(())
+}
+
+#[inline(always)]
+fn decode_literal_9_bit_pixels(
+    image_data: &[u8],
+    palette: &[u32],
+    output: &mut [u32],
+) -> bool {
+    const CLEAR: u16 = 256;
+    const EOI: u16 = 257;
+    let mut bits = 0u64;
+    let mut bit_count = 0usize;
+    let mut offset = 0usize;
+    let mut output_index = 0usize;
+    let mut saw_clear = false;
+
+    loop {
+        while bit_count < 9 && offset < image_data.len() {
+            bits |= u64::from(image_data[offset]) << bit_count;
+            bit_count += 8;
+            offset += 1;
+        }
+        if bit_count < 9 {
+            return false;
+        }
+        let code = (bits & 0x01ff) as u16;
+        bits >>= 9;
+        bit_count -= 9;
+
+        if code == CLEAR {
+            saw_clear = true;
+            continue;
+        }
+        if code == EOI {
+            return saw_clear && output_index == output.len();
+        }
+        if code >= CLEAR || output_index >= output.len() {
+            return false;
+        }
+        let Some(&color) = palette.get(usize::from(code)) else {
+            return false;
+        };
+        output[output_index] = color;
+        output_index += 1;
+    }
+}
+
 fn lzw_decode_to_indices_copy_with_scratch(
     min_code_size: u8,
     image_data: &[u8],
@@ -13821,6 +14143,35 @@ mod tests {
             .unwrap();
 
         assert_eq!(output, indices);
+    }
+
+    #[test]
+    fn direct_lzw_color_decoder_matches_palette_mapping() {
+        let indices: Vec<u8> = (0..4096u32)
+            .map(|index| ((index * 73 + index / 11) & 0xff) as u8)
+            .collect();
+        let palette: Vec<u32> = (0..256u32)
+            .map(|index| (index << 16) | (index << 8) | index)
+            .collect();
+        let mut image_data = Vec::new();
+        encode_nine_bit_literal_codes(&mut image_data, &indices).unwrap();
+        let mut output = vec![0u32; indices.len()];
+        let mut scratch = LzwStackScratch::default();
+
+        lzw_decode_to_pixels_copy_with_scratch(
+            8,
+            &image_data,
+            &palette,
+            &mut output,
+            &mut scratch,
+        )
+        .unwrap();
+
+        let expected: Vec<u32> = indices
+            .iter()
+            .map(|&index| palette[usize::from(index)])
+            .collect();
+        assert_eq!(output, expected);
     }
 
     #[test]
