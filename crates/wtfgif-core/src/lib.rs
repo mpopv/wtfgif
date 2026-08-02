@@ -6689,21 +6689,30 @@ fn build_quality_index_plan_from_colors(
         let initial_tree = PaletteKdTree::new(&palette);
         let initial_coarse_hints = initial_tree.coarse_hint_table(&palette);
         let mut histogram_to_palette = take_quality_histogram_to_palette(mapping_len);
+        let mut palette_lookup = take_quality_color_index_table(COLOR_INDEX_CAP);
+        for (index, &color) in palette.iter().enumerate() {
+            palette_lookup.insert_if_absent(color, index as u8);
+        }
         let mut counts = [0u64; 256];
         let mut red_sums = [0u64; 256];
         let mut green_sums = [0u64; 256];
         let mut blue_sums = [0u64; 256];
         for color in &colors {
-            let coarse_index = (usize::from(color.red >> 5) << 6)
-                | (usize::from(color.green >> 5) << 3)
-                | usize::from(color.blue >> 5);
-            let hint_index = initial_coarse_hints[coarse_index];
-            let index = usize::from(initial_tree.nearest_with_hint(
-                color.red,
-                color.green,
-                color.blue,
-                Some((hint_index, palette[usize::from(hint_index)])),
-            ));
+            let rgb = rgb_key(color.red, color.green, color.blue);
+            let index = if let Some(index) = palette_lookup.get(rgb) {
+                usize::from(index)
+            } else {
+                let coarse_index = (usize::from(color.red >> 5) << 6)
+                    | (usize::from(color.green >> 5) << 3)
+                    | usize::from(color.blue >> 5);
+                let hint_index = initial_coarse_hints[coarse_index];
+                usize::from(initial_tree.nearest_with_hint(
+                    color.red,
+                    color.green,
+                    color.blue,
+                    Some((hint_index, palette[usize::from(hint_index)])),
+                ))
+            };
             histogram_to_palette[usize::from(color.histogram_index)] = index as u8;
             counts[index] += color.count;
             red_sums[index] += u64::from(color.red) * color.count;
@@ -6726,21 +6735,29 @@ fn build_quality_index_plan_from_colors(
         }
         if palette_changed {
             let palette_tree = PaletteKdTree::new(&palette);
-            let coarse_hints = palette_tree.coarse_hint_table(&palette);
+            palette_lookup.reset(COLOR_INDEX_CAP);
+            for (index, &color) in palette.iter().enumerate() {
+                palette_lookup.insert_if_absent(color, index as u8);
+            }
             for color in &colors {
-                let coarse_index = (usize::from(color.red >> 5) << 6)
-                    | (usize::from(color.green >> 5) << 3)
-                    | usize::from(color.blue >> 5);
-                let hint_index = coarse_hints[coarse_index];
-                histogram_to_palette[usize::from(color.histogram_index)] = palette_tree
-                    .nearest_with_hint(
-                        color.red,
-                        color.green,
-                        color.blue,
-                        Some((hint_index, palette[usize::from(hint_index)])),
-                    );
+                // The first-pass assignment is a much tighter exact seed
+                // than a coarse cell-center lookup after representatives move
+                // only one refinement step. The KD search still proves the
+                // final nearest color, so this changes no output or tie rule.
+                let hint_index = histogram_to_palette[usize::from(color.histogram_index)];
+                let rgb = rgb_key(color.red, color.green, color.blue);
+                histogram_to_palette[usize::from(color.histogram_index)] =
+                    palette_lookup.get(rgb).unwrap_or_else(|| {
+                        palette_tree.nearest_with_hint(
+                            color.red,
+                            color.green,
+                            color.blue,
+                            Some((hint_index, palette[usize::from(hint_index)])),
+                        )
+                    });
             }
         }
+        recycle_quality_color_index_table(palette_lookup);
         recycle_quality_colors(colors);
         (palette, histogram_to_palette)
     } else {
@@ -6787,7 +6804,7 @@ fn build_quality_index_plan_from_colors(
                         let hint_index = coarse_hints[(usize::from(red >> 1) << 6)
                             | (usize::from(green >> 1) << 3)
                             | usize::from(blue >> 1)];
-                        coarse_nearest[index] = palette_tree.nearest_with_hint(
+                        coarse_nearest[index] = palette_tree.nearest_with_hint_split(
                             (red << 4) | 8,
                             (green << 4) | 8,
                             (blue << 4) | 8,
@@ -6817,7 +6834,7 @@ fn build_quality_index_plan_from_colors(
                         let hint_index = coarse_hints[(usize::from(red >> 1) << 6)
                             | (usize::from(green >> 1) << 3)
                             | usize::from(blue >> 1)];
-                        coarse_nearest[index] = palette_tree.nearest_with_hint(
+                        coarse_nearest[index] = palette_tree.nearest_with_hint_split(
                             (red << 4) | 8,
                             (green << 4) | 8,
                             (blue << 4) | 8,
@@ -7177,6 +7194,8 @@ struct PaletteKdNode {
     palette_index: u8,
     axis: u8,
     split: u8,
+    min_rgb: u32,
+    max_rgb: u32,
     left: usize,
     right: usize,
 }
@@ -7250,6 +7269,8 @@ impl PaletteKdTree {
                 palette_index: palette_index as u8,
                 axis,
                 split: component(color, axis),
+                min_rgb: rgb_key(min_red, min_green, min_blue),
+                max_rgb: rgb_key(max_red, max_green, max_blue),
                 left,
                 right,
             });
@@ -7317,6 +7338,22 @@ impl PaletteKdTree {
 
     #[inline]
     fn nearest_with_hint(&self, r: u8, g: u8, b: u8, hint: Option<(u8, u32)>) -> u8 {
+        self.nearest_with_hint_impl::<true>(r, g, b, hint)
+    }
+
+    #[inline]
+    fn nearest_with_hint_split(&self, r: u8, g: u8, b: u8, hint: Option<(u8, u32)>) -> u8 {
+        self.nearest_with_hint_impl::<false>(r, g, b, hint)
+    }
+
+    #[inline(always)]
+    fn nearest_with_hint_impl<const USE_BOUNDS: bool>(
+        &self,
+        r: u8,
+        g: u8,
+        b: u8,
+        hint: Option<(u8, u32)>,
+    ) -> u8 {
         #[inline(always)]
         fn distance(color: u32, r: i32, g: i32, b: i32) -> u32 {
             let dr = r - ((color >> 16) & 0xff) as i32;
@@ -7371,12 +7408,47 @@ impl PaletteKdTree {
                 (node.right, node.left)
             };
             if far != PALETTE_KD_EMPTY {
-                // The split-plane distance is a valid lower bound for every
-                // point in the far subtree. It avoids loading and checking
-                // the subtree's full RGB bounds on every branch; the exact
-                // KD search still visits any branch whose bound can win.
-                let delta = (value - split).unsigned_abs();
-                let far_distance = (delta * delta) as u32;
+                let far_distance = if USE_BOUNDS {
+                    // Each node carries the exact RGB bounds of its subtree.
+                    // The box distance is a stronger lower bound than the
+                    // split plane when a far subtree is separated on another
+                    // channel.
+                    let far_node = self.nodes[far];
+                    let min_red = ((far_node.min_rgb >> 16) & 0xff) as i32;
+                    let min_green = ((far_node.min_rgb >> 8) & 0xff) as i32;
+                    let min_blue = (far_node.min_rgb & 0xff) as i32;
+                    let max_red = ((far_node.max_rgb >> 16) & 0xff) as i32;
+                    let max_green = ((far_node.max_rgb >> 8) & 0xff) as i32;
+                    let max_blue = (far_node.max_rgb & 0xff) as i32;
+                    let red_distance = if r < min_red {
+                        min_red - r
+                    } else if r > max_red {
+                        r - max_red
+                    } else {
+                        0
+                    };
+                    let green_distance = if g < min_green {
+                        min_green - g
+                    } else if g > max_green {
+                        g - max_green
+                    } else {
+                        0
+                    };
+                    let blue_distance = if b < min_blue {
+                        min_blue - b
+                    } else if b > max_blue {
+                        b - max_blue
+                    } else {
+                        0
+                    };
+                    (red_distance * red_distance
+                        + green_distance * green_distance
+                        + blue_distance * blue_distance)
+                        as u32
+                } else {
+                    let delta = (value - split).unsigned_abs();
+                    (delta * delta) as u32
+                };
                 if far_distance <= best_distance {
                     debug_assert!(stack_len < stack.len());
                     stack[stack_len].write((far, far_distance));

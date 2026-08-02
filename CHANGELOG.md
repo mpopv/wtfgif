@@ -2,6 +2,22 @@
 
 All notable changes to wtfgif are documented here.
 
+## 2.2.1 - 2026-08-02
+
+- Make exact KD-tree nearest-color searches prune by each subtree's RGB
+  bounding box; dense median-cut mapping keeps the cheaper split-plane search.
+- Seed the refinement pass from the prior exact assignment and short-circuit
+  exact palette-color hits through the existing hash table. These are search
+  accelerations only: nearest-color tie-breaking, adaptive palette choices,
+  transparency, and output pixels remain unchanged.
+- Fresh initialized receipts are 179.74× on the real-image fixture, 161.08×
+  with opaque alpha, and 1,265.32× on the 512×512×10 arbitrary-RGBA stress
+  fixture. PSNR and output bytes match 2.2.0 (34.12 dB / 149,601 bytes on the
+  real fixture; 26.12 dB / 2,973,381 bytes on stress).
+- The indexed writer is 223.41×; decode remains workload-dependent at 0.86×–
+  3.83× (1.72× geometric mean). Strict-cold encode-only is 23.38× because it
+  includes process and Wasm initialization.
+
 ## 2.2.0 - 2026-08-01
 
 - Add SIMD Wasm artifacts for Node and browsers with runtime feature detection
