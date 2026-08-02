@@ -740,14 +740,15 @@ pub fn encode_indexed_literal_lzw_scratch(
 pub fn indexed_lzw_input_scratch_reserve(length: usize) -> usize {
     REUSABLE_LZW_SCRATCH.with(|scratch| {
         let mut scratch = scratch.borrow_mut();
-        if length > scratch.input.len() {
-            let additional = length - scratch.input.len();
+        let units = length.div_ceil(std::mem::size_of::<AlignedByte>());
+        if units > scratch.input.len() {
+            let additional = units - scratch.input.len();
             scratch.input.reserve(additional);
             // All current callers immediately overwrite the entire exposed
             // range before asking the encoder to read it.
-            unsafe { scratch.input.set_len(length) };
+            unsafe { scratch.input.set_len(units) };
         }
-        scratch.input.as_mut_ptr() as usize
+        scratch.input.as_mut_ptr().cast::<u8>() as usize
     })
 }
 
@@ -1169,10 +1170,10 @@ pub fn encode_rgba_gif_advanced_from_input(
         // stable for the duration of the encode.
         let input_ptr = {
             let scratch = scratch.borrow();
-            if length > scratch.input.len() {
+            if length > scratch.input.len() * std::mem::size_of::<AlignedByte>() {
                 return Err(JsValue::from_str("RGBA input scratch buffer is too short"));
             }
-            scratch.input.as_ptr()
+            scratch.input.as_ptr().cast::<u8>()
         };
         let rgba_stream = unsafe { std::slice::from_raw_parts(input_ptr, length) };
         encode_rgba_gif_advanced_inner(
@@ -1217,10 +1218,10 @@ pub fn encode_rgba_gif_advanced_scratch_from_input(
         RgbaPaletteMode::from_u8(palette_mode).map_err(|message| JsValue::from_str(&message))?;
     let input_ptr = REUSABLE_LZW_SCRATCH.with(|scratch| {
         let scratch = scratch.borrow();
-        if length > scratch.input.len() {
+        if length > scratch.input.len() * std::mem::size_of::<AlignedByte>() {
             return Err(JsValue::from_str("RGBA input scratch buffer is too short"));
         }
-        Ok(scratch.input.as_ptr())
+        Ok(scratch.input.as_ptr().cast::<u8>())
     })?;
     let rgba_stream = unsafe { std::slice::from_raw_parts(input_ptr, length) };
     let output = REUSABLE_GIF_OUTPUT.with(|scratch| std::mem::take(&mut *scratch.borrow_mut()));
@@ -1263,10 +1264,10 @@ pub fn encode_rgba_quality_gif_from_input(
 ) -> Result<Vec<u8>, JsValue> {
     let input_ptr = REUSABLE_LZW_SCRATCH.with(|scratch| {
         let scratch = scratch.borrow();
-        if length > scratch.input.len() {
+        if length > scratch.input.len() * std::mem::size_of::<AlignedByte>() {
             return Err(JsValue::from_str("RGBA input scratch buffer is too short"));
         }
-        Ok(scratch.input.as_ptr())
+        Ok(scratch.input.as_ptr().cast::<u8>())
     })?;
     let rgba_stream = unsafe { std::slice::from_raw_parts(input_ptr, length) };
     encode_rgba_quality_gif_inner_with_output(
@@ -1296,10 +1297,10 @@ pub fn encode_rgba_quality_gif_scratch_from_input(
 ) -> Result<usize, JsValue> {
     let input_ptr = REUSABLE_LZW_SCRATCH.with(|scratch| {
         let scratch = scratch.borrow();
-        if length > scratch.input.len() {
+        if length > scratch.input.len() * std::mem::size_of::<AlignedByte>() {
             return Err(JsValue::from_str("RGBA input scratch buffer is too short"));
         }
-        Ok(scratch.input.as_ptr())
+        Ok(scratch.input.as_ptr().cast::<u8>())
     })?;
     let rgba_stream = unsafe { std::slice::from_raw_parts(input_ptr, length) };
     let output = REUSABLE_GIF_OUTPUT.with(|scratch| std::mem::take(&mut *scratch.borrow_mut()));
@@ -9038,8 +9039,14 @@ impl LzwEncodeTables {
     }
 }
 
+// Callers still expose this allocation as raw bytes, but the base address is
+// stable at a four-byte boundary for packed RGBA loads.
+#[repr(align(4))]
+#[allow(dead_code)]
+struct AlignedByte(u8);
+
 struct LzwEncodeScratch {
-    input: Vec<u8>,
+    input: Vec<AlignedByte>,
     output: Vec<u8>,
     // Literal LZW, including the default arbitrary-RGBA path, never needs
     // the 4 MiB dictionary. Allocate it only when a caller explicitly asks
@@ -9121,10 +9128,12 @@ fn encode_indexed_lzw_scratch_from_input_inner(
             output,
             tables,
         } = &mut *scratch;
-        if length > input.len() {
+        if length > input.len() * std::mem::size_of::<AlignedByte>() {
             return Err("Indexed input scratch length exceeds capacity".to_string());
         }
-        let index_stream = &input[..length];
+        let index_stream = unsafe {
+            std::slice::from_raw_parts(input.as_ptr().cast::<u8>(), length)
+        };
         output.clear();
         output.reserve(index_stream.len() / 2 + 16);
         if literal {

@@ -23,13 +23,13 @@ Pro with Node.js 22.17.1, measured on the current optimized tree.
 
 | Implementation | Median | Speedup | Bytes | PSNR |
 | --- | ---: | ---: | ---: | ---: |
-| image-q rgbquant + omggif balanced LZW | 100.432 ms | 1.00× | 39,350 | 31.84 dB |
-| wtfgif quality/global + literal LZW (default) | 0.559 ms | **179.74×** | 149,601 | 34.12 dB |
+| image-q rgbquant + omggif balanced LZW | 100.742 ms | 1.00× | 39,350 | 31.84 dB |
+| wtfgif quality/global + literal LZW (default) | 0.548 ms | **183.98×** | 149,601 | 34.12 dB |
 
 This is one practical adaptive global-palette pipeline. The implementations do
 not choose identical pixels, so the table reports source-relative PSNR and
 output bytes alongside speed. The wtfgif palette is higher quality on this
-fixture while remaining 179.74× faster. Literal LZW is lossless for the
+fixture while remaining 183.98× faster. Literal LZW is lossless for the
 indexed pixels, so the speedup does not come from lowering GIF pixel quality.
 
 The quality path uses a weighted 4-bit-per-channel histogram for ordinary
@@ -41,15 +41,15 @@ gradients use the finer histogram, with a compact 4-bit parent-cell lookup
 when the dense color set does not fit in the smaller table.
 
 The same source with every pixel treated as opaque (`BENCH_ALPHA_THRESHOLD=0`)
-took 109.109 ms for image-q + omggif and 0.677 ms for wtfgif: **161.08×**,
+took 109.946 ms for image-q + omggif and 0.674 ms for wtfgif: **163.18×**,
 with 33.91 dB PSNR. This is the normal full-color, no-transparent-pixels case.
 
 The larger stress workload (ten synthetic 512×512 RGBA frames) measured
-6,653.115 ms for image-q + omggif and 5.258 ms for wtfgif: **1,265.32×**,
+6,759.166 ms for image-q + omggif and 5.134 ms for wtfgif: **1,316.47×**,
 with 2,973,381 output bytes and 26.12 dB PSNR versus 24.26 dB for the
 baseline. This is still arbitrary RGBA input: the palette is unknown, every
 pixel is scanned, and every indexed pixel is emitted into a valid GIF.
-The 1,200× ratio is a workload-size effect, not a cache shortcut: both sides
+The 1,300× ratio is a workload-size effect, not a cache shortcut: both sides
 read all 2,621,440 source pixels, while wtfgif keeps its histogram, parent-cell
 lookup, and literal writer linear in the input size.
 
@@ -64,8 +64,8 @@ loading, dynamic imports, Wasm initialization, palette creation, pixel mapping,
 and GIF compression. The current 31-sample median is 150.719 ms for the
 full entry versus 7.918 ms for wtfgif (19.04×). This includes process startup
 and Wasm initialization and is not the initialized hot-path contract; initialize
-Wasm during page or worker startup for the hot measurements. A seven-process
-encode-only run measured 147.172 ms versus 6.295 ms (**23.38×**).
+Wasm during page or worker startup for the hot measurements. A ten-process
+encode-only run measured 148.766 ms versus 6.415 ms (**23.19×**).
 
 Run the optional larger synthetic stress workload with:
 
@@ -74,8 +74,8 @@ npm run bench:rgba:stress
 ```
 
 For a stress-only receipt, use `BENCH_RGBA_FIXTURE=stress`. Three initialized
-samples after one warmup took 6,653.115 ms with image-q + omggif and 5.258 ms
-with wtfgif: **1,265.32×**, with 26.12 dB PSNR and 2,973,381 output bytes.
+samples after one warmup took 6,759.166 ms with image-q + omggif and 5.134 ms
+with wtfgif: **1,316.47×**, with 26.12 dB PSNR and 2,973,381 output bytes.
 The large image-q allocation makes this workload noisy, so use several samples
 and report the median.
 
@@ -90,9 +90,9 @@ This is the direct `GifWriter` contract: 12 full 128×128 frames, a normal
 
 | Implementation | Median | Bytes |
 | --- | ---: | ---: |
-| omggif | 16.595 ms | 163,797 |
-| wtfgif | 0.074 ms | 224,001 |
-| **Speedup** | **223.41×** | **1.37× baseline** |
+| omggif | 16.743 ms | 163,797 |
+| wtfgif | 0.075 ms | 224,001 |
+| **Speedup** | **224.64×** | **1.37× baseline** |
 
 Both outputs are decoded before timing and must produce exactly the same RGBA
 pixels. This is a real 100× result, but it applies only after palette creation

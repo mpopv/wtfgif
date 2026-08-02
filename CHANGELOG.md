@@ -2,6 +2,19 @@
 
 All notable changes to wtfgif are documented here.
 
+## 2.2.2 - 2026-08-02
+
+- Keep the reusable byte-addressed encoder input scratch allocation four-byte
+  aligned, so packed RGBA loads have a stable base without changing the public
+  API or copying fewer source pixels.
+- Fresh initialized receipts are 183.98× on the real-image fixture, 163.18×
+  with opaque alpha, and 1,316.47× on the 512×512×10 arbitrary-RGBA stress
+  fixture. Output bytes and PSNR remain 149,601 / 34.12 dB on the real fixture
+  and 2,973,381 / 26.12 dB on stress.
+- The indexed writer is 224.64×. Strict-cold encode-only is 23.19× because it
+  includes process and Wasm initialization; decode remains workload-dependent
+  at 0.86×–3.83× (1.72× geometric mean).
+
 ## 2.2.1 - 2026-08-02
 
 - Make exact KD-tree nearest-color searches prune by each subtree's RGB
