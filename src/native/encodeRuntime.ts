@@ -15,6 +15,16 @@ export interface NativeAddonModule {
 		loopCount: number,
 		delta: boolean,
 	) => Uint8Array;
+	encodeIndexedBalanced?: (
+		indexedFrames: Uint8Array,
+		width: number,
+		height: number,
+		frameCount: number,
+		palette: Uint32Array,
+		delays: Uint16Array,
+		loopCount: number,
+		delta: boolean,
+	) => Uint8Array;
 	encodeRgbaFast: (
 		rgbaFrames: Uint8Array,
 		width: number,
@@ -24,6 +34,27 @@ export interface NativeAddonModule {
 		delays: Uint16Array,
 		loopCount: number,
 		delta: boolean,
+	) => Uint8Array;
+	encodeRgbaBalanced?: (
+		rgbaFrames: Uint8Array,
+		width: number,
+		height: number,
+		frameCount: number,
+		palette: Uint32Array,
+		delays: Uint16Array,
+		loopCount: number,
+		delta: boolean,
+		alphaThreshold: number,
+		quantization: number,
+	) => Uint8Array;
+	encodeRgbaQuality?: (
+		rgbaFrames: Uint8Array,
+		width: number,
+		height: number,
+		frameCount: number,
+		delays: Uint16Array,
+		loopCount: number,
+		alphaThreshold: number,
 	) => Uint8Array;
 	reencodeGifFast: (gifData: Uint8Array) => Uint8Array;
 }

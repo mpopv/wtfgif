@@ -28,6 +28,8 @@ export interface WasmCoreInstance {
 	composited_scratch_ptr?: () => number;
 	prepare_composited_delta_rgba: (requestedFrames: Uint8Array) => Uint32Array;
 	prepare_composited_delta_bgra: (requestedFrames: Uint8Array) => Uint32Array;
+	prepare_composited_delta_rgba_scratch?: (requestedFrames: Uint8Array) => number;
+	prepare_composited_delta_bgra_scratch?: (requestedFrames: Uint8Array) => number;
 	free: () => void;
 }
 

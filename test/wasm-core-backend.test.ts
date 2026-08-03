@@ -8,6 +8,7 @@ import {
 	encodeRgbaGifFrames,
 	GifReader,
 	GifWriter,
+	initializeWasmGlobally,
 	installWasmCoreBackend,
 } from "../src/index";
 
@@ -69,6 +70,15 @@ describe("Rust/Wasm core decode backend", () => {
 
 	maybeTest("installs as the GifReader Wasm backend", () => {
 		expect(installWasmCoreBackend()).toStrictEqual({
+			name: "wtfgif-rust-wasm",
+			available: true,
+		});
+	});
+
+	maybeTest("full-package initialization installs the prepared backend", async () => {
+		GifReader.setDecodeBackend(null);
+		await initializeWasmGlobally();
+		expect(GifReader.getDecodeBackendStatus()).toStrictEqual({
 			name: "wtfgif-rust-wasm",
 			available: true,
 		});

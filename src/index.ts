@@ -38,7 +38,25 @@ import {
 setWasmEncodeFallback(() => getWasmCoreModule());
 
 const bindPublicWasmApi = () => {
-	prepareWasmOneOffApi(getWasmCoreModule());
+	const wasmCore = getWasmCoreModule();
+	prepareWasmOneOffApi(wasmCore);
+	const decodeBackendStatus = GifReader.getDecodeBackendStatus();
+	if (wasmCore) {
+		// Initialization is the opt-in boundary for the full package. Install
+		// the exact-parity prepared-frame backend automatically when the caller
+		// has not selected a different backend, so `preparePlayback()` benefits
+		// from the same Wasm module without an extra setup call.
+		if (
+			decodeBackendStatus.name === "javascript" ||
+			decodeBackendStatus.name === "wtfgif-rust-wasm"
+		) {
+			installWasmCoreBackend();
+		}
+	} else if (decodeBackendStatus.name === "wtfgif-rust-wasm") {
+		// Do not leave an unavailable auto-installed backend behind after
+		// cleanup; the reader falls back to its portable JavaScript path.
+		GifReader.setDecodeBackend(null);
+	}
 	browserExports.remuxGifPixelPerfect = remuxGifPixelPerfect;
 };
 

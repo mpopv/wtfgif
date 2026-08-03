@@ -74,6 +74,7 @@ function prepareWasmCoreFrames(
 		if (options.composited) {
 			return prepareWasmCoreCompositedFrames(
 				core,
+				wasmModule,
 				metadata,
 				options,
 				frameIndices,
@@ -136,6 +137,7 @@ function prepareWasmCoreFrames(
 
 function prepareWasmCoreCompositedFrames(
 	core: WasmCoreInstance,
+	wasmModule: NonNullable<ReturnType<typeof getWasmCoreModule>>,
 	metadata: WasmMetadata,
 	options: NormalizedBackendOptions,
 	frameIndices: readonly number[],
@@ -145,24 +147,100 @@ function prepareWasmCoreCompositedFrames(
 		metadata.frame_count,
 	);
 	const canvasPixels = metadata.width * metadata.height;
-	const nativeFrames = options.deltas
-		? readNativeCompositedDeltaFrames(
+	let wasmMemory: WebAssembly.Memory | undefined;
+	try {
+		wasmMemory = wasmModule.wasm_memory?.();
+	} catch {
+		// Custom modules may expose a throwing/partial memory accessor.
+	}
+	let nativeFrames: NativeCompositedFrame[];
+	if (options.deltas) {
+		const scratchPrepare =
+			options.format === "rgba"
+				? core.prepare_composited_delta_rgba_scratch
+				: core.prepare_composited_delta_bgra_scratch;
+		const scratchPointer = core.composited_scratch_ptr;
+		let preparedStream: Uint32Array | null = null;
+		if (scratchPrepare && scratchPointer && wasmMemory) {
+			try {
+				const preparedLength = scratchPrepare.call(core, requestedFrames);
+				const pointer = scratchPointer.call(core);
+				const byteLength = preparedLength * Uint32Array.BYTES_PER_ELEMENT;
+				if (
+					preparedLength >= COMPOSITED_DELTA_HEADER_LEN &&
+					pointer > 0 &&
+					(pointer & (Uint32Array.BYTES_PER_ELEMENT - 1)) === 0 &&
+					pointer + byteLength <= wasmMemory.buffer.byteLength
+				) {
+					preparedStream = new Uint32Array(
+						wasmMemory.buffer,
+						pointer,
+						preparedLength,
+					);
+				}
+			} catch {
+				// Older/custom modules may expose only part of the scratch API.
+			}
+		}
+		nativeFrames = readNativeCompositedDeltaFrames(
+			preparedStream ??
 				toUint32Array(
 					options.format === "rgba"
 						? core.prepare_composited_delta_rgba(requestedFrames)
 						: core.prepare_composited_delta_bgra(requestedFrames),
 				),
-				canvasPixels,
-			)
-		: readNativeCompositedFullFrames(
-				toUint32Array(
-					options.format === "rgba"
-						? core.prepare_composited_rgba(requestedFrames)
-						: core.prepare_composited_bgra(requestedFrames),
-				),
-				requestedFrames,
-				canvasPixels,
+			canvasPixels,
+		);
+	} else {
+		// A scratch result stays in Wasm memory while the prepared-frame object
+		// is alive.  That removes the wasm-bindgen Vec<u32> -> JS typed-array
+		// copy from the common playback path.  The core is intentionally kept
+		// alive by createPreparedFramesResult until dispose(), so these views
+		// cannot outlive the allocation that owns them.
+		const scratchPrepare =
+			options.format === "rgba"
+				? core.prepare_composited_rgba_scratch
+				: core.prepare_composited_bgra_scratch;
+		const scratchPointer = core.composited_scratch_ptr;
+		let preparedPixels: Uint32Array | null = null;
+		if (scratchPrepare && scratchPointer && wasmMemory) {
+			try {
+				const preparedLength = scratchPrepare.call(core, requestedFrames);
+				const pointer = scratchPointer.call(core);
+				const expectedLength =
+					requestedFrames.reduce((count, requested) => count + (requested ? 1 : 0), 0) *
+						canvasPixels;
+				const byteLength = preparedLength * Uint32Array.BYTES_PER_ELEMENT;
+				if (
+					preparedLength === expectedLength &&
+					pointer > 0 &&
+					(pointer & (Uint32Array.BYTES_PER_ELEMENT - 1)) === 0 &&
+					pointer + byteLength <= wasmMemory.buffer.byteLength
+				) {
+					preparedPixels = new Uint32Array(
+						wasmMemory.buffer,
+						pointer,
+						preparedLength,
+					);
+				}
+			} catch {
+				// Older/custom modules may expose only part of the scratch API.
+				// Fall back to the stable wasm-bindgen return value below.
+			}
+		}
+		if (!preparedPixels) {
+			preparedPixels = toUint32Array(
+				options.format === "rgba"
+					? core.prepare_composited_rgba(requestedFrames)
+					: core.prepare_composited_bgra(requestedFrames),
 			);
+		}
+		nativeFrames = readNativeCompositedFullFrames(
+			preparedPixels,
+			requestedFrames,
+			canvasPixels,
+		);
+	}
 	const frames: PreparedGifFrame[] = [];
 	const dedupe =
 		options.dedupe === "all" ? new Map<number, Uint32Array[]>() : null;

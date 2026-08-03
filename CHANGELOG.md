@@ -2,6 +2,26 @@
 
 All notable changes to wtfgif are documented here.
 
+## 2.2.4 - 2026-08-03
+
+- Add native Node entry points for the quality RGBA, balanced RGBA, and
+  balanced indexed encoders, while keeping the portable JavaScript/Wasm path
+  as the browser and edge fallback.
+- Tighten ordinary GIF parsing and sequential decoding, including reusable
+  palette data and literal-stream fast paths. Unusual or malformed GIFs keep
+  the compatibility parser and decoder.
+- Keep prepared composited RGBA/BGRA frames in Wasm-owned scratch memory when
+  the runtime exposes it, avoiding a bindgen result copy without changing the
+  exact pixel-parity contract or the fallback API.
+- Refresh the initialized arbitrary-RGBA receipt to 217.39× on the real
+  MakeEmoji fixture (149,601 bytes / 34.12 dB), 210.52× with opaque input,
+  and 1,196.59× on the larger 512×512×10 stress fixture. These are timed only
+  after initialization; strict-cold encode-only remains 19.23× because it
+  includes process and Wasm startup.
+- Refresh the direct indexed receipt to 241.77× (104.11× minimum across the
+  2–256-color sweep). Decode remains workload-dependent at 1.08–4.45× in the
+  portable drop-in sweep (2.35× geometric mean).
+
 ## 2.2.3 - 2026-08-02
 
 - Specialize the ordinary RGBA quality path for opaque input, use compact u32

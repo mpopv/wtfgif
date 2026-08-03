@@ -79,6 +79,32 @@ describe("one-off native addon API", () => {
 		expect(encodeRgbaFast.mock.calls[0]?.[7]).toBe(false);
 	});
 
+	test("routes quality RGBA encoding through the installed addon", () => {
+		const encodeRgbaQuality = vi.fn<
+			NonNullable<NativeAddonModule["encodeRgbaQuality"]>
+		>(() => new Uint8Array([71, 73, 70]));
+		setNativeAddonModule(makeNativeAddon({ encodeRgbaQuality }));
+
+		const encoded = encodeRgbaGifFrames({
+			width: 1,
+			height: 1,
+			frameCount: 1,
+			frames: new Uint8Array([0, 0, 0, 255]),
+			delay: 3,
+			loop: 0,
+			compression: "fast",
+			quantization: "quality",
+			backend: "native",
+		});
+
+		expect(encoded).toStrictEqual(new Uint8Array([71, 73, 70]));
+		expect(encodeRgbaQuality).toHaveBeenCalledOnce();
+		expect(encodeRgbaQuality.mock.calls[0]?.[4]).toStrictEqual(
+			new Uint16Array([3]),
+		);
+		expect(encodeRgbaQuality.mock.calls[0]?.[6]).toBe(128);
+	});
+
 	test("routes exact fast indexed delta encoding through the installed addon", () => {
 		const encodeIndexedFast = vi.fn<NativeAddonModule["encodeIndexedFast"]>(
 			() => new Uint8Array([71, 73, 70]),

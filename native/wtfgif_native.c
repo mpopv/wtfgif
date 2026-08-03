@@ -57,7 +57,46 @@ extern int32_t wtfgif_encode_rgba_fast(
     int32_t loop_count,
     int32_t deltas,
     NativeEncodedGif *encoded);
+extern int32_t wtfgif_encode_rgba_quality(
+    const uint8_t *rgba_stream,
+    size_t rgba_len,
+    uint16_t width,
+    uint16_t height,
+    size_t frame_count,
+    const uint16_t *delays,
+    size_t delay_count,
+    int32_t loop_count,
+    uint8_t alpha_threshold,
+    NativeEncodedGif *encoded);
+extern int32_t wtfgif_encode_rgba_balanced(
+    const uint8_t *rgba_stream,
+    size_t rgba_len,
+    uint16_t width,
+    uint16_t height,
+    size_t frame_count,
+    const uint32_t *palette_rgb,
+    size_t palette_len,
+    const uint16_t *delays,
+    size_t delay_count,
+    int32_t loop_count,
+    int32_t deltas,
+    uint8_t alpha_threshold,
+    uint8_t quantization,
+    NativeEncodedGif *encoded);
 extern int32_t wtfgif_encode_indexed_fast(
+    const uint8_t *index_stream,
+    size_t index_len,
+    uint16_t width,
+    uint16_t height,
+    size_t frame_count,
+    const uint32_t *palette_rgb,
+    size_t palette_len,
+    const uint16_t *delays,
+    size_t delay_count,
+    int32_t loop_count,
+    int32_t deltas,
+    NativeEncodedGif *encoded);
+extern int32_t wtfgif_encode_indexed_balanced(
     const uint8_t *index_stream,
     size_t index_len,
     uint16_t width,
@@ -977,6 +1016,236 @@ static napi_value encode_rgba_fast(
   return output;
 }
 
+static napi_value encode_rgba_balanced(
+    napi_env env,
+    napi_callback_info info) {
+  size_t argc = 10;
+  napi_value argv[10];
+  if (napi_get_cb_info(env, info, &argc, argv, NULL, NULL) != napi_ok ||
+      argc != 10) {
+    return throw_error(
+        env,
+        "encodeRgbaBalanced expects RGBA, width, height, frame count, palette, delays, loop count, delta mode, alpha threshold, and quantization.");
+  }
+
+  void *rgba_data = NULL;
+  size_t rgba_length = 0;
+  if (!get_uint8_input(
+          env,
+          argv[0],
+          &rgba_data,
+          &rgba_length,
+          "RGBA input must be a Buffer or Uint8Array.")) {
+    return NULL;
+  }
+
+  uint32_t width;
+  uint32_t height;
+  uint32_t frame_count;
+  uint32_t alpha_threshold;
+  uint32_t quantization;
+  int32_t loop_count;
+  int32_t deltas;
+  if (!get_uint32(env, argv[1], &width, "Width must be an unsigned integer.") ||
+      !get_uint32(env, argv[2], &height, "Height must be an unsigned integer.") ||
+      !get_uint32(
+          env,
+          argv[3],
+          &frame_count,
+          "Frame count must be an unsigned integer.") ||
+      !get_int32(env, argv[6], &loop_count, "Loop count must be an integer.") ||
+      !get_bool(env, argv[7], &deltas, "Delta mode must be a boolean.") ||
+      !get_uint32(
+          env,
+          argv[8],
+          &alpha_threshold,
+          "Alpha threshold must be an unsigned integer.") ||
+      !get_uint32(
+          env,
+          argv[9],
+          &quantization,
+          "Quantization must be an unsigned integer.")) {
+    return NULL;
+  }
+  if (width > UINT16_MAX || height > UINT16_MAX) {
+    return throw_error(env, "Width and height must fit in 16 bits.");
+  }
+  if (alpha_threshold > UINT8_MAX || quantization > UINT8_MAX) {
+    return throw_error(env, "Alpha threshold and quantization must fit in 8 bits.");
+  }
+
+  void *palette_data = NULL;
+  size_t palette_length = 0;
+  void *delay_data = NULL;
+  size_t delay_length = 0;
+  if (!get_typed_array(
+          env,
+          argv[4],
+          napi_uint32_array,
+          &palette_data,
+          &palette_length,
+          "Palette must be a Uint32Array.") ||
+      !get_typed_array(
+          env,
+          argv[5],
+          napi_uint16_array,
+          &delay_data,
+          &delay_length,
+          "Delays must be a Uint16Array.")) {
+    return NULL;
+  }
+
+  NativeEncodedGif encoded = {0};
+  if (!wtfgif_encode_rgba_balanced(
+          (const uint8_t *)rgba_data,
+          rgba_length,
+          (uint16_t)width,
+          (uint16_t)height,
+          frame_count,
+          (const uint32_t *)palette_data,
+          palette_length,
+          (const uint16_t *)delay_data,
+          delay_length,
+          loop_count,
+          deltas,
+          (uint8_t)alpha_threshold,
+          (uint8_t)quantization,
+          &encoded)) {
+    return throw_error(env, "Native balanced encoder rejected RGBA input.");
+  }
+
+  EncodedBufferHint *hint = malloc(sizeof(*hint));
+  if (hint == NULL) {
+    wtfgif_free_bytes(
+        encoded.bytes,
+        encoded.byte_len,
+        encoded.byte_capacity);
+    return throw_error(env, "Could not allocate encoded GIF owner.");
+  }
+  hint->byte_len = encoded.byte_len;
+  hint->byte_capacity = encoded.byte_capacity;
+  napi_value output;
+  if (napi_create_external_buffer(
+          env,
+          encoded.byte_len,
+          encoded.bytes,
+          finalize_bytes,
+          hint,
+          &output) != napi_ok) {
+    wtfgif_free_bytes(
+        encoded.bytes,
+        encoded.byte_len,
+        encoded.byte_capacity);
+    free(hint);
+    return throw_error(env, "Could not expose encoded GIF buffer.");
+  }
+  return output;
+}
+
+static napi_value encode_rgba_quality(
+    napi_env env,
+    napi_callback_info info) {
+  size_t argc = 7;
+  napi_value argv[7];
+  if (napi_get_cb_info(env, info, &argc, argv, NULL, NULL) != napi_ok ||
+      argc != 7) {
+    return throw_error(
+        env,
+        "encodeRgbaQuality expects RGBA, width, height, frame count, delays, loop count, and alpha threshold.");
+  }
+
+  void *rgba_data = NULL;
+  size_t rgba_length = 0;
+  if (!get_uint8_input(
+          env,
+          argv[0],
+          &rgba_data,
+          &rgba_length,
+          "RGBA input must be a Buffer or Uint8Array.")) {
+    return NULL;
+  }
+
+  uint32_t width;
+  uint32_t height;
+  uint32_t frame_count;
+  uint32_t alpha_threshold;
+  int32_t loop_count;
+  if (!get_uint32(env, argv[1], &width, "Width must be an unsigned integer.") ||
+      !get_uint32(env, argv[2], &height, "Height must be an unsigned integer.") ||
+      !get_uint32(
+          env,
+          argv[3],
+          &frame_count,
+          "Frame count must be an unsigned integer.") ||
+      !get_int32(env, argv[5], &loop_count, "Loop count must be an integer.") ||
+      !get_uint32(
+          env,
+          argv[6],
+          &alpha_threshold,
+          "Alpha threshold must be an unsigned integer.")) {
+    return NULL;
+  }
+  if (width > UINT16_MAX || height > UINT16_MAX) {
+    return throw_error(env, "Width and height must fit in 16 bits.");
+  }
+  if (alpha_threshold > UINT8_MAX) {
+    return throw_error(env, "Alpha threshold must fit in 8 bits.");
+  }
+
+  void *delay_data = NULL;
+  size_t delay_length = 0;
+  if (!get_typed_array(
+          env,
+          argv[4],
+          napi_uint16_array,
+          &delay_data,
+          &delay_length,
+          "Delays must be a Uint16Array.")) {
+    return NULL;
+  }
+
+  NativeEncodedGif encoded = {0};
+  if (!wtfgif_encode_rgba_quality(
+          (const uint8_t *)rgba_data,
+          rgba_length,
+          (uint16_t)width,
+          (uint16_t)height,
+          frame_count,
+          (const uint16_t *)delay_data,
+          delay_length,
+          loop_count,
+          (uint8_t)alpha_threshold,
+          &encoded)) {
+    return throw_error(
+        env,
+        "Native quality encoder rejected invalid RGBA input.");
+  }
+
+  EncodedBufferHint *hint = malloc(sizeof(*hint));
+  if (hint == NULL) {
+    wtfgif_free_bytes(encoded.bytes, encoded.byte_len, encoded.byte_capacity);
+    return throw_error(env, "Could not allocate encoded GIF owner.");
+  }
+  hint->byte_len = encoded.byte_len;
+  hint->byte_capacity = encoded.byte_capacity;
+  napi_value output;
+  if (napi_create_external_buffer(
+          env,
+          encoded.byte_len,
+          encoded.bytes,
+          finalize_bytes,
+          hint,
+          &output) != napi_ok) {
+    wtfgif_free_bytes(
+        encoded.bytes,
+        encoded.byte_len,
+        encoded.byte_capacity);
+    free(hint);
+    return throw_error(env, "Could not expose encoded GIF buffer.");
+  }
+  return output;
+}
+
 static napi_value encode_indexed_fast(
     napi_env env,
     napi_callback_info info) {
@@ -1056,6 +1325,109 @@ static napi_value encode_indexed_fast(
           deltas,
           &encoded)) {
     return throw_error(env, "Native exact encoder rejected indexed input.");
+  }
+
+  EncodedBufferHint *hint = malloc(sizeof(*hint));
+  if (hint == NULL) {
+    wtfgif_free_bytes(encoded.bytes, encoded.byte_len, encoded.byte_capacity);
+    return throw_error(env, "Could not allocate encoded GIF owner.");
+  }
+  hint->byte_len = encoded.byte_len;
+  hint->byte_capacity = encoded.byte_capacity;
+  napi_value output;
+  if (napi_create_external_buffer(
+          env,
+          encoded.byte_len,
+          encoded.bytes,
+          finalize_bytes,
+          hint,
+          &output) != napi_ok) {
+    wtfgif_free_bytes(encoded.bytes, encoded.byte_len, encoded.byte_capacity);
+    free(hint);
+    return throw_error(env, "Could not expose encoded GIF buffer.");
+  }
+  return output;
+}
+
+static napi_value encode_indexed_balanced(
+    napi_env env,
+    napi_callback_info info) {
+  size_t argc = 8;
+  napi_value argv[8];
+  if (napi_get_cb_info(env, info, &argc, argv, NULL, NULL) != napi_ok ||
+      argc != 8) {
+    return throw_error(
+        env,
+        "encodeIndexedBalanced expects indices, width, height, frame count, palette, delays, loop count, and delta mode.");
+  }
+
+  void *index_data = NULL;
+  size_t index_length = 0;
+  if (!get_uint8_input(
+          env,
+          argv[0],
+          &index_data,
+          &index_length,
+          "Indexed input must be a Buffer or Uint8Array.")) {
+    return NULL;
+  }
+
+  uint32_t width;
+  uint32_t height;
+  uint32_t frame_count;
+  int32_t loop_count;
+  int32_t deltas;
+  if (!get_uint32(env, argv[1], &width, "Width must be an unsigned integer.") ||
+      !get_uint32(env, argv[2], &height, "Height must be an unsigned integer.") ||
+      !get_uint32(
+          env,
+          argv[3],
+          &frame_count,
+          "Frame count must be an unsigned integer.") ||
+      !get_int32(env, argv[6], &loop_count, "Loop count must be an integer.") ||
+      !get_bool(env, argv[7], &deltas, "Delta mode must be a boolean.")) {
+    return NULL;
+  }
+  if (width > UINT16_MAX || height > UINT16_MAX) {
+    return throw_error(env, "Width and height must fit in 16 bits.");
+  }
+
+  void *palette_data = NULL;
+  size_t palette_length = 0;
+  void *delay_data = NULL;
+  size_t delay_length = 0;
+  if (!get_typed_array(
+          env,
+          argv[4],
+          napi_uint32_array,
+          &palette_data,
+          &palette_length,
+          "Palette must be a Uint32Array.") ||
+      !get_typed_array(
+          env,
+          argv[5],
+          napi_uint16_array,
+          &delay_data,
+          &delay_length,
+          "Delays must be a Uint16Array.")) {
+    return NULL;
+  }
+
+  NativeEncodedGif encoded = {0};
+  if (!wtfgif_encode_indexed_balanced(
+          (const uint8_t *)index_data,
+          index_length,
+          (uint16_t)width,
+          (uint16_t)height,
+          frame_count,
+          (const uint32_t *)palette_data,
+          palette_length,
+          (const uint16_t *)delay_data,
+          delay_length,
+          loop_count,
+          deltas,
+          &encoded)) {
+    return throw_error(env, "Native balanced encoder rejected indexed input.");
   }
 
   EncodedBufferHint *hint = malloc(sizeof(*hint));
@@ -1196,12 +1568,36 @@ static napi_value initialize(napi_env env, napi_value exports) {
   napi_set_named_property(env, exports, "encodeRgbaFast", function);
   napi_create_function(
       env,
+      "encodeRgbaBalanced",
+      NAPI_AUTO_LENGTH,
+      encode_rgba_balanced,
+      NULL,
+      &function);
+  napi_set_named_property(env, exports, "encodeRgbaBalanced", function);
+  napi_create_function(
+      env,
+      "encodeRgbaQuality",
+      NAPI_AUTO_LENGTH,
+      encode_rgba_quality,
+      NULL,
+      &function);
+  napi_set_named_property(env, exports, "encodeRgbaQuality", function);
+  napi_create_function(
+      env,
       "encodeIndexedFast",
       NAPI_AUTO_LENGTH,
       encode_indexed_fast,
       NULL,
       &function);
   napi_set_named_property(env, exports, "encodeIndexedFast", function);
+  napi_create_function(
+      env,
+      "encodeIndexedBalanced",
+      NAPI_AUTO_LENGTH,
+      encode_indexed_balanced,
+      NULL,
+      &function);
+  napi_set_named_property(env, exports, "encodeIndexedBalanced", function);
   napi_create_function(
       env,
       "reencodeGifFast",

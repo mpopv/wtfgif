@@ -146,6 +146,25 @@ export function encodeIndexedGifFrames(
 			options.delta === true,
 		);
 	}
+	if (!fastCompression && nativeAddon?.encodeIndexedBalanced) {
+		const flatFrames = flattenIndexedFrames(
+			options.frames,
+			frameSize,
+			frameCount,
+			colorCount,
+			false,
+		);
+		return nativeAddon.encodeIndexedBalanced(
+			flatFrames,
+			width,
+			height,
+			frameCount,
+			paletteToUint32Array(options.palette),
+			delayArray(delays, frameCount),
+			loop === null ? -1 : loop,
+			options.delta === true,
+		);
+	}
 	if (typeof delays === "number") {
 		const encodeIndexedGif = fastCompression
 			? options.delta
@@ -289,6 +308,54 @@ export function encodeRgbaGifFrames(
 	if ((backend === "rust" || backend === "wasm") && !nativeAddon && !wasmCore) {
 		throw new Error(
 			"Fast Rust backend unavailable. Initialize WebAssembly or install the native addon before encoding.",
+		);
+	}
+	const useNativeQualityEncoder =
+		useAdvancedEncoder &&
+		fastCompression &&
+		quantization === "quality" &&
+		paletteMode === "global" &&
+		options.palette === undefined &&
+		options.delta !== true &&
+		nativeAddon?.encodeRgbaQuality !== undefined;
+	if (useNativeQualityEncoder) {
+		const rgbaFrames = flattenRgbaFrames(
+			options.frames,
+			frameByteSize,
+			frameCount,
+		);
+		return nativeAddon!.encodeRgbaQuality!(
+			rgbaFrames,
+			width,
+			height,
+			frameCount,
+			delayArray(delays, frameCount),
+			loop === null ? -1 : loop,
+			alphaThreshold,
+		);
+	}
+	const useNativeBalancedEncoder =
+		!fastCompression &&
+		useAdvancedEncoder &&
+		paletteMode === "global" &&
+		nativeAddon?.encodeRgbaBalanced !== undefined;
+	if (useNativeBalancedEncoder) {
+		const rgbaFrames = flattenRgbaFrames(
+			options.frames,
+			frameByteSize,
+			frameCount,
+		);
+		return nativeAddon!.encodeRgbaBalanced!(
+			rgbaFrames,
+			width,
+			height,
+			frameCount,
+			paletteToUint32Array(options.palette ?? EMPTY_PALETTE),
+			delayArray(delays, frameCount),
+			loop === null ? -1 : loop,
+			options.delta === true,
+			alphaThreshold,
+			quantizationCode(quantization),
 		);
 	}
 	const useSpecializedQualityEncoder =

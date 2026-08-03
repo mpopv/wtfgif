@@ -82,6 +82,9 @@ const COMPOSITED_DELTA_MAGIC: u32 = 0x3144_4757;
 const COMPOSITED_DELTA_VERSION: u32 = 1;
 const COMPOSITED_DELTA_HEADER_LEN: usize = 4;
 const COMPOSITED_DELTA_ENTRY_LEN: usize = 9;
+// The dictionary key is `(previous_code * color_count) + next_pixel`. The
+// previous code can grow to 4095, so the full 256-color table needs 2^20
+// slots; smaller palettes can use a proportionally smaller direct table.
 const LZW_DIRECT_ENTRY_COUNT: usize = 1 << 20;
 const LZW_ENTRY_CODE_MASK: u32 = 0x0fff;
 const LZW_ENTRY_EPOCH_SHIFT: u32 = 12;
@@ -380,6 +383,125 @@ pub unsafe extern "C" fn wtfgif_encode_rgba_fast(
 
 #[cfg(not(target_arch = "wasm32"))]
 #[no_mangle]
+pub unsafe extern "C" fn wtfgif_encode_rgba_quality(
+    rgba_stream: *const u8,
+    rgba_len: usize,
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    delays: *const u16,
+    delay_count: usize,
+    loop_count: i32,
+    alpha_threshold: u8,
+    encoded: *mut NativeEncodedGif,
+) -> i32 {
+    if rgba_stream.is_null() || encoded.is_null() || (delay_count != 0 && delays.is_null()) {
+        return 0;
+    }
+
+    let rgba_stream = std::slice::from_raw_parts(rgba_stream, rgba_len);
+    let delays = if delay_count == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(delays, delay_count)
+    };
+    let Ok(mut bytes) = encode_rgba_quality_gif_inner_with_output(
+        rgba_stream,
+        width,
+        height,
+        frame_count,
+        delays,
+        loop_count,
+        alpha_threshold,
+        Vec::new(),
+    ) else {
+        return 0;
+    };
+
+    let byte_len = bytes.len();
+    let byte_capacity = bytes.capacity();
+    let bytes_ptr = bytes.as_mut_ptr();
+    std::mem::forget(bytes);
+    encoded.write(NativeEncodedGif {
+        bytes: bytes_ptr,
+        byte_len,
+        byte_capacity,
+    });
+    1
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub unsafe extern "C" fn wtfgif_encode_rgba_balanced(
+    rgba_stream: *const u8,
+    rgba_len: usize,
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    palette_rgb: *const u32,
+    palette_len: usize,
+    delays: *const u16,
+    delay_count: usize,
+    loop_count: i32,
+    deltas: i32,
+    alpha_threshold: u8,
+    quantization: u8,
+    encoded: *mut NativeEncodedGif,
+) -> i32 {
+    if rgba_stream.is_null()
+        || encoded.is_null()
+        || (palette_len != 0 && palette_rgb.is_null())
+        || (delay_count != 0 && delays.is_null())
+    {
+        return 0;
+    }
+
+    let Ok(quantization) = RgbaQuantization::from_u8(quantization) else {
+        return 0;
+    };
+    let rgba_stream = std::slice::from_raw_parts(rgba_stream, rgba_len);
+    let palette_rgb = if palette_len == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(palette_rgb, palette_len)
+    };
+    let delays = if delay_count == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(delays, delay_count)
+    };
+    let result = encode_rgba_gif_advanced_inner(
+        rgba_stream,
+        width,
+        height,
+        frame_count,
+        palette_rgb,
+        DelaySource::PerFrame(delays),
+        loop_count,
+        deltas != 0,
+        alpha_threshold,
+        false,
+        quantization,
+        RgbaPaletteMode::Global,
+    );
+    let Ok(mut bytes) = result else {
+        return 0;
+    };
+
+    let byte_len = bytes.len();
+    let byte_capacity = bytes.capacity();
+    let bytes_ptr = bytes.as_mut_ptr();
+    std::mem::forget(bytes);
+    encoded.write(NativeEncodedGif {
+        bytes: bytes_ptr,
+        byte_len,
+        byte_capacity,
+    });
+    1
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
 pub unsafe extern "C" fn wtfgif_encode_indexed_fast(
     index_stream: *const u8,
     index_len: usize,
@@ -413,6 +535,66 @@ pub unsafe extern "C" fn wtfgif_encode_indexed_fast(
         )
     } else {
         encode_indexed_literal_gif_inner(
+            index_stream,
+            width,
+            height,
+            frame_count,
+            palette_rgb,
+            delay_source,
+            loop_count,
+            None,
+        )
+    };
+    let Ok(mut bytes) = result else {
+        return 0;
+    };
+    let byte_len = bytes.len();
+    let byte_capacity = bytes.capacity();
+    let bytes_ptr = bytes.as_mut_ptr();
+    std::mem::forget(bytes);
+    encoded.write(NativeEncodedGif {
+        bytes: bytes_ptr,
+        byte_len,
+        byte_capacity,
+    });
+    1
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub unsafe extern "C" fn wtfgif_encode_indexed_balanced(
+    index_stream: *const u8,
+    index_len: usize,
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    palette_rgb: *const u32,
+    palette_len: usize,
+    delays: *const u16,
+    delay_count: usize,
+    loop_count: i32,
+    deltas: i32,
+    encoded: *mut NativeEncodedGif,
+) -> i32 {
+    if index_stream.is_null() || encoded.is_null() || palette_rgb.is_null() || delays.is_null() {
+        return 0;
+    }
+    let index_stream = std::slice::from_raw_parts(index_stream, index_len);
+    let palette_rgb = std::slice::from_raw_parts(palette_rgb, palette_len);
+    let delays = std::slice::from_raw_parts(delays, delay_count);
+    let delay_source = DelaySource::PerFrame(delays);
+    let result = if deltas != 0 {
+        encode_indexed_delta_gif_inner(
+            index_stream,
+            width,
+            height,
+            frame_count,
+            palette_rgb,
+            delay_source,
+            loop_count,
+        )
+    } else {
+        encode_indexed_gif_inner(
             index_stream,
             width,
             height,
@@ -837,7 +1019,9 @@ pub fn encode_indexed_literal_gif_scratch_from_input(
     let input_ptr = REUSABLE_LZW_SCRATCH.with(|scratch| {
         let scratch = scratch.borrow();
         if length > scratch.input.len() * std::mem::size_of::<AlignedByte>() {
-            return Err(JsValue::from_str("Indexed input scratch buffer is too short"));
+            return Err(JsValue::from_str(
+                "Indexed input scratch buffer is too short",
+            ));
         }
         Ok(scratch.input.as_ptr().cast::<u8>())
     })?;
@@ -1585,10 +1769,7 @@ impl WtfGifCore {
     }
 
     pub fn composited_scratch_ptr(&self) -> usize {
-        self.decode_scratch
-            .borrow()
-            .composited_output
-            .as_ptr() as usize
+        self.decode_scratch.borrow().composited_output.as_ptr() as usize
     }
 
     pub fn prepare_composited_delta_rgba(
@@ -1615,6 +1796,41 @@ impl WtfGifCore {
             PixelFormat::Bgra,
         )
         .map_err(|message| JsValue::from_str(&message))
+    }
+
+    /// Prepare composited delta frames in Wasm-owned scratch storage. The
+    /// returned length refers to `composited_scratch_ptr()` and avoids copying
+    /// the delta stream through a wasm-bindgen return value.
+    pub fn prepare_composited_delta_rgba_scratch(
+        &self,
+        requested_frames: &[u8],
+    ) -> Result<usize, JsValue> {
+        let prepared = prepare_composited_delta_frames_inner(
+            &self.data,
+            &self.metadata,
+            requested_frames,
+            PixelFormat::Rgba,
+        )
+        .map_err(|message| JsValue::from_str(&message))?;
+        let length = prepared.len();
+        self.decode_scratch.borrow_mut().composited_output = prepared;
+        Ok(length)
+    }
+
+    pub fn prepare_composited_delta_bgra_scratch(
+        &self,
+        requested_frames: &[u8],
+    ) -> Result<usize, JsValue> {
+        let prepared = prepare_composited_delta_frames_inner(
+            &self.data,
+            &self.metadata,
+            requested_frames,
+            PixelFormat::Bgra,
+        )
+        .map_err(|message| JsValue::from_str(&message))?;
+        let length = prepared.len();
+        self.decode_scratch.borrow_mut().composited_output = prepared;
+        Ok(length)
     }
 }
 
@@ -2456,18 +2672,20 @@ fn prepare_composited_frames_selected(
             palette_storage = build_palette_u32(data, frame, format)?;
             &palette_storage
         };
-        let indices = {
-            decode_frame_indices_reusing_output(
-                data,
-                frame,
-                &mut image_data,
-                &mut lzw_scratch,
-                &mut indices_scratch,
-            )?;
-            &indices_scratch
-        };
-
-        blit_indices_to_canvas_u32(palette, metadata.width, frame, indices, &mut canvas)?;
+        decode_frame_indices_reusing_output(
+            data,
+            frame,
+            &mut image_data,
+            &mut lzw_scratch,
+            &mut indices_scratch,
+        )?;
+        blit_indices_to_canvas_u32(
+            palette,
+            metadata.width,
+            frame,
+            &indices_scratch,
+            &mut canvas,
+        )?;
 
         if requested != 0 {
             output.extend_from_slice(&canvas);
@@ -4726,13 +4944,33 @@ fn find_changed_rect_u32(
 
     let mut left = width - 1;
     let mut right = 0usize;
+    let previous_pointer = previous.as_ptr();
+    let current_pointer = current.as_ptr();
     for y in top..=bottom {
         let row = y * width;
-        for x in 0..width {
+        let mut x = 0usize;
+        while x + 2 <= width {
+            let previous_word =
+                unsafe { std::ptr::read_unaligned(previous_pointer.add(row + x).cast::<u64>()) };
+            let current_word =
+                unsafe { std::ptr::read_unaligned(current_pointer.add(row + x).cast::<u64>()) };
+            if previous_word != current_word {
+                for offset in 0..2 {
+                    if previous[row + x + offset] != current[row + x + offset] {
+                        let changed = x + offset;
+                        left = left.min(changed);
+                        right = right.max(changed);
+                    }
+                }
+            }
+            x += 2;
+        }
+        while x < width {
             if previous[row + x] != current[row + x] {
                 left = left.min(x);
                 right = right.max(x);
             }
+            x += 1;
         }
     }
 
@@ -4744,45 +4982,64 @@ fn find_changed_rect_u32(
     })
 }
 
+#[inline(always)]
 fn find_changed_rect_u8(
     previous: &[u8],
     current: &[u8],
     width: usize,
     height: usize,
 ) -> Option<ChangedRectU32> {
-    let mut top = 0usize;
-    let mut bottom = height.saturating_sub(1);
-
-    while top < height {
-        let row = top * width;
-        if previous[row..row + width] != current[row..row + width] {
-            break;
+    let mut top = height;
+    let mut bottom = 0usize;
+    let mut left = width;
+    let mut right = 0usize;
+    let previous_pointer = previous.as_ptr();
+    let current_pointer = current.as_ptr();
+    for y in 0..height {
+        let row = y * width;
+        let previous_row = &previous[row..row + width];
+        let current_row = &current[row..row + width];
+        if previous_row == current_row {
+            continue;
         }
-        top += 1;
+        let mut row_left = width;
+        let mut row_right = 0usize;
+        let mut x = 0usize;
+        while x + 8 <= width {
+            let previous_word =
+                unsafe { std::ptr::read_unaligned(previous_pointer.add(row + x).cast::<u64>()) };
+            let current_word =
+                unsafe { std::ptr::read_unaligned(current_pointer.add(row + x).cast::<u64>()) };
+            if previous_word != current_word {
+                for offset in 0..8 {
+                    if previous[row + x + offset] != current[row + x + offset] {
+                        let changed = x + offset;
+                        row_left = row_left.min(changed);
+                        row_right = row_right.max(changed);
+                    }
+                }
+            }
+            x += 8;
+        }
+        while x < width {
+            if previous[row + x] != current[row + x] {
+                row_left = row_left.min(x);
+                row_right = row_right.max(x);
+            }
+            x += 1;
+        }
+        if row_left < width {
+            if top == height {
+                top = y;
+            }
+            bottom = y;
+            left = left.min(row_left);
+            right = right.max(row_right);
+        }
     }
 
     if top == height {
         return None;
-    }
-
-    while bottom > top {
-        let row = bottom * width;
-        if previous[row..row + width] != current[row..row + width] {
-            break;
-        }
-        bottom -= 1;
-    }
-
-    let mut left = width - 1;
-    let mut right = 0usize;
-    for y in top..=bottom {
-        let row = y * width;
-        for x in 0..width {
-            if previous[row + x] != current[row + x] {
-                left = left.min(x);
-                right = right.max(x);
-            }
-        }
     }
 
     Some(ChangedRectU32 {
@@ -4793,44 +5050,82 @@ fn find_changed_rect_u8(
     })
 }
 
+#[allow(dead_code)]
 fn find_changed_rect_rgba_rgb(
     previous: &[u8],
     current: &[u8],
     width: usize,
     height: usize,
 ) -> Option<ChangedRectU32> {
-    let mut top = 0usize;
-    let mut bottom = height.saturating_sub(1);
-
-    while top < height {
-        if rgba_rgb_row_changed(previous, current, top, width) {
-            break;
+    let mut top = height;
+    let mut bottom = 0usize;
+    let mut left = width;
+    let mut right = 0usize;
+    for y in 0..height {
+        let row = y * width * 4;
+        let mut row_left = width;
+        let mut row_right = 0usize;
+        let quad_end = width & !3;
+        let mut x = 0usize;
+        while x < quad_end {
+            let offset = row + x * 4;
+            let difference = rgba_rgb_quad_difference(previous, current, offset);
+            if difference != 0 {
+                const PIXEL_MASK: u128 = 0x00ff_ffff;
+                if difference & PIXEL_MASK != 0 {
+                    row_left = row_left.min(x);
+                    row_right = row_right.max(x);
+                }
+                if (difference >> 32) & PIXEL_MASK != 0 {
+                    row_left = row_left.min(x + 1);
+                    row_right = row_right.max(x + 1);
+                }
+                if (difference >> 64) & PIXEL_MASK != 0 {
+                    row_left = row_left.min(x + 2);
+                    row_right = row_right.max(x + 2);
+                }
+                if (difference >> 96) & PIXEL_MASK != 0 {
+                    row_left = row_left.min(x + 3);
+                    row_right = row_right.max(x + 3);
+                }
+            }
+            x += 4;
         }
-        top += 1;
+        let pair_end = width & !1;
+        while x < pair_end {
+            let offset = row + x * 4;
+            let difference = rgba_rgb_pair_difference(previous, current, offset);
+            if difference != 0 {
+                if difference & 0x00ff_ffff != 0 {
+                    row_left = row_left.min(x);
+                    row_right = row_right.max(x);
+                }
+                if difference & 0x00ff_ffff_0000_0000 != 0 {
+                    row_left = row_left.min(x + 1);
+                    row_right = row_right.max(x + 1);
+                }
+            }
+            x += 2;
+        }
+        if x < width {
+            let offset = row + x * 4;
+            if rgba_rgb_pixel_changed(previous, current, offset) {
+                row_left = row_left.min(x);
+                row_right = row_right.max(x);
+            }
+        }
+        if row_left < width {
+            if top == height {
+                top = y;
+            }
+            bottom = y;
+            left = left.min(row_left);
+            right = right.max(row_right);
+        }
     }
 
     if top == height {
         return None;
-    }
-
-    while bottom > top {
-        if rgba_rgb_row_changed(previous, current, bottom, width) {
-            break;
-        }
-        bottom -= 1;
-    }
-
-    let mut left = width - 1;
-    let mut right = 0usize;
-    for y in top..=bottom {
-        let row = y * width * 4;
-        for x in 0..width {
-            let offset = row + x * 4;
-            if rgba_rgb_pixel_changed(previous, current, offset) {
-                left = left.min(x);
-                right = right.max(x);
-            }
-        }
     }
 
     Some(ChangedRectU32 {
@@ -4841,17 +5136,222 @@ fn find_changed_rect_rgba_rgb(
     })
 }
 
-fn rgba_rgb_row_changed(previous: &[u8], current: &[u8], y: usize, width: usize) -> bool {
-    let row = y * width * 4;
-    for x in 0..width {
-        let offset = row + x * 4;
-        if rgba_rgb_pixel_changed(previous, current, offset) {
-            return true;
+#[inline(always)]
+fn find_changed_rect_rgba_bytes(
+    previous: &[u8],
+    current: &[u8],
+    width: usize,
+    height: usize,
+) -> Option<ChangedRectU32> {
+    let row_bytes = width * 4;
+    let mut top = height;
+    let mut bottom = 0usize;
+    let mut left = width;
+    let mut right = 0usize;
+    for y in 0..height {
+        let row = y * row_bytes;
+        let previous_row = &previous[row..row + row_bytes];
+        let current_row = &current[row..row + row_bytes];
+        if previous_row == current_row {
+            continue;
+        }
+
+        let mut row_left = width;
+        let mut row_right = 0usize;
+        let previous_pointer = previous_row.as_ptr();
+        let current_pointer = current_row.as_ptr();
+        let pair_end = width & !1;
+        let mut x = 0usize;
+        while x < pair_end {
+            let offset = x * 4;
+            let difference = unsafe {
+                u64::from_le(std::ptr::read_unaligned(
+                    previous_pointer.add(offset) as *const u64
+                )) ^ u64::from_le(std::ptr::read_unaligned(
+                    current_pointer.add(offset) as *const u64
+                ))
+            };
+            if difference != 0 {
+                if difference & 0xffff_ffff != 0 {
+                    row_left = row_left.min(x);
+                    row_right = row_right.max(x);
+                }
+                if difference >> 32 != 0 {
+                    row_left = row_left.min(x + 1);
+                    row_right = row_right.max(x + 1);
+                }
+            }
+            x += 2;
+        }
+        if x < width {
+            let offset = x * 4;
+            let difference = unsafe {
+                u32::from_le(std::ptr::read_unaligned(
+                    previous_pointer.add(offset) as *const u32
+                )) ^ u32::from_le(std::ptr::read_unaligned(
+                    current_pointer.add(offset) as *const u32
+                ))
+            };
+            if difference != 0 {
+                row_left = row_left.min(x);
+                row_right = row_right.max(x);
+            }
+        }
+        if row_left < width {
+            if top == height {
+                top = y;
+            }
+            bottom = y;
+            left = left.min(row_left);
+            right = right.max(row_right);
         }
     }
-    false
+
+    if top == height {
+        return None;
+    }
+
+    Some(ChangedRectU32 {
+        x: left,
+        y: top,
+        width: right - left + 1,
+        height: bottom - top + 1,
+    })
 }
 
+#[allow(dead_code)]
+fn find_changed_rect_rgba_opaque(
+    previous: &[u8],
+    current: &[u8],
+    width: usize,
+    height: usize,
+) -> Option<ChangedRectU32> {
+    let mut top = height;
+    let mut bottom = 0usize;
+    let mut left = width;
+    let mut right = 0usize;
+    for y in 0..height {
+        let row = y * width * 4;
+        let mut row_left = width;
+        let mut row_right = 0usize;
+        let quad_end = width & !3;
+        let mut x = 0usize;
+        while x < quad_end {
+            let offset = row + x * 4;
+            let difference = unsafe {
+                u128::from_le(std::ptr::read_unaligned(
+                    previous.as_ptr().add(offset) as *const u128
+                )) ^ u128::from_le(std::ptr::read_unaligned(
+                    current.as_ptr().add(offset) as *const u128
+                ))
+            };
+            if difference != 0 {
+                if difference & 0xffff_ffff != 0 {
+                    row_left = row_left.min(x);
+                    row_right = row_right.max(x);
+                }
+                if (difference >> 32) & 0xffff_ffff != 0 {
+                    row_left = row_left.min(x + 1);
+                    row_right = row_right.max(x + 1);
+                }
+                if (difference >> 64) & 0xffff_ffff != 0 {
+                    row_left = row_left.min(x + 2);
+                    row_right = row_right.max(x + 2);
+                }
+                if (difference >> 96) & 0xffff_ffff != 0 {
+                    row_left = row_left.min(x + 3);
+                    row_right = row_right.max(x + 3);
+                }
+            }
+            x += 4;
+        }
+        while x + 2 <= width {
+            let offset = row + x * 4;
+            let difference = unsafe {
+                u64::from_le(std::ptr::read_unaligned(
+                    previous.as_ptr().add(offset) as *const u64
+                )) ^ u64::from_le(std::ptr::read_unaligned(
+                    current.as_ptr().add(offset) as *const u64
+                ))
+            };
+            if difference != 0 {
+                if difference & 0xffff_ffff != 0 {
+                    row_left = row_left.min(x);
+                    row_right = row_right.max(x);
+                }
+                if difference >> 32 != 0 {
+                    row_left = row_left.min(x + 1);
+                    row_right = row_right.max(x + 1);
+                }
+            }
+            x += 2;
+        }
+        while x < width {
+            let offset = row + x * 4;
+            let difference = unsafe {
+                u32::from_le(std::ptr::read_unaligned(
+                    previous.as_ptr().add(offset) as *const u32
+                )) ^ u32::from_le(std::ptr::read_unaligned(
+                    current.as_ptr().add(offset) as *const u32
+                ))
+            };
+            if difference != 0 {
+                row_left = row_left.min(x);
+                row_right = row_right.max(x);
+            }
+            x += 1;
+        }
+        if row_left < width {
+            if top == height {
+                top = y;
+            }
+            bottom = y;
+            left = left.min(row_left);
+            right = right.max(row_right);
+        }
+    }
+
+    if top == height {
+        return None;
+    }
+
+    Some(ChangedRectU32 {
+        x: left,
+        y: top,
+        width: right - left + 1,
+        height: bottom - top + 1,
+    })
+}
+
+#[allow(dead_code)]
+#[inline]
+fn rgba_rgb_pair_difference(previous: &[u8], current: &[u8], offset: usize) -> u64 {
+    let previous_pair =
+        unsafe { std::ptr::read_unaligned(previous.as_ptr().add(offset) as *const u64) };
+    let current_pair =
+        unsafe { std::ptr::read_unaligned(current.as_ptr().add(offset) as *const u64) };
+    // Two little-endian RGBA pixels: ignore bytes 3 and 7 (alpha).
+    (previous_pair ^ current_pair) & 0x00ff_ffff_00ff_ffff
+}
+
+#[allow(dead_code)]
+#[inline]
+fn rgba_rgb_quad_difference(previous: &[u8], current: &[u8], offset: usize) -> u128 {
+    let previous_quad = unsafe {
+        u128::from_le(std::ptr::read_unaligned(
+            previous.as_ptr().add(offset) as *const u128
+        ))
+    };
+    let current_quad = unsafe {
+        u128::from_le(std::ptr::read_unaligned(
+            current.as_ptr().add(offset) as *const u128
+        ))
+    };
+    // Four little-endian RGBA pixels: ignore every fourth byte (alpha).
+    (previous_quad ^ current_quad) & 0x00ff_ffff_00ff_ffff_00ff_ffff_00ff_ffffu128
+}
+
+#[allow(dead_code)]
 #[inline]
 fn rgba_rgb_pixel_changed(previous: &[u8], current: &[u8], offset: usize) -> bool {
     // Wasm memory is little-endian, so RGBA bytes become 0xAABBGGRR.
@@ -4909,7 +5409,6 @@ impl ColorIndexTable {
             self.values.resize(capacity, 0);
         } else {
             self.keys.fill(COLOR_INDEX_EMPTY);
-            self.values.fill(0);
         }
         self.mask = capacity - 1;
     }
@@ -5067,6 +5566,32 @@ fn encode_rgba_gif_advanced_inner_with_output(
             literal,
             quantization,
         );
+    }
+
+    // With a caller-supplied global palette, quantization is only a per-pixel
+    // palette lookup. For delta output we can find the changed rectangle in
+    // the source RGB stream first and map only the pixels that will actually
+    // be written. This avoids materializing and scanning a full indexed copy
+    // of every frame while preserving the nearest-palette and exact-palette
+    // semantics below.
+    if deltas && !palette_rgb.is_empty() && quantization != RgbaQuantization::Exact {
+        match encode_rgba_delta_gif_to_palette_inner(
+            rgba_stream,
+            width,
+            height,
+            frame_count,
+            palette_rgb,
+            delays,
+            loop_count,
+            literal,
+            alpha_threshold,
+            quantization == RgbaQuantization::Exact,
+            false,
+        ) {
+            Ok(encoded) => return Ok(encoded),
+            Err(message) if message == RGBA_DELTA_FALLBACK => {}
+            Err(message) => return Err(message),
+        }
     }
 
     let (palette, indexed, transparent_index) = index_rgba_frames_with_quantization(
@@ -5557,11 +6082,41 @@ fn encode_rgba_gif_inner(
         return Err("RGBA frame stream length does not match dimensions".to_string());
     }
 
-    if deltas
-        && !palette_rgb.is_empty()
-        && !rgba_stream_has_transparent_pixels(rgba_stream, alpha_threshold)
-    {
-        return encode_rgba_delta_gif_to_palette_inner(
+    // A supplied 256-color palette with opaque input is the common known-
+    // palette path. Map directly into the literal LZW stream so we do not
+    // materialize an intermediate indexed frame and then scan it again.
+    // This preserves the exact-palette contract of the existing literal path.
+    if literal && !deltas && palette_rgb.len() == 256 && rgba_stream_is_opaque(rgba_stream) {
+        return encode_rgba_literal_gif_to_palette_inner(
+            rgba_stream,
+            width,
+            height,
+            frame_count,
+            palette_rgb,
+            delays,
+            loop_count,
+        );
+    }
+
+    if literal && !deltas && (9..=16).contains(&palette_rgb.len()) {
+        match encode_rgba_sixteen_color_literal_gif_inner(
+            rgba_stream,
+            width,
+            height,
+            frame_count,
+            palette_rgb,
+            delays,
+            loop_count,
+            alpha_threshold,
+        ) {
+            Ok(encoded) => return Ok(encoded),
+            Err(message) if message == RGBA_DELTA_FALLBACK => {}
+            Err(message) => return Err(message),
+        }
+    }
+
+    if deltas && !palette_rgb.is_empty() {
+        match encode_rgba_delta_gif_to_palette_inner(
             rgba_stream,
             width,
             height,
@@ -5570,7 +6125,14 @@ fn encode_rgba_gif_inner(
             delays,
             loop_count,
             literal,
-        );
+            alpha_threshold,
+            true,
+            true,
+        ) {
+            Ok(encoded) => return Ok(encoded),
+            Err(message) if message == RGBA_DELTA_FALLBACK => {}
+            Err(message) => return Err(message),
+        }
     }
 
     let (palette, indexed, transparent_index) =
@@ -5601,7 +6163,7 @@ fn encode_rgba_gif_inner(
     )
 }
 
-fn encode_rgba_delta_gif_to_palette_inner(
+fn encode_rgba_literal_gif_to_palette_inner(
     rgba_stream: &[u8],
     width: u16,
     height: u16,
@@ -5609,7 +6171,165 @@ fn encode_rgba_delta_gif_to_palette_inner(
     palette_rgb: &[u32],
     delays: DelaySource<'_>,
     loop_count: i32,
-    literal: bool,
+) -> Result<Vec<u8>, String> {
+    let frame_pixels = usize::from(width)
+        .checked_mul(usize::from(height))
+        .ok_or_else(|| "Frame size overflow".to_string())?;
+    let frame_bytes = frame_pixels
+        .checked_mul(4)
+        .ok_or_else(|| "RGBA frame size overflow".to_string())?;
+    let color_count = checked_palette_color_count(palette_rgb.len())?;
+    let min_code_size = (log2_pow2(color_count) as u8).max(2);
+    let lzw_length = literal_lzw_block_size(frame_pixels, min_code_size)?;
+    let frame_capacity = (0..frame_count).try_fold(0usize, |capacity, frame_index| {
+        capacity
+            .checked_add(10)
+            .and_then(|length| length.checked_add(usize::from(delays.get(frame_index) != 0) * 8))
+            .and_then(|length| length.checked_add(lzw_length))
+            .ok_or_else(|| "Encoded GIF size overflow".to_string())
+    })?;
+    let output_capacity = 13usize
+        .checked_add(color_count * 3)
+        .and_then(|length| length.checked_add(usize::from(loop_count >= 0) * 19))
+        .and_then(|length| length.checked_add(frame_capacity))
+        .and_then(|length| length.checked_add(1))
+        .ok_or_else(|| "Encoded GIF size overflow".to_string())?;
+    let mut output = Vec::with_capacity(output_capacity);
+    let mapper = PaletteMapper::new(palette_rgb);
+    write_indexed_gif_header(&mut output, width, height, palette_rgb, color_count);
+    write_loop_extension(&mut output, loop_count);
+
+    for (frame_index, frame) in rgba_stream.chunks_exact(frame_bytes).enumerate() {
+        write_indexed_gif_frame_header(
+            &mut output,
+            0,
+            0,
+            width,
+            height,
+            delays.get(frame_index),
+            None,
+            0,
+        );
+        debug_assert_eq!(min_code_size, 8);
+        encode_nine_bit_literal_lzw_palette_mapped_to(&mut output, frame, &mapper)?;
+    }
+    output.push(0x3b);
+    Ok(output)
+}
+
+fn encode_rgba_sixteen_color_literal_gif_inner(
+    rgba_stream: &[u8],
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    palette_rgb: &[u32],
+    delays: DelaySource<'_>,
+    loop_count: i32,
+    alpha_threshold: u8,
+) -> Result<Vec<u8>, String> {
+    delays.validate(frame_count)?;
+    let frame_pixels = usize::from(width)
+        .checked_mul(usize::from(height))
+        .ok_or_else(|| "Frame size overflow".to_string())?;
+    let frame_bytes = frame_pixels
+        .checked_mul(4)
+        .ok_or_else(|| "RGBA frame size overflow".to_string())?;
+    let color_count = checked_palette_color_count(palette_rgb.len())?;
+    if color_count != 16 {
+        return Err(RGBA_DELTA_FALLBACK.to_string());
+    }
+    let lzw_length = literal_lzw_block_size(frame_pixels, 4)?;
+    let frame_capacity = (0..frame_count).try_fold(0usize, |capacity, frame_index| {
+        capacity
+            .checked_add(10)
+            .and_then(|length| length.checked_add(usize::from(delays.get(frame_index) != 0) * 8))
+            .and_then(|length| length.checked_add(lzw_length))
+            .ok_or_else(|| "Encoded GIF size overflow".to_string())
+    })?;
+    let output_capacity = 13usize
+        .checked_add(color_count * 3)
+        .and_then(|length| length.checked_add(usize::from(loop_count >= 0) * 19))
+        .and_then(|length| length.checked_add(frame_capacity))
+        .and_then(|length| length.checked_add(1))
+        .ok_or_else(|| "Encoded GIF size overflow".to_string())?;
+    let mut output = Vec::with_capacity(output_capacity);
+    let mapper = PaletteMapper::new(palette_rgb);
+    write_indexed_gif_header(&mut output, width, height, palette_rgb, color_count);
+    write_loop_extension(&mut output, loop_count);
+    for (frame_index, frame) in rgba_stream.chunks_exact(frame_bytes).enumerate() {
+        write_indexed_gif_frame_header(
+            &mut output,
+            0,
+            0,
+            width,
+            height,
+            delays.get(frame_index),
+            None,
+            0,
+        );
+        encode_rgba_five_bit_literal_frame_to(
+            &mut output,
+            frame,
+            &mapper,
+            alpha_threshold,
+            true,
+            true,
+        )?;
+    }
+    output.push(0x3b);
+    Ok(output)
+}
+
+#[allow(dead_code)]
+fn rgba_alpha_invalid(rgba: &[u8], alpha_threshold: u8, exact_alpha: bool) -> bool {
+    if alpha_threshold == 0 && !exact_alpha {
+        return false;
+    }
+    let mut offset = 3usize;
+    while offset < rgba.len() {
+        let alpha = rgba[offset];
+        if alpha < alpha_threshold || (exact_alpha && alpha != 255) {
+            return true;
+        }
+        offset += 4;
+    }
+    false
+}
+
+fn rgba_rect_alpha_invalid(
+    rgba_stream: &[u8],
+    canvas_width: usize,
+    rect: ChangedRectU32,
+    alpha_threshold: u8,
+    exact_alpha: bool,
+) -> bool {
+    if alpha_threshold == 0 && !exact_alpha {
+        return false;
+    }
+    for row in 0..rect.height {
+        let start = ((rect.y + row) * canvas_width + rect.x) * 4 + 3;
+        let end = start + rect.width * 4;
+        let mut offset = start;
+        while offset < end {
+            let alpha = rgba_stream[offset];
+            if alpha < alpha_threshold || (exact_alpha && alpha != 255) {
+                return true;
+            }
+            offset += 4;
+        }
+    }
+    false
+}
+
+#[allow(dead_code)]
+fn encode_rgba_delta_gif_to_palette_indexed_compare_inner(
+    rgba_stream: &[u8],
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    palette_rgb: &[u32],
+    delays: DelaySource<'_>,
+    loop_count: i32,
 ) -> Result<Vec<u8>, String> {
     delays.validate(frame_count)?;
     let color_count = checked_palette_color_count(palette_rgb.len())?;
@@ -5630,8 +6350,107 @@ fn encode_rgba_delta_gif_to_palette_inner(
         13 + palette_bytes + 20 + frame_count.saturating_mul(estimated_frame_bytes) + 1,
     );
     let mapper = PaletteMapper::new(palette_rgb);
-    let mut lzw_tables = (!literal).then(LzwEncodeTables::new);
-    let mut mapped = Vec::with_capacity(frame_pixels);
+    let mut lzw_tables = LzwEncodeTables::new();
+    let mut previous_indices = Vec::with_capacity(frame_pixels);
+    let mut current_indices = Vec::with_capacity(frame_pixels);
+
+    write_indexed_gif_header(&mut output, width, height, palette_rgb, color_count);
+    write_loop_extension(&mut output, loop_count);
+
+    for (frame_index, frame) in rgba_stream.chunks_exact(frame_bytes).enumerate() {
+        map_rgba_frame_to_palette(frame, &mapper, &mut current_indices);
+        let delay = delays.get(frame_index);
+        if previous_indices.is_empty() {
+            write_indexed_gif_frame_header(&mut output, 0, 0, width, height, delay, None, 0);
+            encode_indexed_lzw_to_with_tables(
+                &mut output,
+                &current_indices,
+                min_code_size,
+                color_count,
+                &mut lzw_tables,
+            )?;
+        } else if let Some(rect) = find_changed_rect_u8(
+            &previous_indices,
+            &current_indices,
+            canvas_width,
+            canvas_height,
+        ) {
+            write_indexed_gif_frame_header(
+                &mut output,
+                rect.x as u16,
+                rect.y as u16,
+                rect.width as u16,
+                rect.height as u16,
+                delay,
+                None,
+                0,
+            );
+            encode_indexed_lzw_rect_to(
+                &mut output,
+                &current_indices,
+                rect.y * canvas_width + rect.x,
+                rect.width,
+                rect.height,
+                canvas_width,
+                min_code_size,
+                color_count,
+                &mut lzw_tables,
+            )?;
+        } else {
+            write_indexed_gif_frame_header(&mut output, 0, 0, 1, 1, delay, None, 0);
+            encode_indexed_literal_lzw_direct_to(
+                &mut output,
+                &current_indices[..1],
+                min_code_size,
+                color_count,
+            )?;
+        }
+        std::mem::swap(&mut previous_indices, &mut current_indices);
+    }
+
+    output.push(0x3b);
+    Ok(output)
+}
+
+const RGBA_DELTA_FALLBACK: &str = "RGBA delta palette path requires the general encoder";
+
+fn encode_rgba_delta_gif_to_palette_inner(
+    rgba_stream: &[u8],
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    palette_rgb: &[u32],
+    delays: DelaySource<'_>,
+    loop_count: i32,
+    literal: bool,
+    alpha_threshold: u8,
+    exact_alpha: bool,
+    exact_palette: bool,
+) -> Result<Vec<u8>, String> {
+    delays.validate(frame_count)?;
+    let color_count = checked_palette_color_count(palette_rgb.len())?;
+    let min_code_size = (log2_pow2(color_count) as u8).max(2);
+    let canvas_width = usize::from(width);
+    let canvas_height = usize::from(height);
+    let frame_pixels = canvas_width
+        .checked_mul(canvas_height)
+        .ok_or_else(|| "Frame size overflow".to_string())?;
+    let frame_bytes = frame_pixels
+        .checked_mul(4)
+        .ok_or_else(|| "RGBA frame size overflow".to_string())?;
+    let palette_bytes = color_count
+        .checked_mul(3)
+        .ok_or_else(|| "Palette size overflow".to_string())?;
+    let estimated_frame_bytes = frame_pixels / 8 + 48;
+    let mut output = Vec::with_capacity(
+        13 + palette_bytes + 20 + frame_count.saturating_mul(estimated_frame_bytes) + 1,
+    );
+    let mapper = PaletteMapper::new(palette_rgb);
+    let literal_small_palette = !literal && palette_rgb.len() <= 16;
+    let mut lzw_tables = (!literal && !literal_small_palette).then(LzwEncodeTables::new);
+    let mut mapped = (literal || literal_small_palette)
+        .then(|| Vec::with_capacity(frame_pixels))
+        .unwrap_or_default();
 
     write_indexed_gif_header(&mut output, width, height, palette_rgb, color_count);
     write_loop_extension(&mut output, loop_count);
@@ -5641,8 +6460,20 @@ fn encode_rgba_delta_gif_to_palette_inner(
         let delay = delays.get(frame_index);
         if let Some(previous) = previous_frame {
             if let Some(rect) =
-                find_changed_rect_rgba_rgb(previous, frame, canvas_width, canvas_height)
+                find_changed_rect_rgba_bytes(previous, frame, canvas_width, canvas_height)
             {
+                let direct_two_bit = literal_small_palette && color_count <= 4;
+                if !direct_two_bit
+                    && rgba_rect_alpha_invalid(
+                        frame,
+                        canvas_width,
+                        rect,
+                        alpha_threshold,
+                        exact_alpha,
+                    )
+                {
+                    return Err(RGBA_DELTA_FALLBACK.to_string());
+                }
                 write_indexed_gif_frame_header(
                     &mut output,
                     rect.x as u16,
@@ -5653,54 +6484,87 @@ fn encode_rgba_delta_gif_to_palette_inner(
                     None,
                     0,
                 );
-                map_rgba_rect_to_palette(frame, canvas_width, rect, &mapper, &mut mapped);
-                if literal {
-                    encode_indexed_literal_lzw_direct_to(
-                        &mut output,
-                        &mapped,
-                        min_code_size,
-                        color_count,
-                    )?;
+                if literal || literal_small_palette {
+                    if direct_two_bit {
+                        encode_rgba_two_bit_literal_rect_to(
+                            &mut output,
+                            frame,
+                            canvas_width,
+                            rect,
+                            &mapper,
+                            alpha_threshold,
+                            exact_alpha,
+                            exact_palette,
+                        )?;
+                    } else {
+                        map_rgba_rect_to_palette(frame, canvas_width, rect, &mapper, &mut mapped);
+                        encode_indexed_literal_lzw_direct_to(
+                            &mut output,
+                            &mapped,
+                            min_code_size,
+                            color_count,
+                        )?;
+                    }
                 } else {
-                    encode_indexed_lzw_to_with_tables(
-                        &mut output,
-                        &mapped,
-                        min_code_size,
-                        color_count,
-                        lzw_tables.as_mut().unwrap(),
-                    )?;
+                    let rect_pixels = rect.width * rect.height;
+                    if rect_pixels <= 1024 {
+                        map_rgba_rect_to_palette(frame, canvas_width, rect, &mapper, &mut mapped);
+                        encode_indexed_literal_lzw_direct_to(
+                            &mut output,
+                            &mapped,
+                            min_code_size,
+                            color_count,
+                        )?;
+                    } else {
+                        encode_rgba_lzw_rect_to_palette(
+                            &mut output,
+                            frame,
+                            canvas_width,
+                            rect,
+                            &mapper,
+                            min_code_size,
+                            color_count,
+                            lzw_tables.as_mut().unwrap(),
+                        )?;
+                    }
                 }
             } else {
                 write_indexed_gif_frame_header(&mut output, 0, 0, 1, 1, delay, None, 0);
                 let noop = [mapper.index_pixel(frame[0], frame[1], frame[2])];
-                if literal {
-                    encode_indexed_literal_lzw_direct_to(
-                        &mut output,
-                        &noop,
-                        min_code_size,
-                        color_count,
-                    )?;
-                } else {
-                    encode_indexed_lzw_to_with_tables(
-                        &mut output,
-                        &noop,
-                        min_code_size,
-                        color_count,
-                        lzw_tables.as_mut().unwrap(),
-                    )?;
-                }
-            }
-        } else {
-            write_indexed_gif_frame_header(&mut output, 0, 0, width, height, delay, None, 0);
-            map_rgba_frame_to_palette(frame, &mapper, &mut mapped);
-            if literal {
                 encode_indexed_literal_lzw_direct_to(
                     &mut output,
-                    &mapped,
+                    &noop,
                     min_code_size,
                     color_count,
                 )?;
+            }
+        } else {
+            let direct_two_bit = literal_small_palette && color_count <= 4;
+            if !direct_two_bit && rgba_alpha_invalid(frame, alpha_threshold, exact_alpha) {
+                return Err(RGBA_DELTA_FALLBACK.to_string());
+            }
+            write_indexed_gif_frame_header(&mut output, 0, 0, width, height, delay, None, 0);
+            if literal || literal_small_palette {
+                if direct_two_bit {
+                    encode_rgba_two_bit_literal_frame_to(
+                        &mut output,
+                        frame,
+                        &mapper,
+                        alpha_threshold,
+                        exact_alpha,
+                        exact_palette,
+                    )?;
+                } else {
+                    map_rgba_frame_to_palette(frame, &mapper, &mut mapped);
+                    encode_indexed_literal_lzw_direct_to(
+                        &mut output,
+                        &mapped,
+                        min_code_size,
+                        color_count,
+                    )?;
+                }
             } else {
+                map_rgba_frame_to_palette(frame, &mapper, &mut mapped);
                 encode_indexed_lzw_to_with_tables(
                     &mut output,
                     &mapped,
@@ -6375,9 +7239,8 @@ fn materialize_quality_indices_in_place(
     } else {
         for index in 0..length {
             let histogram_index = unsafe { *source.add(index) };
-            let palette_index = unsafe {
-                *histogram_to_palette.get_unchecked(usize::from(histogram_index))
-            };
+            let palette_index =
+                unsafe { *histogram_to_palette.get_unchecked(usize::from(histogram_index)) };
             unsafe { destination.add(index).write(palette_index) };
         }
     }
@@ -6624,19 +7487,23 @@ fn index_rgba_frames_quality(
     }
 }
 
-fn index_rgba_frames_quality_result(
-    rgba_stream: &[u8],
-    alpha_threshold: u8,
-) -> QualityIndexResult {
-    let all_opaque = !rgba_stream_has_transparent_pixels(rgba_stream, alpha_threshold);
+fn index_rgba_frames_quality_result(rgba_stream: &[u8], alpha_threshold: u8) -> QualityIndexResult {
     let pixel_count = rgba_stream.len() / 4;
     if pixel_count <= QUALITY_LOW_RES_PIXEL_LIMIT {
-        return if all_opaque {
+        // The quality scan already has to inspect every pixel. Keep the alpha
+        // check in that pass instead of paying for a separate full-stream
+        // preflight on the normal (opaque) workload.
+        return if alpha_threshold == 0 {
             index_rgba_frames_quality_low_res::<false>(rgba_stream, alpha_threshold)
         } else {
             index_rgba_frames_quality_low_res::<true>(rgba_stream, alpha_threshold)
         };
     }
+    // Keep the full alpha preflight for multi-megapixel inputs: on those
+    // workloads its tight linear scan is cheaper than adding a transparency
+    // branch to every scattered histogram update.
+    let all_opaque =
+        alpha_threshold == 0 || !rgba_stream_has_transparent_pixels(rgba_stream, alpha_threshold);
     index_rgba_frames_quality_high_res(rgba_stream, alpha_threshold, all_opaque)
 }
 
@@ -6649,10 +7516,10 @@ fn index_rgba_frames_quality_low_res<const HAS_TRANSPARENT: bool>(
     let pixel_count = rgba_stream.len() / 4;
     let mut table = take_quality_color_index_table(COLOR_INDEX_CAP);
     let mut palette = Vec::with_capacity(256);
-    // Keep the quality histogram in lockstep with the exact-color probe. If
-    // the probe overflows (the normal photo/image case), this avoids replaying
-    // the prefix through a second histogram pass.
-    let mut histogram = take_quality_histogram_u32(HISTOGRAM_LEN);
+    // Delay histogram updates until the exact-color probe overflows. Exact
+    // inputs are common for flat/illustrated frames, and their histogram is
+    // discarded immediately; overflowing inputs replay only the tiny prefix
+    // that was already scanned before the 257th color was discovered.
     // Keep the exact-prefix indices so <=256-color inputs do not require a
     // second full RGBA scan after the palette decision is known.
     // The indexed stream is needed only if the exact-color probe succeeds.
@@ -6663,6 +7530,9 @@ fn index_rgba_frames_quality_low_res<const HAS_TRANSPARENT: bool>(
     let rgba_pointer = rgba_stream.as_ptr();
     let mut overflow_offset = None;
     for pixel_index in 0..pixel_count {
+        if pixel_index == 4_096 {
+            indexed.reserve(pixel_count.saturating_sub(indexed.len()));
+        }
         let packed = u32::from_le(unsafe {
             std::ptr::read_unaligned(rgba_pointer.add(pixel_index * 4).cast())
         });
@@ -6676,7 +7546,6 @@ fn index_rgba_frames_quality_low_res<const HAS_TRANSPARENT: bool>(
             }
             continue;
         }
-        add_quality_histogram_u32_bits_const::<HISTOGRAM_BITS>(&mut histogram, packed);
         let rgb = rgb_key(packed as u8, (packed >> 8) as u8, (packed >> 16) as u8);
         if let Some(index) = table.get(rgb) {
             indexed.push(index);
@@ -6697,15 +7566,31 @@ fn index_rgba_frames_quality_low_res<const HAS_TRANSPARENT: bool>(
         indexed.push(index);
     }
     if let Some(start_offset) = overflow_offset {
-        // The exact-prefix scan above already populated the histogram; finish
-        // only the suffix after the palette limit was exceeded.
+        // Rebuild the histogram cells for the exact prefix and finish only
+        // the suffix after the palette limit was exceeded.
+        let mut histogram = take_quality_histogram_u32(HISTOGRAM_LEN);
         let mut histogram_indices = take_quality_histogram_indices(pixel_count);
-        fill_quality_histogram_indices::<HISTOGRAM_BITS>(
-            rgba_stream,
-            start_offset,
-            alpha_threshold,
-            histogram_indices.as_mut_ptr(),
-        );
+        let mut prefix_offset = 0usize;
+        while prefix_offset < start_offset {
+            let packed = u32::from_le(unsafe {
+                std::ptr::read_unaligned(rgba_pointer.add(prefix_offset).cast())
+            });
+            let transparent = HAS_TRANSPARENT && ((packed >> 24) as u8) < alpha_threshold;
+            let index = if transparent {
+                u16::MAX
+            } else {
+                let index = quality_histogram_index_packed::<HISTOGRAM_BITS>(packed) as u16;
+                add_quality_histogram_u32_bits_indexed(&mut histogram, packed, usize::from(index));
+                index
+            };
+            unsafe {
+                histogram_indices
+                    .as_mut_ptr()
+                    .add(prefix_offset / 4)
+                    .write(index)
+            };
+            prefix_offset += 4;
+        }
         if HAS_TRANSPARENT {
             has_transparent_pixels |=
                 accumulate_quality_histogram_u32_bits_remaining::<HISTOGRAM_BITS, true>(
@@ -6735,7 +7620,6 @@ fn index_rgba_frames_quality_low_res<const HAS_TRANSPARENT: bool>(
             Some(histogram_indices),
         ));
     } else {
-        recycle_quality_histogram_u32(histogram);
         return QualityIndexResult::Exact(finish_quality_exact_indexed(
             rgba_stream,
             alpha_threshold,
@@ -6956,9 +7840,7 @@ fn recycle_quantized_indexed(indexed: Vec<u8>) {
     }
     let pointer = indexed.as_ptr().cast_mut().cast::<u16>();
     std::mem::forget(indexed);
-    let words = unsafe {
-        Vec::from_raw_parts(pointer, 0, capacity / std::mem::size_of::<u16>())
-    };
+    let words = unsafe { Vec::from_raw_parts(pointer, 0, capacity / std::mem::size_of::<u16>()) };
     REUSABLE_QUANTIZED_INDEXED.with(|scratch| {
         *scratch.borrow_mut() = words;
     });
@@ -6982,6 +7864,17 @@ fn quality_histogram_index_packed<const BITS: usize>(packed: u32) -> usize {
 }
 
 #[inline(always)]
+unsafe fn read_rgba_pair(pointer: *const u8, offset: usize) -> (u32, u32) {
+    let packed = u64::from_le(std::ptr::read_unaligned(pointer.add(offset).cast::<u64>()));
+    (packed as u32, (packed >> 32) as u32)
+}
+
+// Histogram updates hit a pseudo-random bin for each pixel. On the ARM64
+// Wasm runtime, a SIMD load/modify/store for that scattered bin costs more
+// than four scalar field updates; keep the hot update scalar even in the
+// SIMD artifact. SIMD remains enabled for contiguous alpha preflight and
+// other linear scans.
+#[inline(always)]
 fn add_quality_histogram_u32_bits_const<const BITS: usize>(
     histogram: &mut [RgbHistogramBin32],
     packed: u32,
@@ -6990,23 +7883,11 @@ fn add_quality_histogram_u32_bits_const<const BITS: usize>(
     let green = (packed >> 8) as u8;
     let blue = (packed >> 16) as u8;
     let histogram_index = quality_histogram_index_packed::<BITS>(packed);
-    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-    unsafe {
-        use core::arch::wasm32::{u32x4, u32x4_add, v128_load, v128_store};
-
-        let bin = histogram.get_unchecked_mut(histogram_index) as *mut RgbHistogramBin32;
-        let current = v128_load(bin.cast());
-        let increment = u32x4(1, u32::from(red), u32::from(green), u32::from(blue));
-        v128_store(bin.cast(), u32x4_add(current, increment));
-    }
-    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
-    {
-        let bin = unsafe { histogram.get_unchecked_mut(histogram_index) };
-        bin.count += 1;
-        bin.red += u32::from(red);
-        bin.green += u32::from(green);
-        bin.blue += u32::from(blue);
-    }
+    let bin = unsafe { histogram.get_unchecked_mut(histogram_index) };
+    bin.count += 1;
+    bin.red += u32::from(red);
+    bin.green += u32::from(green);
+    bin.blue += u32::from(blue);
 }
 
 #[inline(always)]
@@ -7018,23 +7899,11 @@ fn add_quality_histogram_u32_bits_indexed(
     let red = u32::from(packed as u8);
     let green = u32::from((packed >> 8) as u8);
     let blue = u32::from((packed >> 16) as u8);
-    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-    unsafe {
-        use core::arch::wasm32::{u32x4, u32x4_add, v128_load, v128_store};
-
-        let bin = histogram.get_unchecked_mut(histogram_index) as *mut RgbHistogramBin32;
-        let current = v128_load(bin.cast());
-        let increment = u32x4(1, red, green, blue);
-        v128_store(bin.cast(), u32x4_add(current, increment));
-    }
-    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
-    {
-        let bin = unsafe { histogram.get_unchecked_mut(histogram_index) };
-        bin.count += 1;
-        bin.red += red;
-        bin.green += green;
-        bin.blue += blue;
-    }
+    let bin = unsafe { histogram.get_unchecked_mut(histogram_index) };
+    bin.count += 1;
+    bin.red += red;
+    bin.green += green;
+    bin.blue += blue;
 }
 
 #[inline(always)]
@@ -7053,23 +7922,11 @@ fn add_quality_histogram_u32_pair_preindexed(
     let red = u32::from(packed0 as u8) + u32::from(packed1 as u8);
     let green = u32::from((packed0 >> 8) as u8) + u32::from((packed1 >> 8) as u8);
     let blue = u32::from((packed0 >> 16) as u8) + u32::from((packed1 >> 16) as u8);
-    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-    unsafe {
-        use core::arch::wasm32::{u32x4, u32x4_add, v128_load, v128_store};
-
-        let bin = histogram.get_unchecked_mut(index0) as *mut RgbHistogramBin32;
-        let current = v128_load(bin.cast());
-        let increment = u32x4(2, red, green, blue);
-        v128_store(bin.cast(), u32x4_add(current, increment));
-    }
-    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
-    {
-        let bin = unsafe { histogram.get_unchecked_mut(index0) };
-        bin.count += 2;
-        bin.red += red;
-        bin.green += green;
-        bin.blue += blue;
-    }
+    let bin = unsafe { histogram.get_unchecked_mut(index0) };
+    bin.count += 2;
+    bin.red += red;
+    bin.green += green;
+    bin.blue += blue;
 }
 
 #[inline(always)]
@@ -7080,13 +7937,7 @@ fn add_quality_histogram_u32_pair<const BITS: usize>(
 ) {
     let index0 = quality_histogram_index_packed::<BITS>(packed0);
     let index1 = quality_histogram_index_packed::<BITS>(packed1);
-    add_quality_histogram_u32_pair_indexed::<BITS>(
-        histogram,
-        packed0,
-        packed1,
-        index0,
-        index1,
-    );
+    add_quality_histogram_u32_pair_indexed::<BITS>(histogram, packed0, packed1, index0, index1);
 }
 
 #[inline(always)]
@@ -7098,8 +7949,11 @@ fn add_quality_histogram_u32_pair_indexed<const BITS: usize>(
     index1: usize,
 ) {
     if index0 != index1 {
-        add_quality_histogram_u32_bits_const::<BITS>(histogram, packed0);
-        add_quality_histogram_u32_bits_const::<BITS>(histogram, packed1);
+        // The caller already decoded both histogram cells. Reuse those
+        // indices instead of recomputing the packed shifts on the split-bin
+        // path, which is the common case for noisy/photographic input.
+        add_quality_histogram_u32_bits_indexed(histogram, packed0, index0);
+        add_quality_histogram_u32_bits_indexed(histogram, packed1, index1);
         return;
     }
     let red = u32::from(packed0 as u8) + u32::from(packed1 as u8);
@@ -7171,9 +8025,14 @@ fn add_quality_histogram_u32_pair_with_alpha_record<const BITS: usize>(
     } else {
         quality_histogram_index_packed::<BITS>(packed1) as u16
     };
+    let packed_indices = u32::from_ne_bytes([
+        index0 as u8,
+        (index0 >> 8) as u8,
+        index1 as u8,
+        (index1 >> 8) as u8,
+    ]);
     unsafe {
-        histogram_indices.add(pixel_index).write(index0);
-        histogram_indices.add(pixel_index + 1).write(index1);
+        std::ptr::write_unaligned(histogram_indices.add(pixel_index).cast(), packed_indices);
     }
     if !first_transparent && !second_transparent {
         add_quality_histogram_u32_pair_preindexed(
@@ -7204,9 +8063,14 @@ fn add_quality_histogram_u32_pair_record_opaque<const BITS: usize>(
 ) {
     let index0 = quality_histogram_index_packed::<BITS>(packed0) as u16;
     let index1 = quality_histogram_index_packed::<BITS>(packed1) as u16;
+    let packed_indices = u32::from_ne_bytes([
+        index0 as u8,
+        (index0 >> 8) as u8,
+        index1 as u8,
+        (index1 >> 8) as u8,
+    ]);
     unsafe {
-        histogram_indices.add(pixel_index).write(index0);
-        histogram_indices.add(pixel_index + 1).write(index1);
+        std::ptr::write_unaligned(histogram_indices.add(pixel_index).cast(), packed_indices);
     }
     add_quality_histogram_u32_pair_preindexed(
         histogram,
@@ -7215,27 +8079,6 @@ fn add_quality_histogram_u32_pair_record_opaque<const BITS: usize>(
         usize::from(index0),
         usize::from(index1),
     );
-}
-
-fn fill_quality_histogram_indices<const BITS: usize>(
-    rgba_stream: &[u8],
-    start_offset: usize,
-    alpha_threshold: u8,
-    histogram_indices: *mut u16,
-) {
-    let rgba_pointer = rgba_stream.as_ptr();
-    let mut offset = 0usize;
-    while offset < start_offset {
-        let packed =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset).cast()) });
-        let index = if ((packed >> 24) as u8) < alpha_threshold {
-            u16::MAX
-        } else {
-            quality_histogram_index_packed::<BITS>(packed) as u16
-        };
-        unsafe { histogram_indices.add(offset / 4).write(index) };
-        offset += 4;
-    }
 }
 
 #[inline(always)]
@@ -7251,7 +8094,10 @@ fn add_quality_histogram_u64(histogram: &mut [RgbHistogramBin], packed: u32) {
     bin.blue += u64::from(blue);
 }
 
-fn accumulate_quality_histogram_u32_bits_remaining<const BITS: usize, const RECORD_INDICES: bool>(
+fn accumulate_quality_histogram_u32_bits_remaining<
+    const BITS: usize,
+    const RECORD_INDICES: bool,
+>(
     histogram: &mut [RgbHistogramBin32],
     rgba_stream: &[u8],
     start_offset: usize,
@@ -7276,22 +8122,10 @@ fn accumulate_quality_histogram_u32_bits_remaining<const BITS: usize, const RECO
     // and repeated offset arithmetic here matters more than the tiny prefix
     // scan that discovers the palette overflow.
     while offset + 32 <= rgba_stream.len() {
-        let packed0 =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset).cast()) });
-        let packed1 =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 4).cast()) });
-        let packed2 =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 8).cast()) });
-        let packed3 =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 12).cast()) });
-        let packed4 =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 16).cast()) });
-        let packed5 =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 20).cast()) });
-        let packed6 =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 24).cast()) });
-        let packed7 =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 28).cast()) });
+        let (packed0, packed1) = unsafe { read_rgba_pair(rgba_pointer, offset) };
+        let (packed2, packed3) = unsafe { read_rgba_pair(rgba_pointer, offset + 8) };
+        let (packed4, packed5) = unsafe { read_rgba_pair(rgba_pointer, offset + 16) };
+        let (packed6, packed7) = unsafe { read_rgba_pair(rgba_pointer, offset + 24) };
         if RECORD_INDICES {
             let pixel_index = offset / 4;
             has_transparent_pixels |= add_quality_histogram_u32_pair_with_alpha_record::<BITS>(
@@ -7395,22 +8229,10 @@ fn accumulate_quality_histogram_u32_bits_remaining_opaque<
     let histogram_indices_pointer = histogram_indices.as_mut_ptr();
     let mut offset = start_offset;
     while offset + 32 <= rgba_stream.len() {
-        let packed0 =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset).cast()) });
-        let packed1 =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 4).cast()) });
-        let packed2 =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 8).cast()) });
-        let packed3 =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 12).cast()) });
-        let packed4 =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 16).cast()) });
-        let packed5 =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 20).cast()) });
-        let packed6 =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 24).cast()) });
-        let packed7 =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 28).cast()) });
+        let (packed0, packed1) = unsafe { read_rgba_pair(rgba_pointer, offset) };
+        let (packed2, packed3) = unsafe { read_rgba_pair(rgba_pointer, offset + 8) };
+        let (packed4, packed5) = unsafe { read_rgba_pair(rgba_pointer, offset + 16) };
+        let (packed6, packed7) = unsafe { read_rgba_pair(rgba_pointer, offset + 24) };
         if RECORD_INDICES {
             let pixel_index = offset / 4;
             add_quality_histogram_u32_pair_record_opaque::<BITS>(
@@ -7566,6 +8388,9 @@ fn index_rgba_frames_quality_u32<const BITS: usize>(
     let rgba_pointer = rgba_stream.as_ptr();
     let mut overflow_offset = None;
     for pixel_index in 0..pixel_count {
+        if pixel_index == 4_096 {
+            indexed.reserve(pixel_count.saturating_sub(indexed.len()));
+        }
         let packed = u32::from_le(unsafe {
             std::ptr::read_unaligned(rgba_pointer.add(pixel_index * 4).cast())
         });
@@ -7627,14 +8452,13 @@ fn index_rgba_frames_quality_u32<const BITS: usize>(
                 &mut histogram_indices,
             );
         } else {
-            has_transparent_pixels |=
-                accumulate_quality_histogram_u32_bits_remaining::<BITS, true>(
-                    &mut histogram,
-                    rgba_stream,
-                    start_offset,
-                    alpha_threshold,
-                    &mut histogram_indices,
-                );
+            has_transparent_pixels |= accumulate_quality_histogram_u32_bits_remaining::<BITS, true>(
+                &mut histogram,
+                rgba_stream,
+                start_offset,
+                alpha_threshold,
+                &mut histogram_indices,
+            );
         }
         recycle_quantized_indexed(indexed);
 
@@ -7667,14 +8491,21 @@ fn index_rgba_frames_quality_u64(
     all_opaque: bool,
 ) -> QualityIndexResult {
     let pixel_count = rgba_stream.len() / 4;
-    let mut histogram = take_quality_histogram_u64(QUALITY_HISTOGRAM_LEN);
     let mut table = take_quality_color_index_table(COLOR_INDEX_CAP);
     let mut palette = Vec::with_capacity(256);
     let mut indexed = Vec::with_capacity(pixel_count.min(4096));
+    // Keep the exact-color probe independent from the large histogram. Exact
+    // inputs return their indexed stream directly, so building a histogram
+    // that will be discarded would turn a linear scan into needless work.
+    // Quantized inputs scan the full stream once for histogram accumulation
+    // after the short exact probe has found an overflow.
     let mut has_transparent_pixels = false;
     let rgba_pointer = rgba_stream.as_ptr();
     let mut overflow_offset = None;
     for pixel_index in 0..pixel_count {
+        if pixel_index == 4_096 {
+            indexed.reserve(pixel_count.saturating_sub(indexed.len()));
+        }
         let packed = u32::from_le(unsafe {
             std::ptr::read_unaligned(rgba_pointer.add(pixel_index * 4).cast())
         });
@@ -7688,7 +8519,6 @@ fn index_rgba_frames_quality_u64(
             }
             continue;
         }
-        add_quality_histogram_u64(&mut histogram, packed);
         let red = packed as u8;
         let green = (packed >> 8) as u8;
         let blue = (packed >> 16) as u8;
@@ -7708,23 +8538,7 @@ fn index_rgba_frames_quality_u64(
         indexed.push(index);
     }
 
-    if let Some(start_offset) = overflow_offset {
-        if all_opaque {
-            accumulate_quality_histogram_u64_remaining_opaque(
-                &mut histogram,
-                rgba_stream,
-                start_offset,
-            );
-        } else {
-            has_transparent_pixels |= accumulate_quality_histogram_u64_remaining(
-                &mut histogram,
-                rgba_stream,
-                start_offset,
-                alpha_threshold,
-            );
-        }
-    } else {
-        recycle_quality_histogram_u64(histogram);
+    if overflow_offset.is_none() {
         return QualityIndexResult::Exact(finish_quality_exact_indexed(
             rgba_stream,
             alpha_threshold,
@@ -7733,6 +8547,18 @@ fn index_rgba_frames_quality_u64(
             table,
             indexed,
         ));
+    }
+
+    let mut histogram = take_quality_histogram_u64(QUALITY_HISTOGRAM_LEN);
+    if all_opaque {
+        accumulate_quality_histogram_u64_remaining_opaque(&mut histogram, rgba_stream, 0);
+    } else {
+        has_transparent_pixels |= accumulate_quality_histogram_u64_remaining(
+            &mut histogram,
+            rgba_stream,
+            0,
+            alpha_threshold,
+        );
     }
 
     let colors = quality_colors_from_histogram_u64(&histogram);
@@ -7765,7 +8591,9 @@ fn build_quality_index_plan_from_colors(
     // table. Its retained per-pixel 5-bit cells cannot be indexed into that
     // compact table, so discard them and remap the RGBA stream from the
     // parent-cell plan instead of risking an out-of-bounds lookup.
-    let histogram_indices = (mapping_bits == histogram_bits).then_some(histogram_indices).flatten();
+    let histogram_indices = (mapping_bits == histogram_bits)
+        .then_some(histogram_indices)
+        .flatten();
     let mapping_len = 1usize << (mapping_bits * 3);
     let opaque_color_limit = if has_transparent_pixels { 255 } else { 256 };
 
@@ -7825,7 +8653,7 @@ fn build_quality_index_plan_from_colors(
                         | (usize::from(color.green >> 5) << 3)
                         | usize::from(color.blue >> 5);
                     let hint_index = initial_coarse_hints[coarse_index];
-                    usize::from(initial_tree.nearest_with_hint_index(
+                    usize::from(initial_tree.nearest_with_hint_index_split(
                         color.red,
                         color.green,
                         color.blue,
@@ -7867,7 +8695,7 @@ fn build_quality_index_plan_from_colors(
                         | (usize::from(color.green >> 5) << 3)
                         | usize::from(color.blue >> 5);
                     let hint_index = initial_coarse_hints[coarse_index];
-                    usize::from(initial_tree.nearest_with_hint_index(
+                    usize::from(initial_tree.nearest_with_hint_index_split(
                         color.red,
                         color.green,
                         color.blue,
@@ -7903,8 +8731,8 @@ fn build_quality_index_plan_from_colors(
                 // only one refinement step. The KD search still proves the
                 // final nearest color, so this changes no output or tie rule.
                 let hint_index = histogram_to_palette[usize::from(color.histogram_index)];
-                histogram_to_palette[usize::from(color.histogram_index)] =
-                    palette_tree.nearest_with_hint_index(
+                histogram_to_palette[usize::from(color.histogram_index)] = palette_tree
+                    .nearest_with_hint_index_split(
                         color.red,
                         color.green,
                         color.blue,
@@ -8178,14 +9006,56 @@ fn map_rgba_frame_to_palette(
     mapper: &PaletteMapper<'_>,
     indexed: &mut Vec<u8>,
 ) {
+    if mapper.palette_rgb.len() <= 16 {
+        return map_rgba_frame_to_palette_cached::<16>(rgba_stream, mapper, indexed);
+    }
     indexed.clear();
+    let pointer = rgba_stream.as_ptr();
+    let mut offset = 0usize;
+    let mut cached_rgb = u32::MAX;
+    let mut cached_index = 0u8;
+    while offset < rgba_stream.len() {
+        let packed =
+            u32::from_le(unsafe { std::ptr::read_unaligned(pointer.add(offset).cast::<u32>()) });
+        let rgb = packed & 0x00ff_ffff;
+        let index = if rgb == cached_rgb {
+            cached_index
+        } else {
+            let index = mapper.index_pixel(packed as u8, (packed >> 8) as u8, (packed >> 16) as u8);
+            cached_rgb = rgb;
+            cached_index = index;
+            index
+        };
+        indexed.push(index);
+        offset += 4;
+    }
+}
+
+fn map_rgba_frame_to_palette_cached<const CACHE_SIZE: usize>(
+    rgba_stream: &[u8],
+    mapper: &PaletteMapper<'_>,
+    indexed: &mut Vec<u8>,
+) {
+    indexed.clear();
+    let pointer = rgba_stream.as_ptr();
+    let mut cache_keys = [u32::MAX; CACHE_SIZE];
+    let mut cache_values = [0u8; CACHE_SIZE];
+    let cache_mask = CACHE_SIZE - 1;
     let mut offset = 0usize;
     while offset < rgba_stream.len() {
-        indexed.push(mapper.index_pixel(
-            rgba_stream[offset],
-            rgba_stream[offset + 1],
-            rgba_stream[offset + 2],
-        ));
+        let packed =
+            u32::from_le(unsafe { std::ptr::read_unaligned(pointer.add(offset).cast::<u32>()) });
+        let rgb = packed & 0x00ff_ffff;
+        let slot = (rgb as usize).wrapping_mul(2_654_435_761) & cache_mask;
+        let index = if cache_keys[slot] == rgb {
+            cache_values[slot]
+        } else {
+            let index = mapper.index_pixel(packed as u8, (packed >> 8) as u8, (packed >> 16) as u8);
+            cache_keys[slot] = rgb;
+            cache_values[slot] = index;
+            index
+        };
+        indexed.push(index);
         offset += 4;
     }
 }
@@ -8197,20 +9067,100 @@ fn map_rgba_rect_to_palette(
     mapper: &PaletteMapper<'_>,
     indexed: &mut Vec<u8>,
 ) {
+    if mapper.palette_rgb.len() <= 16 {
+        return map_rgba_rect_to_palette_cached::<16>(
+            rgba_stream,
+            canvas_width,
+            rect,
+            mapper,
+            indexed,
+        );
+    }
     indexed.clear();
     let row_skip = (canvas_width - rect.width) * 4;
     let mut offset = (rect.y * canvas_width + rect.x) * 4;
+    let pointer = rgba_stream.as_ptr();
+    let mut cached_rgb = u32::MAX;
+    let mut cached_index = 0u8;
     for _ in 0..rect.height {
         for _ in 0..rect.width {
-            indexed.push(mapper.index_pixel(
-                rgba_stream[offset],
-                rgba_stream[offset + 1],
-                rgba_stream[offset + 2],
-            ));
+            let packed = u32::from_le(unsafe {
+                std::ptr::read_unaligned(pointer.add(offset).cast::<u32>())
+            });
+            let rgb = packed & 0x00ff_ffff;
+            let index = if rgb == cached_rgb {
+                cached_index
+            } else {
+                let index =
+                    mapper.index_pixel(packed as u8, (packed >> 8) as u8, (packed >> 16) as u8);
+                cached_rgb = rgb;
+                cached_index = index;
+                index
+            };
+            indexed.push(index);
             offset += 4;
         }
         offset += row_skip;
     }
+}
+
+fn map_rgba_rect_to_palette_cached<const CACHE_SIZE: usize>(
+    rgba_stream: &[u8],
+    canvas_width: usize,
+    rect: ChangedRectU32,
+    mapper: &PaletteMapper<'_>,
+    indexed: &mut Vec<u8>,
+) {
+    indexed.clear();
+    let row_skip = (canvas_width - rect.width) * 4;
+    let pointer = rgba_stream.as_ptr();
+    let mut offset = (rect.y * canvas_width + rect.x) * 4;
+    let mut cache_keys = [u32::MAX; CACHE_SIZE];
+    let mut cache_values = [0u8; CACHE_SIZE];
+    let cache_mask = CACHE_SIZE - 1;
+    for _ in 0..rect.height {
+        for _ in 0..rect.width {
+            let packed = u32::from_le(unsafe {
+                std::ptr::read_unaligned(pointer.add(offset).cast::<u32>())
+            });
+            let rgb = packed & 0x00ff_ffff;
+            let slot = (rgb as usize).wrapping_mul(2_654_435_761) & cache_mask;
+            let index = if cache_keys[slot] == rgb {
+                cache_values[slot]
+            } else {
+                let index =
+                    mapper.index_pixel(packed as u8, (packed >> 8) as u8, (packed >> 16) as u8);
+                cache_keys[slot] = rgb;
+                cache_values[slot] = index;
+                index
+            };
+            indexed.push(index);
+            offset += 4;
+        }
+        offset += row_skip;
+    }
+}
+
+#[inline(always)]
+fn rgba_stream_is_opaque(rgba_stream: &[u8]) -> bool {
+    let pointer = rgba_stream.as_ptr();
+    const ALPHA_MASK: u64 = 0xff00_0000_ff00_0000;
+    let mut offset = 0usize;
+    while offset + 8 <= rgba_stream.len() {
+        let packed =
+            u64::from_le(unsafe { std::ptr::read_unaligned(pointer.add(offset).cast::<u64>()) });
+        if packed & ALPHA_MASK != ALPHA_MASK {
+            return false;
+        }
+        offset += 8;
+    }
+    while offset < rgba_stream.len() {
+        if rgba_stream[offset + 3] != 255 {
+            return false;
+        }
+        offset += 4;
+    }
+    true
 }
 
 #[inline(always)]
@@ -8219,29 +9169,54 @@ fn rgba_stream_has_transparent_pixels(rgba_stream: &[u8], alpha_threshold: u8) -
         return false;
     }
     let pointer = rgba_stream.as_ptr();
-    let mut offset = 0usize;
-    while offset + 32 <= rgba_stream.len() {
-        if unsafe {
-            *pointer.add(offset + 3) < alpha_threshold
-                || *pointer.add(offset + 7) < alpha_threshold
-                || *pointer.add(offset + 11) < alpha_threshold
-                || *pointer.add(offset + 15) < alpha_threshold
-                || *pointer.add(offset + 19) < alpha_threshold
-                || *pointer.add(offset + 23) < alpha_threshold
-                || *pointer.add(offset + 27) < alpha_threshold
-                || *pointer.add(offset + 31) < alpha_threshold
-        } {
-            return true;
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        use core::arch::wasm32::{u32x4_lt, u32x4_shr, u32x4_splat, v128_any_true, v128_load};
+
+        let threshold = u32x4_splat(u32::from(alpha_threshold));
+        let mut offset = 0usize;
+        while offset + 16 <= rgba_stream.len() {
+            let pixels = unsafe { v128_load(pointer.add(offset).cast()) };
+            let alpha = u32x4_shr(pixels, 24);
+            if v128_any_true(u32x4_lt(alpha, threshold)) {
+                return true;
+            }
+            offset += 16;
         }
-        offset += 32;
-    }
-    while offset < rgba_stream.len() {
-        if unsafe { *pointer.add(offset + 3) < alpha_threshold } {
-            return true;
+        while offset < rgba_stream.len() {
+            if unsafe { *pointer.add(offset + 3) < alpha_threshold } {
+                return true;
+            }
+            offset += 4;
         }
-        offset += 4;
+        return false;
     }
-    false
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+    {
+        let mut offset = 0usize;
+        while offset + 32 <= rgba_stream.len() {
+            if unsafe {
+                *pointer.add(offset + 3) < alpha_threshold
+                    || *pointer.add(offset + 7) < alpha_threshold
+                    || *pointer.add(offset + 11) < alpha_threshold
+                    || *pointer.add(offset + 15) < alpha_threshold
+                    || *pointer.add(offset + 19) < alpha_threshold
+                    || *pointer.add(offset + 23) < alpha_threshold
+                    || *pointer.add(offset + 27) < alpha_threshold
+                    || *pointer.add(offset + 31) < alpha_threshold
+            } {
+                return true;
+            }
+            offset += 32;
+        }
+        while offset < rgba_stream.len() {
+            if unsafe { *pointer.add(offset + 3) < alpha_threshold } {
+                return true;
+            }
+            offset += 4;
+        }
+        false
+    }
 }
 
 fn index_rgba_frames_332(
@@ -8555,7 +9530,7 @@ impl PaletteKdTree {
                         continue;
                     }
                     if !occupied[index] {
-                        table[index] = self.nearest_with_hint(
+                        table[index] = self.nearest_with_hint_split(
                             (red << 5) | 16,
                             (green << 5) | 16,
                             (blue << 5) | 16,
@@ -8574,27 +9549,15 @@ impl PaletteKdTree {
         self.nearest_with_hint(r, g, b, None)
     }
 
+    #[cfg(test)]
     #[inline]
     fn nearest_with_hint(&self, r: u8, g: u8, b: u8, hint: Option<(u8, u32)>) -> u8 {
         self.nearest_with_hint_impl::<true>(r, g, b, hint)
     }
 
     #[inline(always)]
-    fn nearest_with_hint_index(
-        &self,
-        r: u8,
-        g: u8,
-        b: u8,
-        hint_index: u8,
-        hint_color: u32,
-    ) -> u8 {
-        self.nearest_with_seed::<true>(
-            r,
-            g,
-            b,
-            hint_index,
-            palette_color_distance(hint_color, r, g, b),
-        )
+    fn nearest_with_hint_split(&self, r: u8, g: u8, b: u8, hint: Option<(u8, u32)>) -> u8 {
+        self.nearest_with_hint_impl::<false>(r, g, b, hint)
     }
 
     #[inline(always)]
@@ -8606,7 +9569,7 @@ impl PaletteKdTree {
         hint_index: u8,
         hint_color: u32,
     ) -> u8 {
-        self.nearest_with_seed::<false>(
+        self.nearest_with_seed::<true>(
             r,
             g,
             b,
@@ -8716,8 +9679,7 @@ impl PaletteKdTree {
                     };
                     (red_distance * red_distance
                         + green_distance * green_distance
-                        + blue_distance * blue_distance)
-                        as u32
+                        + blue_distance * blue_distance) as u32
                 } else {
                     let delta = (value - split).unsigned_abs();
                     (delta * delta) as u32
@@ -8943,7 +9905,10 @@ fn encode_indexed_literal_gif_inner_with_output_impl<const VALIDATE: bool>(
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    if VALIDATE && min_code_size > 2 && frame_count >= 8 && expected_len >= 50_000 {
+    // Native thread setup and per-frame scratch allocation are slower than the
+    // direct writer for ordinary 128x128 animations. Parallelism starts to
+    // repay that fixed cost only once the indexed input is around one MiB.
+    if VALIDATE && min_code_size > 2 && frame_count >= 8 && expected_len >= 1_000_000 {
         return encode_indexed_literal_gif_parallel_native(
             index_stream,
             width,
@@ -10137,7 +11102,6 @@ fn encode_indexed_gif_inner_with_rects(
     );
     let mut lzw_tables = (!literal).then(LzwEncodeTables::new);
     let mut rect_scratch = Vec::new();
-    let mut compressed_scratch = Vec::new();
 
     write_indexed_gif_header(&mut output, width, height, palette_rgb, color_count);
     write_loop_extension(&mut output, loop_count);
@@ -10157,9 +11121,9 @@ fn encode_indexed_gif_inner_with_rects(
                     transparent_index,
                     0,
                 );
+                let rect_length = rect.width * rect.height;
                 if literal {
                     rect_scratch.clear();
-                    let rect_length = rect.width * rect.height;
                     if rect_scratch.capacity() < rect_length {
                         rect_scratch.reserve(rect_length - rect_scratch.capacity());
                     }
@@ -10167,12 +11131,11 @@ fn encode_indexed_gif_inner_with_rects(
                         let start = (rect.y + row) * canvas_width + rect.x;
                         rect_scratch.extend_from_slice(&frame[start..start + rect.width]);
                     }
-                    encode_indexed_literal_lzw_to(
+                    encode_indexed_literal_lzw_direct_to(
                         &mut output,
                         &rect_scratch,
                         min_code_size,
                         color_count,
-                        &mut compressed_scratch,
                     )?;
                 } else {
                     encode_indexed_lzw_rect_to(
@@ -10198,23 +11161,15 @@ fn encode_indexed_gif_inner_with_rects(
                     transparent_index,
                     0,
                 );
-                if literal {
-                    encode_indexed_literal_lzw_to(
-                        &mut output,
-                        &frame[..1],
-                        min_code_size,
-                        color_count,
-                        &mut compressed_scratch,
-                    )?;
-                } else {
-                    encode_indexed_lzw_to_with_tables(
-                        &mut output,
-                        &frame[..1],
-                        min_code_size,
-                        color_count,
-                        lzw_tables.as_mut().unwrap(),
-                    )?;
-                }
+                // A no-op frame has one pixel of payload. The literal stream
+                // is the same minimal CLEAR/pixel/EOI code sequence without
+                // paying for a dictionary reset and table lookup.
+                encode_indexed_literal_lzw_direct_to(
+                    &mut output,
+                    &frame[..1],
+                    min_code_size,
+                    color_count,
+                )?;
             }
         } else {
             write_indexed_gif_frame_header(
@@ -10228,12 +11183,11 @@ fn encode_indexed_gif_inner_with_rects(
                 0,
             );
             if literal {
-                encode_indexed_literal_lzw_to(
+                encode_indexed_literal_lzw_direct_to(
                     &mut output,
                     frame,
                     min_code_size,
                     color_count,
-                    &mut compressed_scratch,
                 )?;
             } else {
                 encode_indexed_lzw_to_with_tables(
@@ -10354,8 +11308,17 @@ struct LzwEncodeTables {
 impl LzwEncodeTables {
     fn new() -> Self {
         Self {
-            entries: vec![0; LZW_DIRECT_ENTRY_COUNT],
+            entries: Vec::new(),
             epoch: 0,
+        }
+    }
+
+    #[inline]
+    fn ensure_capacity(&mut self, color_count: usize) {
+        let required = (1usize << 12).saturating_mul(color_count);
+        debug_assert!(required <= LZW_DIRECT_ENTRY_COUNT);
+        if self.entries.len() < required {
+            self.entries.resize(required, 0);
         }
     }
 
@@ -10461,9 +11424,8 @@ fn encode_indexed_lzw_scratch_from_input_inner(
         if length > input.len() * std::mem::size_of::<AlignedByte>() {
             return Err("Indexed input scratch length exceeds capacity".to_string());
         }
-        let index_stream = unsafe {
-            std::slice::from_raw_parts(input.as_ptr().cast::<u8>(), length)
-        };
+        let index_stream =
+            unsafe { std::slice::from_raw_parts(input.as_ptr().cast::<u8>(), length) };
         output.clear();
         output.reserve(index_stream.len() / 2 + 16);
         if literal {
@@ -10565,14 +11527,14 @@ fn encode_indexed_literal_lzw_direct_to_impl<const VALIDATE: bool>(
         );
     }
     if min_code_size == 3 {
-        return encode_four_bit_literal_lzw_direct_to::<VALIDATE>(output, index_stream, color_count);
-    }
-    if min_code_size == 5 {
-        return encode_six_bit_literal_lzw_direct_to::<VALIDATE>(
+        return encode_four_bit_literal_lzw_direct_to::<VALIDATE>(
             output,
             index_stream,
             color_count,
         );
+    }
+    if min_code_size == 5 {
+        return encode_six_bit_literal_lzw_direct_to::<VALIDATE>(output, index_stream, color_count);
     }
     if min_code_size == 6 {
         return encode_seven_bit_literal_lzw_direct_to::<VALIDATE>(
@@ -10659,8 +11621,7 @@ fn encode_six_bit_literal_lzw_direct_to<const VALIDATE: bool>(
             let combined = bits | (packed << bit_count);
             let total_bits = bit_count + 48;
             let byte_count = total_bits / 8;
-            let bytes = combined.to_le_bytes();
-            writer.write_fixed(&bytes, byte_count);
+            writer.write_fixed_u64(combined, byte_count);
             bits = combined >> (byte_count * 8);
             bit_count = total_bits - byte_count * 8;
         }
@@ -10703,97 +11664,96 @@ fn encode_six_bit_literal_lzw_direct_to<const VALIDATE: bool>(
 }
 
 fn encode_seven_bit_literal_lzw_direct_to<const VALIDATE: bool>(
-	output: &mut Vec<u8>,
-	index_stream: &[u8],
-	color_count: usize,
+    output: &mut Vec<u8>,
+    index_stream: &[u8],
+    color_count: usize,
 ) -> Result<(), String> {
-	if color_count == 0 || color_count > 64 {
-		return Err("Invalid color count".to_string());
-	}
-	if index_stream.is_empty() {
-		return Err("Indexed pixel stream is empty".to_string());
-	}
-	if VALIDATE && !indices_fit_color_count(index_stream, color_count) {
-		return Err("Pixel index out of range".to_string());
-	}
+    if color_count == 0 || color_count > 64 {
+        return Err("Invalid color count".to_string());
+    }
+    if index_stream.is_empty() {
+        return Err("Indexed pixel stream is empty".to_string());
+    }
+    if VALIDATE && !indices_fit_color_count(index_stream, color_count) {
+        return Err("Pixel index out of range".to_string());
+    }
 
-	const CODE_SIZE: usize = 7;
-	const CLEAR: u16 = 64;
-	const EOI: u16 = 65;
-	const LITERALS_PER_CLEAR: usize = 62;
-	let clear_count = index_stream.len().div_ceil(LITERALS_PER_CLEAR);
-	let raw_length = ((index_stream.len() + clear_count + 1) * CODE_SIZE).div_ceil(8);
-	let block_count = raw_length.div_ceil(255);
-	let output_start = output.len();
-	output.reserve(2 + block_count + raw_length + 8);
-	unsafe {
-		output.as_mut_ptr().add(output_start).write(6);
-	}
-	let mut writer = DirectGifSubblockWriter {
-		output: unsafe { output.as_mut_ptr().add(output_start) },
-		position: 2,
-		block_remaining: 255,
-		raw_position: 0,
-	};
-	let mut bits = 0u64;
-	let mut bit_count = 0usize;
+    const CODE_SIZE: usize = 7;
+    const CLEAR: u16 = 64;
+    const EOI: u16 = 65;
+    const LITERALS_PER_CLEAR: usize = 62;
+    let clear_count = index_stream.len().div_ceil(LITERALS_PER_CLEAR);
+    let raw_length = ((index_stream.len() + clear_count + 1) * CODE_SIZE).div_ceil(8);
+    let block_count = raw_length.div_ceil(255);
+    let output_start = output.len();
+    output.reserve(2 + block_count + raw_length + 8);
+    unsafe {
+        output.as_mut_ptr().add(output_start).write(6);
+    }
+    let mut writer = DirectGifSubblockWriter {
+        output: unsafe { output.as_mut_ptr().add(output_start) },
+        position: 2,
+        block_remaining: 255,
+        raw_position: 0,
+    };
+    let mut bits = 0u64;
+    let mut bit_count = 0usize;
 
-	for literals in index_stream.chunks(LITERALS_PER_CLEAR) {
-		append_seven_bit_literal_code_to_direct(&mut writer, &mut bits, &mut bit_count, CLEAR);
-		let mut groups = literals.chunks_exact(8);
-		for group in &mut groups {
-			let packed = u64::from(group[0])
-				| (u64::from(group[1]) << 7)
-				| (u64::from(group[2]) << 14)
-				| (u64::from(group[3]) << 21)
-				| (u64::from(group[4]) << 28)
-				| (u64::from(group[5]) << 35)
-				| (u64::from(group[6]) << 42)
-				| (u64::from(group[7]) << 49);
-			let combined = bits | (packed << bit_count);
-			let total_bits = bit_count + 56;
-			let byte_count = total_bits / 8;
-			let bytes = combined.to_le_bytes();
-			writer.write_fixed(&bytes, byte_count);
-			bits = combined >> (byte_count * 8);
-			bit_count = total_bits - byte_count * 8;
-		}
-		for &pixel in groups.remainder() {
-			append_seven_bit_literal_code_to_direct(
-				&mut writer,
-				&mut bits,
-				&mut bit_count,
-				u16::from(pixel),
-			);
-		}
-	}
-	append_seven_bit_literal_code_to_direct(&mut writer, &mut bits, &mut bit_count, EOI);
-	while bit_count > 0 {
-		writer.write_byte(bits as u8);
-		bits >>= 8;
-		bit_count = bit_count.saturating_sub(8);
-	}
-	debug_assert_eq!(writer.raw_position, raw_length);
+    for literals in index_stream.chunks(LITERALS_PER_CLEAR) {
+        append_seven_bit_literal_code_to_direct(&mut writer, &mut bits, &mut bit_count, CLEAR);
+        let mut groups = literals.chunks_exact(8);
+        for group in &mut groups {
+            let packed = u64::from(group[0])
+                | (u64::from(group[1]) << 7)
+                | (u64::from(group[2]) << 14)
+                | (u64::from(group[3]) << 21)
+                | (u64::from(group[4]) << 28)
+                | (u64::from(group[5]) << 35)
+                | (u64::from(group[6]) << 42)
+                | (u64::from(group[7]) << 49);
+            let combined = bits | (packed << bit_count);
+            let total_bits = bit_count + 56;
+            let byte_count = total_bits / 8;
+            writer.write_fixed_u64(combined, byte_count);
+            bits = combined >> (byte_count * 8);
+            bit_count = total_bits - byte_count * 8;
+        }
+        for &pixel in groups.remainder() {
+            append_seven_bit_literal_code_to_direct(
+                &mut writer,
+                &mut bits,
+                &mut bit_count,
+                u16::from(pixel),
+            );
+        }
+    }
+    append_seven_bit_literal_code_to_direct(&mut writer, &mut bits, &mut bit_count, EOI);
+    while bit_count > 0 {
+        writer.write_byte(bits as u8);
+        bits >>= 8;
+        bit_count = bit_count.saturating_sub(8);
+    }
+    debug_assert_eq!(writer.raw_position, raw_length);
 
-	let mut raw_offset = 0usize;
-	for block in 0..block_count {
-		let length = (raw_length - raw_offset).min(255);
-		unsafe {
-			output
-				.as_mut_ptr()
-				.add(output_start + 1 + block * 256)
-				.write(length as u8);
-		}
-		raw_offset += length;
-	}
-	unsafe {
-		output
-			.as_mut_ptr()
-			.add(output_start + 1 + block_count + raw_length)
-			.write(0);
-		output.set_len(output_start + 2 + block_count + raw_length);
-	}
-	Ok(())
+    let mut raw_offset = 0usize;
+    for block in 0..block_count {
+        let length = (raw_length - raw_offset).min(255);
+        unsafe {
+            output
+                .as_mut_ptr()
+                .add(output_start + 1 + block * 256)
+                .write(length as u8);
+        }
+        raw_offset += length;
+    }
+    unsafe {
+        output
+            .as_mut_ptr()
+            .add(output_start + 1 + block_count + raw_length)
+            .write(0);
+        output.set_len(output_start + 2 + block_count + raw_length);
+    }
+    Ok(())
 }
 
 fn encode_eight_bit_literal_lzw_direct_to<const VALIDATE: bool>(
@@ -10873,20 +11833,23 @@ impl DirectGifSubblockWriter {
     }
 
     #[inline(always)]
-    fn write_fixed(&mut self, bytes: &[u8; 8], length: usize) {
+    fn write_fixed_u64(&mut self, mut value: u64, length: usize) {
         if length > self.block_remaining {
-            for &byte in &bytes[..length] {
-                self.write_byte(byte);
+            for _ in 0..length {
+                self.write_byte(value as u8);
+                value >>= 8;
             }
             return;
         }
+        let value = value.to_le();
         unsafe {
             if length == 8 || (length == 7 && self.block_remaining >= 8) {
                 self.output
                     .add(self.position)
                     .cast::<u64>()
-                    .write_unaligned(u64::from_le_bytes(*bytes));
+                    .write_unaligned(value);
             } else {
+                let bytes = value.to_ne_bytes();
                 std::ptr::copy_nonoverlapping(
                     bytes.as_ptr(),
                     self.output.add(self.position),
@@ -10965,8 +11928,7 @@ fn encode_four_bit_literal_lzw_direct_to<const VALIDATE: bool>(
         let total_bits = bit_count + 28;
         let combined = bits | (u64::from(packed) << bit_count);
         let byte_count = total_bits / 8;
-        let bytes = combined.to_le_bytes();
-        writer.write_fixed(&bytes, byte_count);
+        writer.write_fixed_u64(combined, byte_count);
         bits = combined >> (byte_count * 8);
         bit_count = total_bits - byte_count * 8;
     }
@@ -11073,9 +12035,8 @@ fn encode_nine_bit_literal_lzw_direct_to<const VALIDATE: bool>(
                 | (u64::from(group[6]) << 54);
             let combined = bits | (packed << bit_count);
             let total_bits = bit_count + 63;
-            let bytes = combined.to_le_bytes();
             if total_bits >= 64 {
-                writer.write_fixed(&bytes, 8);
+                writer.write_fixed_u64(combined, 8);
                 bits = if bit_count == 0 {
                     0
                 } else {
@@ -11084,7 +12045,7 @@ fn encode_nine_bit_literal_lzw_direct_to<const VALIDATE: bool>(
                 bit_count = total_bits - 64;
             } else {
                 debug_assert_eq!(bit_count, 0);
-                writer.write_fixed(&bytes, 7);
+                writer.write_fixed_u64(combined, 7);
                 bits = combined >> 56;
                 bit_count = total_bits - 56;
             }
@@ -11127,6 +12088,197 @@ fn encode_nine_bit_literal_lzw_direct_to<const VALIDATE: bool>(
     Ok(())
 }
 
+/// Encode a 256-color literal stream directly from opaque RGBA input using an
+/// exact supplied palette. This is the known-palette counterpart to the
+/// quality histogram mapper below; it avoids a full intermediate index pass.
+fn encode_nine_bit_literal_lzw_palette_mapped_to(
+    output: &mut Vec<u8>,
+    rgba_stream: &[u8],
+    mapper: &PaletteMapper<'_>,
+) -> Result<(), String> {
+    if rgba_stream.is_empty() || rgba_stream.len() % 4 != 0 {
+        return Err("RGBA frame stream is empty or misaligned".to_string());
+    }
+    let pixel_count = rgba_stream.len() / 4;
+    let clear_count = pixel_count.div_ceil(254);
+    let raw_length = pixel_count
+        .checked_add(clear_count)
+        .and_then(|codes| codes.checked_add(1))
+        .and_then(|codes| codes.checked_mul(9))
+        .ok_or_else(|| "Encoded GIF size overflow".to_string())?
+        .div_ceil(8);
+    let block_count = raw_length.div_ceil(255);
+    let output_start = output.len();
+    output.reserve(2 + block_count + raw_length + 8);
+    unsafe {
+        output.as_mut_ptr().add(output_start).write(8);
+    }
+    let mut writer = DirectGifSubblockWriter {
+        output: unsafe { output.as_mut_ptr().add(output_start) },
+        position: 2,
+        block_remaining: 255,
+        raw_position: 0,
+    };
+    let mut bits = 0u64;
+    let mut bit_count = 0usize;
+    let rgba_pointer = rgba_stream.as_ptr();
+    let mut cache_keys = [u32::MAX; 256];
+    let mut cache_values = [0u8; 256];
+
+    for chunk_start in (0..pixel_count).step_by(254) {
+        append_nine_bit_literal_code_to_direct(&mut writer, &mut bits, &mut bit_count, 256);
+        let chunk_end = (chunk_start + 254).min(pixel_count);
+        let mut pixel_index = chunk_start;
+        while pixel_index + 7 <= chunk_end {
+            let rgba_offset = pixel_index * 4;
+            let (packed0, packed1) = unsafe { read_rgba_pair(rgba_pointer, rgba_offset) };
+            let (packed2, packed3) = unsafe { read_rgba_pair(rgba_pointer, rgba_offset + 8) };
+            let (packed4, packed5) = unsafe { read_rgba_pair(rgba_pointer, rgba_offset + 16) };
+            let packed6 = u32::from_le(unsafe {
+                std::ptr::read_unaligned(rgba_pointer.add(rgba_offset + 24).cast())
+            });
+            let code0 = exact_palette_index_packed_cached(
+                mapper,
+                packed0,
+                &mut cache_keys,
+                &mut cache_values,
+            )?;
+            let code1 = exact_palette_index_packed_cached(
+                mapper,
+                packed1,
+                &mut cache_keys,
+                &mut cache_values,
+            )?;
+            let code2 = exact_palette_index_packed_cached(
+                mapper,
+                packed2,
+                &mut cache_keys,
+                &mut cache_values,
+            )?;
+            let code3 = exact_palette_index_packed_cached(
+                mapper,
+                packed3,
+                &mut cache_keys,
+                &mut cache_values,
+            )?;
+            let code4 = exact_palette_index_packed_cached(
+                mapper,
+                packed4,
+                &mut cache_keys,
+                &mut cache_values,
+            )?;
+            let code5 = exact_palette_index_packed_cached(
+                mapper,
+                packed5,
+                &mut cache_keys,
+                &mut cache_values,
+            )?;
+            let code6 = exact_palette_index_packed_cached(
+                mapper,
+                packed6,
+                &mut cache_keys,
+                &mut cache_values,
+            )?;
+            let packed_codes = u64::from(code0)
+                | (u64::from(code1) << 9)
+                | (u64::from(code2) << 18)
+                | (u64::from(code3) << 27)
+                | (u64::from(code4) << 36)
+                | (u64::from(code5) << 45)
+                | (u64::from(code6) << 54);
+            let combined = bits | (packed_codes << bit_count);
+            let total_bits = bit_count + 63;
+            if total_bits >= 64 {
+                writer.write_fixed_u64(combined, 8);
+                bits = if bit_count == 0 {
+                    0
+                } else {
+                    packed_codes >> (64 - bit_count)
+                };
+                bit_count = total_bits - 64;
+            } else {
+                debug_assert_eq!(bit_count, 0);
+                writer.write_fixed_u64(combined, 7);
+                bits = combined >> 56;
+                bit_count = total_bits - 56;
+            }
+            pixel_index += 7;
+        }
+        while pixel_index < chunk_end {
+            let packed = u32::from_le(unsafe {
+                std::ptr::read_unaligned(rgba_pointer.add(pixel_index * 4).cast())
+            });
+            let code = exact_palette_index_packed_cached(
+                mapper,
+                packed,
+                &mut cache_keys,
+                &mut cache_values,
+            )?;
+            append_nine_bit_literal_code_to_direct(
+                &mut writer,
+                &mut bits,
+                &mut bit_count,
+                u16::from(code),
+            );
+            pixel_index += 1;
+        }
+    }
+    append_nine_bit_literal_code_to_direct(&mut writer, &mut bits, &mut bit_count, 257);
+    while bit_count > 0 {
+        writer.write_byte(bits as u8);
+        bits >>= 8;
+        bit_count = bit_count.saturating_sub(8);
+    }
+    debug_assert_eq!(writer.raw_position, raw_length);
+    let mut raw_offset = 0usize;
+    for block in 0..block_count {
+        let length = (raw_length - raw_offset).min(255);
+        unsafe {
+            output
+                .as_mut_ptr()
+                .add(output_start + 1 + block * 256)
+                .write(length as u8);
+        }
+        raw_offset += length;
+    }
+    unsafe {
+        output
+            .as_mut_ptr()
+            .add(output_start + 1 + block_count + raw_length)
+            .write(0);
+        output.set_len(output_start + 2 + block_count + raw_length);
+    }
+    Ok(())
+}
+
+#[inline(always)]
+fn exact_palette_index_packed(mapper: &PaletteMapper<'_>, packed: u32) -> Result<u8, String> {
+    mapper
+        .exact_index(packed as u8, (packed >> 8) as u8, (packed >> 16) as u8)
+        .ok_or_else(|| {
+            "Pixel-perfect GIF encoding found an RGBA color outside the supplied palette"
+                .to_string()
+        })
+}
+
+#[inline(always)]
+fn exact_palette_index_packed_cached(
+    mapper: &PaletteMapper<'_>,
+    packed: u32,
+    cache_keys: &mut [u32; 256],
+    cache_values: &mut [u8; 256],
+) -> Result<u8, String> {
+    let rgb = packed & 0x00ff_ffff;
+    let slot = (rgb as usize).wrapping_mul(2_654_435_761) & 255;
+    if cache_keys[slot] == rgb {
+        return Ok(cache_values[slot]);
+    }
+    let index = exact_palette_index_packed(mapper, packed)?;
+    cache_keys[slot] = rgb;
+    cache_values[slot] = index;
+    Ok(index)
+}
+
 /// Encode the 256-color literal stream directly from RGBA input. The quality
 /// palette has already been built, so retaining a full indexed scratch buffer
 fn encode_nine_bit_literal_lzw_mapped_to<const BITS: usize, const HAS_TRANSPARENT: bool>(
@@ -11164,35 +12316,16 @@ fn encode_nine_bit_literal_lzw_mapped_to<const BITS: usize, const HAS_TRANSPAREN
     let rgba_pointer = rgba_stream.as_ptr();
 
     for chunk_start in (0..pixel_count).step_by(254) {
-        append_nine_bit_literal_code_to_direct(
-            &mut writer,
-            &mut bits,
-            &mut bit_count,
-            256,
-        );
+        append_nine_bit_literal_code_to_direct(&mut writer, &mut bits, &mut bit_count, 256);
         let chunk_end = (chunk_start + 254).min(pixel_count);
         let mut pixel_index = chunk_start;
         while pixel_index + 7 <= chunk_end {
-            let packed0 = u32::from_le(unsafe {
-                std::ptr::read_unaligned(rgba_pointer.add(pixel_index * 4).cast())
-            });
-            let packed1 = u32::from_le(unsafe {
-                std::ptr::read_unaligned(rgba_pointer.add((pixel_index + 1) * 4).cast())
-            });
-            let packed2 = u32::from_le(unsafe {
-                std::ptr::read_unaligned(rgba_pointer.add((pixel_index + 2) * 4).cast())
-            });
-            let packed3 = u32::from_le(unsafe {
-                std::ptr::read_unaligned(rgba_pointer.add((pixel_index + 3) * 4).cast())
-            });
-            let packed4 = u32::from_le(unsafe {
-                std::ptr::read_unaligned(rgba_pointer.add((pixel_index + 4) * 4).cast())
-            });
-            let packed5 = u32::from_le(unsafe {
-                std::ptr::read_unaligned(rgba_pointer.add((pixel_index + 5) * 4).cast())
-            });
+            let rgba_offset = pixel_index * 4;
+            let (packed0, packed1) = unsafe { read_rgba_pair(rgba_pointer, rgba_offset) };
+            let (packed2, packed3) = unsafe { read_rgba_pair(rgba_pointer, rgba_offset + 8) };
+            let (packed4, packed5) = unsafe { read_rgba_pair(rgba_pointer, rgba_offset + 16) };
             let packed6 = u32::from_le(unsafe {
-                std::ptr::read_unaligned(rgba_pointer.add((pixel_index + 6) * 4).cast())
+                std::ptr::read_unaligned(rgba_pointer.add(rgba_offset + 24).cast())
             });
             let code0 = mapped_quality_pixel::<BITS, HAS_TRANSPARENT>(
                 packed0,
@@ -11246,7 +12379,7 @@ fn encode_nine_bit_literal_lzw_mapped_to<const BITS: usize, const HAS_TRANSPAREN
             let combined = bits | (packed_codes << bit_count);
             let total_bits = bit_count + 63;
             if total_bits >= 64 {
-                writer.write_fixed(&combined.to_le_bytes(), 8);
+                writer.write_fixed_u64(combined, 8);
                 bits = if bit_count == 0 {
                     0
                 } else {
@@ -11255,7 +12388,7 @@ fn encode_nine_bit_literal_lzw_mapped_to<const BITS: usize, const HAS_TRANSPAREN
                 bit_count = total_bits - 64;
             } else {
                 debug_assert_eq!(bit_count, 0);
-                writer.write_fixed(&combined.to_le_bytes(), 7);
+                writer.write_fixed_u64(combined, 7);
                 bits = combined >> 56;
                 bit_count = total_bits - 56;
             }
@@ -11280,12 +12413,7 @@ fn encode_nine_bit_literal_lzw_mapped_to<const BITS: usize, const HAS_TRANSPAREN
             pixel_index += 1;
         }
     }
-    append_nine_bit_literal_code_to_direct(
-        &mut writer,
-        &mut bits,
-        &mut bit_count,
-        257,
-    );
+    append_nine_bit_literal_code_to_direct(&mut writer, &mut bits, &mut bit_count, 257);
     while bit_count > 0 {
         writer.write_byte(bits as u8);
         bits >>= 8;
@@ -11377,38 +12505,50 @@ fn encode_nine_bit_literal_lzw_histogram_indices_impl<const HAS_TRANSPARENT: boo
         let chunk_end = (chunk_start + 254).min(pixel_count);
         let mut pixel_index = chunk_start;
         while pixel_index + 7 <= chunk_end {
+            // The histogram-cell stream is a dense u16 array. Read a complete
+            // seven-pixel group in one unaligned load, matching the 63 bits of
+            // 9-bit literal payload emitted below.
+            let packed_indices = u64::from_le(unsafe {
+                std::ptr::read_unaligned(histogram_pointer.add(pixel_index).cast::<u64>())
+            });
             let code0 = mapped_quality_histogram_pixel::<HAS_TRANSPARENT>(
-                unsafe { *histogram_pointer.add(pixel_index) },
+                packed_indices as u16,
                 transparent_index,
                 histogram_to_palette,
             );
             let code1 = mapped_quality_histogram_pixel::<HAS_TRANSPARENT>(
-                unsafe { *histogram_pointer.add(pixel_index + 1) },
+                (packed_indices >> 16) as u16,
                 transparent_index,
                 histogram_to_palette,
             );
             let code2 = mapped_quality_histogram_pixel::<HAS_TRANSPARENT>(
-                unsafe { *histogram_pointer.add(pixel_index + 2) },
+                (packed_indices >> 32) as u16,
                 transparent_index,
                 histogram_to_palette,
             );
             let code3 = mapped_quality_histogram_pixel::<HAS_TRANSPARENT>(
-                unsafe { *histogram_pointer.add(pixel_index + 3) },
+                (packed_indices >> 48) as u16,
                 transparent_index,
                 histogram_to_palette,
             );
             let code4 = mapped_quality_histogram_pixel::<HAS_TRANSPARENT>(
-                unsafe { *histogram_pointer.add(pixel_index + 4) },
+                u16::from_le(unsafe {
+                    std::ptr::read_unaligned(histogram_pointer.add(pixel_index + 4).cast::<u16>())
+                }),
                 transparent_index,
                 histogram_to_palette,
             );
             let code5 = mapped_quality_histogram_pixel::<HAS_TRANSPARENT>(
-                unsafe { *histogram_pointer.add(pixel_index + 5) },
+                u16::from_le(unsafe {
+                    std::ptr::read_unaligned(histogram_pointer.add(pixel_index + 5).cast::<u16>())
+                }),
                 transparent_index,
                 histogram_to_palette,
             );
             let code6 = mapped_quality_histogram_pixel::<HAS_TRANSPARENT>(
-                unsafe { *histogram_pointer.add(pixel_index + 6) },
+                u16::from_le(unsafe {
+                    std::ptr::read_unaligned(histogram_pointer.add(pixel_index + 6).cast::<u16>())
+                }),
                 transparent_index,
                 histogram_to_palette,
             );
@@ -11422,7 +12562,7 @@ fn encode_nine_bit_literal_lzw_histogram_indices_impl<const HAS_TRANSPARENT: boo
             let combined = bits | (packed_codes << bit_count);
             let total_bits = bit_count + 63;
             if total_bits >= 64 {
-                writer.write_fixed(&combined.to_le_bytes(), 8);
+                writer.write_fixed_u64(combined, 8);
                 bits = if bit_count == 0 {
                     0
                 } else {
@@ -11431,7 +12571,7 @@ fn encode_nine_bit_literal_lzw_histogram_indices_impl<const HAS_TRANSPARENT: boo
                 bit_count = total_bits - 64;
             } else {
                 debug_assert_eq!(bit_count, 0);
-                writer.write_fixed(&combined.to_le_bytes(), 7);
+                writer.write_fixed_u64(combined, 7);
                 bits = combined >> 56;
                 bit_count = total_bits - 56;
             }
@@ -11527,18 +12667,18 @@ fn append_six_bit_literal_code_to_direct(
 
 #[inline(always)]
 fn append_seven_bit_literal_code_to_direct(
-	writer: &mut DirectGifSubblockWriter,
-	bits: &mut u64,
-	bit_count: &mut usize,
-	code: u16,
+    writer: &mut DirectGifSubblockWriter,
+    bits: &mut u64,
+    bit_count: &mut usize,
+    code: u16,
 ) {
-	*bits |= u64::from(code) << *bit_count;
-	*bit_count += 7;
-	while *bit_count >= 8 {
-		writer.write_byte(*bits as u8);
-		*bits >>= 8;
-		*bit_count -= 8;
-	}
+    *bits |= u64::from(code) << *bit_count;
+    *bit_count += 7;
+    while *bit_count >= 8 {
+        writer.write_byte(*bits as u8);
+        *bits >>= 8;
+        *bit_count -= 8;
+    }
 }
 
 #[inline(always)]
@@ -12102,6 +13242,587 @@ fn append_nine_bit_literal_code(
     }
 }
 
+#[allow(dead_code)]
+fn encode_rgba_two_bit_literal_raw_to<F>(
+    output: &mut Vec<u8>,
+    pixel_count: usize,
+    mut next_index: F,
+) -> Result<(), String>
+where
+    F: FnMut() -> Option<u8>,
+{
+    if pixel_count == 0 {
+        return Err("Indexed pixel stream is empty".to_string());
+    }
+    let clear_count = pixel_count.div_ceil(2);
+    let raw_length = ((pixel_count + clear_count + 1) * 3).div_ceil(8);
+    let block_count = raw_length.div_ceil(255);
+    output.push(2);
+    let raw_start = output.len();
+    output.resize(raw_start + raw_length, 0);
+    let output_pointer = unsafe { output.as_mut_ptr().add(raw_start) };
+    let mut output_position = 0usize;
+    let mut bits = 0u64;
+    let mut bit_count = 0usize;
+    let mut remaining_pairs = pixel_count / 2;
+    while remaining_pairs >= 7 {
+        let mut packed = 0u64;
+        for pair in 0..7 {
+            let first =
+                u64::from(next_index().ok_or_else(|| "Indexed pixel stream is empty".to_string())?);
+            let second =
+                u64::from(next_index().ok_or_else(|| "Indexed pixel stream is empty".to_string())?);
+            packed |= (4 | (first << 3) | (second << 6)) << (pair * 9);
+        }
+        let combined = bits | (packed << bit_count);
+        let total_bits = bit_count + 63;
+        if total_bits >= 64 {
+            let bytes = combined.to_le_bytes();
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    bytes.as_ptr(),
+                    output_pointer.add(output_position),
+                    8,
+                );
+            }
+            output_position += 8;
+            bits = if bit_count == 0 {
+                0
+            } else {
+                packed >> (64 - bit_count)
+            };
+            bit_count = total_bits - 64;
+        } else {
+            let bytes = combined.to_le_bytes();
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    bytes.as_ptr(),
+                    output_pointer.add(output_position),
+                    7,
+                );
+            }
+            output_position += 7;
+            bits = combined >> 56;
+            bit_count = total_bits - 56;
+        }
+        remaining_pairs -= 7;
+    }
+    while remaining_pairs > 0 {
+        let first =
+            u64::from(next_index().ok_or_else(|| "Indexed pixel stream is empty".to_string())?);
+        let second =
+            u64::from(next_index().ok_or_else(|| "Indexed pixel stream is empty".to_string())?);
+        bits |= (4 | (first << 3) | (second << 6)) << bit_count;
+        bit_count += 9;
+        while bit_count >= 8 {
+            unsafe { output_pointer.add(output_position).write(bits as u8) };
+            output_position += 1;
+            bits >>= 8;
+            bit_count -= 8;
+        }
+        remaining_pairs -= 1;
+    }
+    if pixel_count % 2 != 0 {
+        let pixel =
+            u64::from(next_index().ok_or_else(|| "Indexed pixel stream is empty".to_string())?);
+        bits |= (4 | (pixel << 3)) << bit_count;
+        bit_count += 6;
+    }
+    bits |= 5 << bit_count;
+    bit_count += 3;
+    while bit_count > 0 {
+        unsafe { output_pointer.add(output_position).write(bits as u8) };
+        output_position += 1;
+        bits >>= 8;
+        bit_count = bit_count.saturating_sub(8);
+    }
+    debug_assert_eq!(output_position, raw_length);
+
+    let final_length = raw_start + raw_length + block_count + 1;
+    output.resize(final_length, 0);
+    for block in (0..block_count).rev() {
+        let source_start = raw_start + block * 255;
+        let length = (raw_length - block * 255).min(255);
+        let destination_start = raw_start + block * 256;
+        output.copy_within(source_start..source_start + length, destination_start + 1);
+        output[destination_start] = length as u8;
+    }
+    output[raw_start + block_count + raw_length] = 0;
+    Ok(())
+}
+
+#[allow(dead_code)]
+#[inline(always)]
+fn encode_rgba_two_bit_literal_source_to<F>(
+    output: &mut Vec<u8>,
+    pixel_count: usize,
+    mut next_index: F,
+) -> Result<(), String>
+where
+    F: FnMut() -> Option<u8>,
+{
+    if pixel_count == 0 {
+        return Err("Indexed pixel stream is empty".to_string());
+    }
+    let pair_count = pixel_count / 2;
+    let raw_bit_length = pair_count * 9 + usize::from(pixel_count % 2 != 0) * 6 + 3;
+    let raw_length = raw_bit_length.div_ceil(8);
+    let block_count = raw_length.div_ceil(255);
+    let output_start = output.len();
+    let output_length = output_start + 2 + block_count + raw_length;
+    output.reserve(output_length.saturating_sub(output.len()));
+    unsafe {
+        output.set_len(output_length);
+        output.as_mut_ptr().add(output_start).write(2);
+    }
+    let mut writer = DirectGifSubblockWriter {
+        output: unsafe { output.as_mut_ptr().add(output_start) },
+        position: 2,
+        block_remaining: 255,
+        raw_position: 0,
+    };
+    let mut bits = 0u64;
+    let mut bit_count = 0usize;
+    let mut remaining_pairs = pair_count;
+    while remaining_pairs >= 7 {
+        let mut packed = 0u64;
+        for pair in 0..7 {
+            let first =
+                u64::from(next_index().ok_or_else(|| "Indexed pixel stream is empty".to_string())?);
+            let second =
+                u64::from(next_index().ok_or_else(|| "Indexed pixel stream is empty".to_string())?);
+            packed |= (4 | (first << 3) | (second << 6)) << (pair * 9);
+        }
+        let combined = bits | (packed << bit_count);
+        let total_bits = bit_count + 63;
+        if total_bits >= 64 {
+            writer.write_fixed_u64(combined, 8);
+            bits = if bit_count == 0 {
+                0
+            } else {
+                packed >> (64 - bit_count)
+            };
+            bit_count = total_bits - 64;
+        } else {
+            debug_assert_eq!(bit_count, 0);
+            writer.write_fixed_u64(combined, 7);
+            bits = combined >> 56;
+            bit_count = total_bits - 56;
+        }
+        remaining_pairs -= 7;
+    }
+    while remaining_pairs > 0 {
+        let first =
+            u64::from(next_index().ok_or_else(|| "Indexed pixel stream is empty".to_string())?);
+        let second =
+            u64::from(next_index().ok_or_else(|| "Indexed pixel stream is empty".to_string())?);
+        let packed = 4 | (first << 3) | (second << 6);
+        let combined = bits | (packed << bit_count);
+        let total_bits = bit_count + 9;
+        let byte_count = total_bits / 8;
+        writer.write_fixed_u64(combined, byte_count);
+        bits = combined >> (byte_count * 8);
+        bit_count = total_bits - byte_count * 8;
+        remaining_pairs -= 1;
+    }
+    if pixel_count % 2 != 0 {
+        let pixel =
+            u64::from(next_index().ok_or_else(|| "Indexed pixel stream is empty".to_string())?);
+        bits |= (4 | (pixel << 3)) << bit_count;
+        bit_count += 6;
+    }
+    bits |= 5 << bit_count;
+    bit_count += 3;
+    while bit_count > 0 {
+        writer.write_byte(bits as u8);
+        bits >>= 8;
+        bit_count = bit_count.saturating_sub(8);
+    }
+    debug_assert_eq!(writer.raw_position, raw_length);
+
+    let mut raw_offset = 0usize;
+    for block in 0..block_count {
+        let length = (raw_length - raw_offset).min(255);
+        unsafe {
+            output
+                .as_mut_ptr()
+                .add(output_start + 1 + block * 256)
+                .write(length as u8);
+        }
+        raw_offset += length;
+    }
+    unsafe {
+        output
+            .as_mut_ptr()
+            .add(output_start + 1 + block_count + raw_length)
+            .write(0);
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+#[inline(always)]
+fn encode_rgba_five_bit_literal_source_to<F>(
+    output: &mut Vec<u8>,
+    pixel_count: usize,
+    mut next_index: F,
+) -> Result<(), String>
+where
+    F: FnMut() -> Option<u8>,
+{
+    if pixel_count == 0 {
+        return Err("Indexed pixel stream is empty".to_string());
+    }
+    const CODE_BITS: usize = 5;
+    const CLEAR: u16 = 16;
+    const EOI: u16 = 17;
+    const LITERALS_PER_CLEAR: usize = 14;
+    let clear_count = pixel_count.div_ceil(LITERALS_PER_CLEAR);
+    let raw_length = ((pixel_count + clear_count + 1) * CODE_BITS).div_ceil(8);
+    let block_count = raw_length.div_ceil(255);
+    let output_start = output.len();
+    output.reserve(2 + block_count + raw_length + 8);
+    unsafe {
+        output
+            .as_mut_ptr()
+            .add(output_start)
+            .write(CODE_BITS as u8 - 1);
+    }
+    let mut writer = DirectGifSubblockWriter {
+        output: unsafe { output.as_mut_ptr().add(output_start) },
+        position: 2,
+        block_remaining: 255,
+        raw_position: 0,
+    };
+    let mut bits = 0u64;
+    let mut bit_count = 0usize;
+    let mut remaining = pixel_count;
+    while remaining > 0 {
+        bits |= u64::from(CLEAR) << bit_count;
+        bit_count += CODE_BITS;
+        while bit_count >= 8 {
+            writer.write_byte(bits as u8);
+            bits >>= 8;
+            bit_count -= 8;
+        }
+        let literals = remaining.min(LITERALS_PER_CLEAR);
+        let mut groups = literals / 8;
+        while groups > 0 {
+            let mut packed = 0u64;
+            for index in 0..8 {
+                let pixel = u64::from(
+                    next_index().ok_or_else(|| "Indexed pixel stream is empty".to_string())?,
+                );
+                packed |= pixel << (index * CODE_BITS);
+            }
+            let combined = bits | (packed << bit_count);
+            let total_bits = bit_count + CODE_BITS * 8;
+            let byte_count = total_bits / 8;
+            writer.write_fixed_u64(combined, byte_count);
+            bits = combined >> (byte_count * 8);
+            bit_count = total_bits - byte_count * 8;
+            groups -= 1;
+        }
+        for _ in 0..(literals % 8) {
+            let pixel =
+                u64::from(next_index().ok_or_else(|| "Indexed pixel stream is empty".to_string())?);
+            bits |= pixel << bit_count;
+            bit_count += CODE_BITS;
+            while bit_count >= 8 {
+                writer.write_byte(bits as u8);
+                bits >>= 8;
+                bit_count -= 8;
+            }
+        }
+        remaining -= literals;
+    }
+    bits |= u64::from(EOI) << bit_count;
+    bit_count += CODE_BITS;
+    while bit_count > 0 {
+        writer.write_byte(bits as u8);
+        bits >>= 8;
+        bit_count = bit_count.saturating_sub(8);
+    }
+    debug_assert_eq!(writer.raw_position, raw_length);
+
+    let mut raw_offset = 0usize;
+    for block in 0..block_count {
+        let length = (raw_length - raw_offset).min(255);
+        unsafe {
+            output
+                .as_mut_ptr()
+                .add(output_start + 1 + block * 256)
+                .write(length as u8);
+        }
+        raw_offset += length;
+    }
+    unsafe {
+        output
+            .as_mut_ptr()
+            .add(output_start + 1 + block_count + raw_length)
+            .write(0);
+        output.set_len(output_start + 2 + block_count + raw_length);
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+#[inline(always)]
+fn encode_rgba_five_bit_literal_raw_to<F>(
+    output: &mut Vec<u8>,
+    pixel_count: usize,
+    mut next_index: F,
+) -> Result<(), String>
+where
+    F: FnMut() -> Option<u8>,
+{
+    if pixel_count == 0 {
+        return Err("Indexed pixel stream is empty".to_string());
+    }
+    const CODE_BITS: usize = 5;
+    const CLEAR: u64 = 16;
+    const EOI: u64 = 17;
+    const LITERALS_PER_CLEAR: usize = 14;
+    let clear_count = pixel_count.div_ceil(LITERALS_PER_CLEAR);
+    let raw_length = ((pixel_count + clear_count + 1) * CODE_BITS).div_ceil(8);
+    let block_count = raw_length.div_ceil(255);
+    output.push(4);
+    let raw_start = output.len();
+    output.resize(raw_start + raw_length, 0);
+    let output_pointer = unsafe { output.as_mut_ptr().add(raw_start) };
+    let mut output_position = 0usize;
+    let mut bits = 0u64;
+    let mut bit_count = 0usize;
+    let mut remaining = pixel_count;
+    while remaining > 0 {
+        bits |= CLEAR << bit_count;
+        bit_count += CODE_BITS;
+        while bit_count >= 8 {
+            unsafe { output_pointer.add(output_position).write(bits as u8) };
+            output_position += 1;
+            bits >>= 8;
+            bit_count -= 8;
+        }
+        let literals = remaining.min(LITERALS_PER_CLEAR);
+        let mut groups = literals / 8;
+        while groups > 0 {
+            let mut packed = 0u64;
+            for index in 0..8 {
+                let pixel = u64::from(
+                    next_index().ok_or_else(|| "Indexed pixel stream is empty".to_string())?,
+                );
+                packed |= pixel << (index * CODE_BITS);
+            }
+            bits |= packed << bit_count;
+            bit_count += CODE_BITS * 8;
+            while bit_count >= 8 {
+                unsafe { output_pointer.add(output_position).write(bits as u8) };
+                output_position += 1;
+                bits >>= 8;
+                bit_count -= 8;
+            }
+            groups -= 1;
+        }
+        for _ in 0..(literals % 8) {
+            let pixel =
+                u64::from(next_index().ok_or_else(|| "Indexed pixel stream is empty".to_string())?);
+            bits |= pixel << bit_count;
+            bit_count += CODE_BITS;
+            while bit_count >= 8 {
+                unsafe { output_pointer.add(output_position).write(bits as u8) };
+                output_position += 1;
+                bits >>= 8;
+                bit_count -= 8;
+            }
+        }
+        remaining -= literals;
+    }
+    bits |= EOI << bit_count;
+    bit_count += CODE_BITS;
+    while bit_count > 0 {
+        unsafe { output_pointer.add(output_position).write(bits as u8) };
+        output_position += 1;
+        bits >>= 8;
+        bit_count = bit_count.saturating_sub(8);
+    }
+    debug_assert_eq!(output_position, raw_length);
+
+    let final_length = raw_start + raw_length + block_count + 1;
+    output.resize(final_length, 0);
+    for block in (0..block_count).rev() {
+        let source_start = raw_start + block * 255;
+        let length = (raw_length - block * 255).min(255);
+        let destination_start = raw_start + block * 256;
+        output.copy_within(source_start..source_start + length, destination_start + 1);
+        output[destination_start] = length as u8;
+    }
+    output[raw_start + block_count + raw_length] = 0;
+    Ok(())
+}
+
+#[inline(always)]
+fn encode_rgba_two_bit_literal_frame_to(
+    output: &mut Vec<u8>,
+    frame: &[u8],
+    mapper: &PaletteMapper<'_>,
+    alpha_threshold: u8,
+    exact_alpha: bool,
+    exact_palette: bool,
+) -> Result<(), String> {
+    let pointer = frame.as_ptr();
+    let pixel_count = frame.len() / 4;
+    let mut offset = 0usize;
+    let mut invalid_alpha = false;
+    let mut invalid_palette = false;
+    let mut cache_keys = [u32::MAX; 16];
+    let mut cache_values = [0u8; 16];
+    encode_rgba_two_bit_literal_source_to(output, pixel_count, || {
+        let packed =
+            unsafe { u32::from_le(std::ptr::read_unaligned(pointer.add(offset).cast::<u32>())) };
+        offset += 4;
+        let alpha = (packed >> 24) as u8;
+        if alpha < alpha_threshold || (exact_alpha && alpha != 255) {
+            invalid_alpha = true;
+        }
+        let rgb = packed & 0x00ff_ffff;
+        let slot = (rgb as usize).wrapping_mul(2_654_435_761) & 15;
+        let index = if cache_keys[slot] == rgb {
+            cache_values[slot]
+        } else {
+            let index = if exact_palette {
+                mapper.exact_index(packed as u8, (packed >> 8) as u8, (packed >> 16) as u8)
+            } else {
+                Some(mapper.index_pixel(packed as u8, (packed >> 8) as u8, (packed >> 16) as u8))
+            };
+            let index = index.unwrap_or_else(|| {
+                invalid_palette = true;
+                0
+            });
+            cache_keys[slot] = rgb;
+            cache_values[slot] = index;
+            index
+        };
+        Some(index)
+    })?;
+    if invalid_alpha || invalid_palette {
+        return Err(RGBA_DELTA_FALLBACK.to_string());
+    }
+    Ok(())
+}
+
+#[inline(always)]
+fn encode_rgba_two_bit_literal_rect_to(
+    output: &mut Vec<u8>,
+    rgba_stream: &[u8],
+    canvas_width: usize,
+    rect: ChangedRectU32,
+    mapper: &PaletteMapper<'_>,
+    alpha_threshold: u8,
+    exact_alpha: bool,
+    exact_palette: bool,
+) -> Result<(), String> {
+    let pointer = rgba_stream.as_ptr();
+    let pixel_count = rect.width * rect.height;
+    let row_skip = (canvas_width - rect.width) * 4;
+    let mut offset = (rect.y * canvas_width + rect.x) * 4;
+    let mut row_remaining = rect.width;
+    let mut invalid_alpha = false;
+    let mut invalid_palette = false;
+    let mut cache_keys = [u32::MAX; 16];
+    let mut cache_values = [0u8; 16];
+    encode_rgba_two_bit_literal_source_to(output, pixel_count, || {
+        let packed =
+            unsafe { u32::from_le(std::ptr::read_unaligned(pointer.add(offset).cast::<u32>())) };
+        offset += 4;
+        let alpha = (packed >> 24) as u8;
+        if alpha < alpha_threshold || (exact_alpha && alpha != 255) {
+            invalid_alpha = true;
+        }
+        row_remaining -= 1;
+        if row_remaining == 0 {
+            offset += row_skip;
+            row_remaining = rect.width;
+        }
+        let rgb = packed & 0x00ff_ffff;
+        let slot = (rgb as usize).wrapping_mul(2_654_435_761) & 15;
+        let index = if cache_keys[slot] == rgb {
+            cache_values[slot]
+        } else {
+            let index = if exact_palette {
+                mapper.exact_index(packed as u8, (packed >> 8) as u8, (packed >> 16) as u8)
+            } else {
+                Some(mapper.index_pixel(packed as u8, (packed >> 8) as u8, (packed >> 16) as u8))
+            };
+            let index = index.unwrap_or_else(|| {
+                invalid_palette = true;
+                0
+            });
+            cache_keys[slot] = rgb;
+            cache_values[slot] = index;
+            index
+        };
+        Some(index)
+    })?;
+    if invalid_alpha || invalid_palette {
+        return Err(RGBA_DELTA_FALLBACK.to_string());
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+#[inline(always)]
+fn encode_rgba_five_bit_literal_frame_to(
+    output: &mut Vec<u8>,
+    frame: &[u8],
+    mapper: &PaletteMapper<'_>,
+    alpha_threshold: u8,
+    exact_alpha: bool,
+    exact_palette: bool,
+) -> Result<(), String> {
+    let pointer = frame.as_ptr();
+    let pixel_count = frame.len() / 4;
+    let mut offset = 0usize;
+    let mut invalid_alpha = false;
+    let mut invalid_palette = false;
+    // The small-palette exact path sees at most sixteen distinct RGB keys;
+    // a 64-slot direct-mapped cache removes most collisions without making
+    // each frame pay for a large cold cache.
+    let mut cache_keys = [u32::MAX; 64];
+    let mut cache_values = [0u8; 64];
+    encode_rgba_five_bit_literal_source_to(output, pixel_count, || {
+        let packed =
+            unsafe { u32::from_le(std::ptr::read_unaligned(pointer.add(offset).cast::<u32>())) };
+        offset += 4;
+        let alpha = (packed >> 24) as u8;
+        if alpha < alpha_threshold || (exact_alpha && alpha != 255) {
+            invalid_alpha = true;
+        }
+        let rgb = packed & 0x00ff_ffff;
+        let slot = (rgb as usize).wrapping_mul(2_654_435_761) & 63;
+        let index = if cache_keys[slot] == rgb {
+            cache_values[slot]
+        } else {
+            let index = if exact_palette {
+                mapper.exact_index(packed as u8, (packed >> 8) as u8, (packed >> 16) as u8)
+            } else {
+                Some(mapper.index_pixel(packed as u8, (packed >> 8) as u8, (packed >> 16) as u8))
+            };
+            let index = index.unwrap_or_else(|| {
+                invalid_palette = true;
+                0
+            });
+            cache_keys[slot] = rgb;
+            cache_values[slot] = index;
+            index
+        };
+        Some(index)
+    })?;
+    if invalid_alpha || invalid_palette {
+        return Err(RGBA_DELTA_FALLBACK.to_string());
+    }
+    Ok(())
+}
+
 fn encode_two_bit_literal_codes(
     output: &mut Vec<u8>,
     index_stream: &[u8],
@@ -12240,6 +13961,7 @@ fn encode_indexed_lzw_slice_to(
     if index_stream.is_empty() {
         return Err("Indexed pixel stream is empty".to_string());
     }
+    tables.ensure_capacity(color_count);
     if min_code_size == 8 && color_count == 256 {
         return encode_indexed_lzw_256_to(output, index_stream, tables);
     }
@@ -12354,6 +14076,7 @@ fn encode_indexed_lzw_256_to(
     index_stream: &[u8],
     tables: &mut LzwEncodeTables,
 ) -> Result<(), String> {
+    tables.ensure_capacity(256);
     output.push(8);
     let mut sub_len_pos = output.len();
     output.push(0);
@@ -12524,6 +14247,7 @@ where
     if index_count == 0 {
         return Err("Indexed pixel stream is empty".to_string());
     }
+    tables.ensure_capacity(color_count);
 
     output.push(min_code_size);
     let mut sub_len_pos = output.len();
@@ -12647,6 +14371,163 @@ where
     }
 
     Ok(())
+}
+
+#[allow(dead_code)]
+fn encode_rgba_lzw_frame_to_palette(
+    output: &mut Vec<u8>,
+    frame: &[u8],
+    mapper: &PaletteMapper<'_>,
+    min_code_size: u8,
+    color_count: usize,
+    tables: &mut LzwEncodeTables,
+) -> Result<(), String> {
+    let pixel_count = frame.len() / 4;
+    let pointer = frame.as_ptr();
+    if mapper.palette_rgb.len() <= 16 {
+        let mut offset = 0usize;
+        let mut cache_keys = [u32::MAX; 16];
+        let mut cache_values = [0u8; 16];
+        return encode_indexed_lzw_source_to(
+            output,
+            pixel_count,
+            min_code_size,
+            color_count,
+            tables,
+            || {
+                let packed = unsafe {
+                    u32::from_le(std::ptr::read_unaligned(pointer.add(offset).cast::<u32>()))
+                };
+                offset += 4;
+                let rgb = packed & 0x00ff_ffff;
+                let slot = (rgb as usize).wrapping_mul(2_654_435_761) & 15;
+                let index = if cache_keys[slot] == rgb {
+                    cache_values[slot]
+                } else {
+                    let index =
+                        mapper.index_pixel(packed as u8, (packed >> 8) as u8, (packed >> 16) as u8);
+                    cache_keys[slot] = rgb;
+                    cache_values[slot] = index;
+                    index
+                };
+                Some(index)
+            },
+        );
+    }
+
+    let mut offset = 0usize;
+    let mut cached_rgb = u32::MAX;
+    let mut cached_index = 0u8;
+    encode_indexed_lzw_source_to(
+        output,
+        pixel_count,
+        min_code_size,
+        color_count,
+        tables,
+        || {
+            let packed = unsafe {
+                u32::from_le(std::ptr::read_unaligned(pointer.add(offset).cast::<u32>()))
+            };
+            offset += 4;
+            let rgb = packed & 0x00ff_ffff;
+            let index = if rgb == cached_rgb {
+                cached_index
+            } else {
+                let index =
+                    mapper.index_pixel(packed as u8, (packed >> 8) as u8, (packed >> 16) as u8);
+                cached_rgb = rgb;
+                cached_index = index;
+                index
+            };
+            Some(index)
+        },
+    )
+}
+
+fn encode_rgba_lzw_rect_to_palette(
+    output: &mut Vec<u8>,
+    rgba_stream: &[u8],
+    canvas_width: usize,
+    rect: ChangedRectU32,
+    mapper: &PaletteMapper<'_>,
+    min_code_size: u8,
+    color_count: usize,
+    tables: &mut LzwEncodeTables,
+) -> Result<(), String> {
+    let pixel_count = rect.width * rect.height;
+    let row_skip = (canvas_width - rect.width) * 4;
+    let pointer = rgba_stream.as_ptr();
+    let start = (rect.y * canvas_width + rect.x) * 4;
+    if mapper.palette_rgb.len() <= 16 {
+        let mut offset = start;
+        let mut row_remaining = rect.width;
+        let mut cache_keys = [u32::MAX; 16];
+        let mut cache_values = [0u8; 16];
+        return encode_indexed_lzw_source_to(
+            output,
+            pixel_count,
+            min_code_size,
+            color_count,
+            tables,
+            || {
+                let packed = unsafe {
+                    u32::from_le(std::ptr::read_unaligned(pointer.add(offset).cast::<u32>()))
+                };
+                offset += 4;
+                row_remaining -= 1;
+                if row_remaining == 0 {
+                    offset += row_skip;
+                    row_remaining = rect.width;
+                }
+                let rgb = packed & 0x00ff_ffff;
+                let slot = (rgb as usize).wrapping_mul(2_654_435_761) & 15;
+                let index = if cache_keys[slot] == rgb {
+                    cache_values[slot]
+                } else {
+                    let index =
+                        mapper.index_pixel(packed as u8, (packed >> 8) as u8, (packed >> 16) as u8);
+                    cache_keys[slot] = rgb;
+                    cache_values[slot] = index;
+                    index
+                };
+                Some(index)
+            },
+        );
+    }
+
+    let mut offset = start;
+    let mut row_remaining = rect.width;
+    let mut cached_rgb = u32::MAX;
+    let mut cached_index = 0u8;
+    encode_indexed_lzw_source_to(
+        output,
+        pixel_count,
+        min_code_size,
+        color_count,
+        tables,
+        || {
+            let packed = unsafe {
+                u32::from_le(std::ptr::read_unaligned(pointer.add(offset).cast::<u32>()))
+            };
+            offset += 4;
+            row_remaining -= 1;
+            if row_remaining == 0 {
+                offset += row_skip;
+                row_remaining = rect.width;
+            }
+            let rgb = packed & 0x00ff_ffff;
+            let index = if rgb == cached_rgb {
+                cached_index
+            } else {
+                let index =
+                    mapper.index_pixel(packed as u8, (packed >> 8) as u8, (packed >> 16) as u8);
+                cached_rgb = rgb;
+                cached_index = index;
+                index
+            };
+            Some(index)
+        },
+    )
 }
 
 #[inline(always)]
@@ -13020,9 +14901,8 @@ fn blit_indices_to_uninit_full_canvas_u32(
         let output_pointer = output.as_mut_ptr().cast::<u32>();
         let mut pixel_index = 0usize;
         while pixel_index + 8 <= indices.len() {
-            let packed = unsafe {
-                std::ptr::read_unaligned(indices_pointer.add(pixel_index).cast::<u64>())
-            };
+            let packed =
+                unsafe { std::ptr::read_unaligned(indices_pointer.add(pixel_index).cast::<u64>()) };
             let colors = unsafe {
                 [
                     *palette_pointer.add((packed & 0xff) as usize),
@@ -13382,17 +15262,42 @@ fn lzw_decode_to_indices_direct_with_scratch(
 fn decode_literal_9_bit_stream(image_data: &[u8], output: &mut [u8]) -> bool {
     const CLEAR: u16 = 256;
     const EOI: u16 = 257;
+    let clear_count = output.len().div_ceil(254);
+    let Some(code_count) = output
+        .len()
+        .checked_add(clear_count)
+        .and_then(|count| count.checked_add(1))
+    else {
+        return false;
+    };
+    let Some(expected_length) = code_count.checked_mul(9).map(|bits| bits.div_ceil(8)) else {
+        return false;
+    };
+    if image_data.len() != expected_length {
+        return false;
+    }
     let mut bits = 0u64;
     let mut bit_count = 0usize;
     let mut offset = 0usize;
     let mut output_index = 0usize;
     let mut saw_clear = false;
+    let output_length = output.len();
+    let output_pointer = output.as_mut_ptr();
 
     loop {
         while bit_count < 9 && offset < image_data.len() {
-            bits |= u64::from(image_data[offset]) << bit_count;
-            bit_count += 8;
-            offset += 1;
+            if bit_count <= 32 && image_data.len().saturating_sub(offset) >= 4 {
+                let word = unsafe {
+                    std::ptr::read_unaligned(image_data.as_ptr().add(offset) as *const u32)
+                };
+                bits |= u64::from(u32::from_le(word)) << bit_count;
+                bit_count += 32;
+                offset += 4;
+            } else {
+                bits |= u64::from(image_data[offset]) << bit_count;
+                bit_count += 8;
+                offset += 1;
+            }
         }
         if bit_count < 9 {
             return false;
@@ -13406,14 +15311,121 @@ fn decode_literal_9_bit_stream(image_data: &[u8], output: &mut [u8]) -> bool {
             continue;
         }
         if code == EOI {
-            return saw_clear && output_index == output.len();
+            return saw_clear && output_index == output_length;
         }
-        if code >= CLEAR || output_index >= output.len() {
+        if code >= CLEAR || output_index >= output_length {
             return false;
         }
-        output[output_index] = code as u8;
+        unsafe { output_pointer.add(output_index).write(code as u8) };
         output_index += 1;
     }
+}
+
+/// Decode a literal-only GIF stream whose code width is one bit wider than
+/// the minimum code size.  wtfgif uses these streams for small indexed
+/// palettes; validating the exact packed length and every clear/EOI marker
+/// keeps this a safe probe for ordinary dictionary-compressed GIFs too.
+#[inline(always)]
+fn decode_fixed_literal_stream<const CODE_BITS: usize>(
+    image_data: &[u8],
+    output: &mut [u8],
+) -> bool {
+    if !(3..=9).contains(&CODE_BITS) {
+        return false;
+    }
+    let min_code_size = CODE_BITS - 1;
+    let clear = 1usize << min_code_size;
+    let literals_per_clear = clear - 2;
+    let clear_count = output.len().div_ceil(literals_per_clear);
+    let Some(code_count) = output
+        .len()
+        .checked_add(clear_count)
+        .and_then(|count| count.checked_add(1))
+    else {
+        return false;
+    };
+    let Some(expected_length) = code_count
+        .checked_mul(CODE_BITS)
+        .map(|bits| bits.div_ceil(8))
+    else {
+        return false;
+    };
+    if image_data.len() != expected_length {
+        return false;
+    }
+
+    let eoi = clear + 1;
+    let code_mask = (1usize << CODE_BITS) - 1;
+    let mut bits = 0u64;
+    let mut bit_count = 0usize;
+    let mut offset = 0usize;
+    let mut output_index = 0usize;
+    let mut saw_clear = false;
+    let output_pointer = output.as_mut_ptr();
+
+    loop {
+        while bit_count < CODE_BITS && offset < image_data.len() {
+            if bit_count <= 32 && image_data.len().saturating_sub(offset) >= 4 {
+                let word = unsafe {
+                    std::ptr::read_unaligned(image_data.as_ptr().add(offset) as *const u32)
+                };
+                bits |= u64::from(u32::from_le(word)) << bit_count;
+                bit_count += 32;
+                offset += 4;
+            } else {
+                bits |= u64::from(image_data[offset]) << bit_count;
+                bit_count += 8;
+                offset += 1;
+            }
+        }
+        if bit_count < CODE_BITS {
+            return false;
+        }
+        let code = (bits as usize) & code_mask;
+        bits >>= CODE_BITS;
+        bit_count -= CODE_BITS;
+
+        if code == clear {
+            saw_clear = true;
+            continue;
+        }
+        if code == eoi {
+            return saw_clear && output_index == output.len();
+        }
+        if code >= clear || output_index >= output.len() {
+            return false;
+        }
+        unsafe { output_pointer.add(output_index).write(code as u8) };
+        output_index += 1;
+    }
+}
+
+/// Decode a fixed-width literal stream directly into palette-colored u32
+/// output.  The byte portion of the destination is used as temporary index
+/// storage and is consumed backwards, so no second frame-sized allocation is
+/// needed.
+#[inline(always)]
+fn decode_fixed_literal_pixels<const CODE_BITS: usize>(
+    image_data: &[u8],
+    palette: &[u32],
+    output: &mut [u32],
+) -> bool {
+    let output_bytes =
+        unsafe { std::slice::from_raw_parts_mut(output.as_mut_ptr().cast::<u8>(), output.len()) };
+    if !decode_fixed_literal_stream::<CODE_BITS>(image_data, output_bytes) {
+        return false;
+    }
+    let output_pointer = output.as_mut_ptr();
+    let palette_pointer = palette.as_ptr();
+    let palette_length = palette.len();
+    for pixel in (0..output.len()).rev() {
+        let index = usize::from(unsafe { *output_bytes.get_unchecked(pixel) });
+        if index >= palette_length {
+            return false;
+        }
+        unsafe { output_pointer.add(pixel).write(*palette_pointer.add(index)) };
+    }
+    true
 }
 
 #[inline(always)]
@@ -13508,6 +15520,18 @@ fn lzw_decode_to_pixels_copy_with_scratch(
     if min_code_size > 11 {
         return Err(format!("Invalid LZW minimum code size {min_code_size}"));
     }
+    let fixed_literal = match min_code_size {
+        2 => decode_fixed_literal_pixels::<3>(image_data, palette, output),
+        3 => decode_fixed_literal_pixels::<4>(image_data, palette, output),
+        4 => decode_fixed_literal_pixels::<5>(image_data, palette, output),
+        5 => decode_fixed_literal_pixels::<6>(image_data, palette, output),
+        6 => decode_fixed_literal_pixels::<7>(image_data, palette, output),
+        7 => decode_fixed_literal_pixels::<8>(image_data, palette, output),
+        _ => false,
+    };
+    if fixed_literal {
+        return Ok(());
+    }
     if min_code_size == 8
         && image_data.len() >= output.len()
         && decode_literal_9_bit_pixels(image_data, palette, output)
@@ -13588,8 +15612,7 @@ fn lzw_decode_to_pixels_copy_with_scratch(
             let decoded_length =
                 usize::from(unsafe { string_length.get_unchecked(code).assume_init() });
             let source_start =
-                usize::try_from(unsafe { string_start.get_unchecked(code).assume_init() })
-                    .unwrap();
+                usize::try_from(unsafe { string_start.get_unchecked(code).assume_init() }).unwrap();
             let source_end = source_start + decoded_length;
             let decoded_end = output_index + decoded_length;
             if source_end > current_start || decoded_end > output.len() {
@@ -13658,24 +15681,47 @@ fn lzw_decode_to_pixels_copy_with_scratch(
 }
 
 #[inline(always)]
-fn decode_literal_9_bit_pixels(
-    image_data: &[u8],
-    palette: &[u32],
-    output: &mut [u32],
-) -> bool {
+fn decode_literal_9_bit_pixels(image_data: &[u8], palette: &[u32], output: &mut [u32]) -> bool {
     const CLEAR: u16 = 256;
     const EOI: u16 = 257;
+    let clear_count = output.len().div_ceil(254);
+    let Some(code_count) = output
+        .len()
+        .checked_add(clear_count)
+        .and_then(|count| count.checked_add(1))
+    else {
+        return false;
+    };
+    let Some(expected_length) = code_count.checked_mul(9).map(|bits| bits.div_ceil(8)) else {
+        return false;
+    };
+    if image_data.len() != expected_length {
+        return false;
+    }
     let mut bits = 0u64;
     let mut bit_count = 0usize;
     let mut offset = 0usize;
     let mut output_index = 0usize;
     let mut saw_clear = false;
+    let output_length = output.len();
+    let output_pointer = output.as_mut_ptr();
+    let palette_length = palette.len();
+    let palette_pointer = palette.as_ptr();
 
     loop {
         while bit_count < 9 && offset < image_data.len() {
-            bits |= u64::from(image_data[offset]) << bit_count;
-            bit_count += 8;
-            offset += 1;
+            if bit_count <= 32 && image_data.len().saturating_sub(offset) >= 4 {
+                let word = unsafe {
+                    std::ptr::read_unaligned(image_data.as_ptr().add(offset) as *const u32)
+                };
+                bits |= u64::from(u32::from_le(word)) << bit_count;
+                bit_count += 32;
+                offset += 4;
+            } else {
+                bits |= u64::from(image_data[offset]) << bit_count;
+                bit_count += 8;
+                offset += 1;
+            }
         }
         if bit_count < 9 {
             return false;
@@ -13689,15 +15735,20 @@ fn decode_literal_9_bit_pixels(
             continue;
         }
         if code == EOI {
-            return saw_clear && output_index == output.len();
+            return saw_clear && output_index == output_length;
         }
-        if code >= CLEAR || output_index >= output.len() {
+        if code >= CLEAR || output_index >= output_length {
             return false;
         }
-        let Some(&color) = palette.get(usize::from(code)) else {
+        let palette_index = usize::from(code);
+        if palette_index >= palette_length {
             return false;
-        };
-        output[output_index] = color;
+        }
+        unsafe {
+            output_pointer
+                .add(output_index)
+                .write(*palette_pointer.add(palette_index));
+        }
         output_index += 1;
     }
 }
@@ -13710,6 +15761,18 @@ fn lzw_decode_to_indices_copy_with_scratch(
 ) -> Result<(), String> {
     if min_code_size > 11 {
         return Err(format!("Invalid LZW minimum code size {min_code_size}"));
+    }
+    let fixed_literal = match min_code_size {
+        2 => decode_fixed_literal_stream::<3>(image_data, output),
+        3 => decode_fixed_literal_stream::<4>(image_data, output),
+        4 => decode_fixed_literal_stream::<5>(image_data, output),
+        5 => decode_fixed_literal_stream::<6>(image_data, output),
+        6 => decode_fixed_literal_stream::<7>(image_data, output),
+        7 => decode_fixed_literal_stream::<8>(image_data, output),
+        _ => false,
+    };
+    if fixed_literal {
+        return Ok(());
     }
     // wtfgif's literal writer emits one fixed-width 9-bit code per output
     // index, making the payload at least as large as the decoded frame. This
@@ -14318,12 +16381,12 @@ mod tests {
         let metadata = parse_metadata(&gif).unwrap();
         assert!(all_frames_full_opaque(&metadata));
 
-        let direct = prepare_composited_frames_selected(&gif, &metadata, None, PixelFormat::Rgba)
-            .unwrap();
+        let direct =
+            prepare_composited_frames_selected(&gif, &metadata, None, PixelFormat::Rgba).unwrap();
         let mut expected = Vec::new();
         for frame_index in 0..metadata.frames.len() {
-            let pixels = decode_frame_pixels_inner(&gif, &metadata, frame_index, PixelFormat::Rgba)
-                .unwrap();
+            let pixels =
+                decode_frame_pixels_inner(&gif, &metadata, frame_index, PixelFormat::Rgba).unwrap();
             expected.extend(
                 pixels
                     .chunks_exact(4)
@@ -14488,8 +16551,7 @@ mod tests {
 
             let mut buffered = Vec::new();
             let mut compressed = Vec::new();
-            encode_indexed_literal_lzw_to(&mut buffered, &indices, 6, 64, &mut compressed)
-                .unwrap();
+            encode_indexed_literal_lzw_to(&mut buffered, &indices, 6, 64, &mut compressed).unwrap();
 
             assert_eq!(direct, buffered, "length {length}");
         }
@@ -14506,8 +16568,7 @@ mod tests {
 
             let mut buffered = Vec::new();
             let mut compressed = Vec::new();
-            encode_indexed_literal_lzw_to(&mut buffered, &indices, 5, 32, &mut compressed)
-                .unwrap();
+            encode_indexed_literal_lzw_to(&mut buffered, &indices, 5, 32, &mut compressed).unwrap();
 
             assert_eq!(direct, buffered, "length {length}");
         }
@@ -14524,8 +16585,7 @@ mod tests {
 
             let mut buffered = Vec::new();
             let mut compressed = Vec::new();
-            encode_indexed_literal_lzw_to(&mut buffered, &indices, 7, 2, &mut compressed)
-                .unwrap();
+            encode_indexed_literal_lzw_to(&mut buffered, &indices, 7, 2, &mut compressed).unwrap();
 
             assert_eq!(direct, buffered, "length {length}");
         }
@@ -14541,8 +16601,7 @@ mod tests {
         let mut output = vec![0u8; indices.len()];
         let mut scratch = LzwStackScratch::default();
 
-        lzw_decode_to_indices_copy_with_scratch(8, &image_data, &mut output, &mut scratch)
-            .unwrap();
+        lzw_decode_to_indices_copy_with_scratch(8, &image_data, &mut output, &mut scratch).unwrap();
 
         assert_eq!(output, indices);
     }
@@ -14560,14 +16619,8 @@ mod tests {
         let mut output = vec![0u32; indices.len()];
         let mut scratch = LzwStackScratch::default();
 
-        lzw_decode_to_pixels_copy_with_scratch(
-            8,
-            &image_data,
-            &palette,
-            &mut output,
-            &mut scratch,
-        )
-        .unwrap();
+        lzw_decode_to_pixels_copy_with_scratch(8, &image_data, &palette, &mut output, &mut scratch)
+            .unwrap();
 
         let expected: Vec<u32> = indices
             .iter()
@@ -14586,8 +16639,7 @@ mod tests {
             .collect();
         let mut image_data = Vec::new();
         let mut tables = LzwEncodeTables::new();
-        encode_indexed_lzw_to_with_tables(&mut image_data, &indices, 8, 256, &mut tables)
-            .unwrap();
+        encode_indexed_lzw_to_with_tables(&mut image_data, &indices, 8, 256, &mut tables).unwrap();
         let mut payload = Vec::new();
         collect_image_data_into(&image_data, 0, &mut payload).unwrap();
 
@@ -15063,8 +17115,8 @@ mod tests {
     fn coarse_nearest_table_matches_exact_search() {
         let palettes = [
             vec![
-                0x000000, 0xff0000, 0x00ff00, 0x0000ff, 0xffff00, 0xff00ff, 0x00ffff,
-                0xffffff, 0x402010, 0x804020, 0x204080, 0xc08040,
+                0x000000, 0xff0000, 0x00ff00, 0x0000ff, 0xffff00, 0xff00ff, 0x00ffff, 0xffffff,
+                0x402010, 0x804020, 0x204080, 0xc08040,
             ],
             (0..256u32)
                 .map(|index| {
@@ -15352,5 +17404,4 @@ mod tests {
         recycle_quantized_indexed(opaque);
         recycle_quantized_indexed(transparent);
     }
-
 }

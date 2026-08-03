@@ -40,6 +40,207 @@ type ChangedRect = {
   height: number;
 };
 
+type FastGifParse = {
+  width: number;
+  height: number;
+  globalPaletteOffset: number | null;
+  globalPaletteSize: number | null;
+  frames: FrameInfo[];
+  loopCount: number | null;
+};
+
+/**
+ * Parse the ordinary, valid GIF shape without per-byte closures or bounds
+ * checks.  The compatibility parser below remains the fallback for malformed
+ * and unusual inputs; returning null here keeps its error behavior intact.
+ */
+function tryParseFastGif(data: Uint8Array): FastGifParse | null {
+  if (data.length < 13) return null;
+  if (
+    data[0] !== GIF.G ||
+    data[1] !== GIF.I ||
+    data[2] !== GIF.F ||
+    data[3] !== GIF._8 ||
+    (((data[4]! + 1) & 0xfd) !== GIF._8) ||
+    data[5] !== GIF.A
+  ) {
+    return null;
+  }
+
+  let p = 6;
+  const width = (data[p++]! | (data[p++]! << 8)) >>> 0;
+  const height = (data[p++]! | (data[p++]! << 8)) >>> 0;
+  const packed = data[p++]! | 0;
+  const gctFlag = (packed >>> 7) & 1;
+  const gctColors = 1 << ((packed & 0x7) + 1);
+  p += 2; // background color index and pixel aspect ratio
+
+  let globalPaletteOffset: number | null = null;
+  let globalPaletteSize: number | null = null;
+  if (gctFlag) {
+    const paletteBytes = gctColors * 3;
+    if (p + paletteBytes > data.length) return null;
+    globalPaletteOffset = p;
+    globalPaletteSize = gctColors;
+    p += paletteBytes;
+  }
+
+  const frames: FrameInfo[] = [];
+  let delay = 0;
+  let transparentIndex: number | null = null;
+  let disposal = 0;
+  let loopCount: number | null = null;
+
+  while (p < data.length) {
+    const block = data[p++]! | 0;
+    if (block === GIF.TRAILER) {
+      return {
+        width,
+        height,
+        globalPaletteOffset,
+        globalPaletteSize,
+        frames,
+        loopCount,
+      };
+    }
+
+    if (block === GIF.EXT) {
+      if (p >= data.length) return null;
+      const label = data[p++]! | 0;
+      if (label === GIF.APPLICATION) {
+        // NETSCAPE2.0 with its canonical 0x03/0x01 loop sub-block.
+        if (
+          p + 16 < data.length &&
+          data[p] === GIF.NETSCAPE_LEN &&
+          data[p + 1] === 0x4e &&
+          data[p + 2] === 0x45 &&
+          data[p + 3] === 0x54 &&
+          data[p + 4] === 0x53 &&
+          data[p + 5] === 0x43 &&
+          data[p + 6] === 0x41 &&
+          data[p + 7] === 0x50 &&
+          data[p + 8] === 0x45 &&
+          data[p + 9] === 0x32 &&
+          data[p + 10] === 0x2e &&
+          data[p + 11] === 0x30 &&
+          data[p + 12] === 0x03 &&
+          data[p + 13] === 0x01 &&
+          data[p + 16] === 0x00
+        ) {
+          loopCount = (data[p + 14]! | (data[p + 15]! << 8)) >>> 0;
+          p += 17;
+          continue;
+        }
+
+        // Unknown application extensions: skip the fixed identifier and
+        // then each data sub-block.  Fall back if the stream is truncated.
+        if (p + 12 > data.length) return null;
+        p += 12;
+        let terminated = false;
+        while (p < data.length) {
+          const size = data[p++]! | 0;
+          if (size === 0) {
+            terminated = true;
+            break;
+          }
+          if (p + size > data.length) return null;
+          p += size;
+        }
+        if (!terminated) return null;
+        continue;
+      }
+
+      if (label === GIF.GCE) {
+        if (p + 5 > data.length || data[p++] !== 0x04) return null;
+        const packedGce = data[p++]! | 0;
+        delay = (data[p++]! | (data[p++]! << 8)) >>> 0;
+        const candidate = data[p++]! | 0;
+        if (data[p++] !== 0x00) return null;
+        transparentIndex = packedGce & 1 ? candidate : null;
+        disposal = (packedGce >>> 2) & 0x7;
+        continue;
+      }
+
+      if (label === GIF.PLAINTEXT || label === GIF.COMMENT) {
+        let terminated = false;
+        while (p < data.length) {
+          const size = data[p++]! | 0;
+          if (size === 0) {
+            terminated = true;
+            break;
+          }
+          if (p + size > data.length) return null;
+          p += size;
+        }
+        if (!terminated) return null;
+        continue;
+      }
+
+      return null;
+    }
+
+    if (block !== GIF.IMG) return null;
+    if (p + 9 > data.length) return null;
+    const x = (data[p++]! | (data[p++]! << 8)) >>> 0;
+    const y = (data[p++]! | (data[p++]! << 8)) >>> 0;
+    const frameWidth = (data[p++]! | (data[p++]! << 8)) >>> 0;
+    const frameHeight = (data[p++]! | (data[p++]! << 8)) >>> 0;
+    const packedFrame = data[p++]! | 0;
+    const localPaletteFlag = (packedFrame >>> 7) & 1;
+    const interlaced = ((packedFrame >>> 6) & 1) !== 0;
+    const localColors = 1 << ((packedFrame & 0x7) + 1);
+    let paletteOffset = globalPaletteOffset;
+    let paletteSize = globalPaletteSize;
+    let hasLocalPalette = false;
+    if (localPaletteFlag) {
+      const paletteBytes = localColors * 3;
+      if (p + paletteBytes > data.length) return null;
+      hasLocalPalette = true;
+      paletteOffset = p;
+      paletteSize = localColors;
+      p += paletteBytes;
+    }
+
+    const dataOffset = p;
+    if (p >= data.length) return null;
+    const minCodeSize = data[p++]! | 0;
+    let terminated = false;
+    while (p < data.length) {
+      const size = data[p++]! | 0;
+      if (size === 0) {
+        terminated = true;
+        break;
+      }
+      if (p + size > data.length) return null;
+      p += size;
+    }
+    if (!terminated) return null;
+
+    frames.push({
+      x,
+      y,
+      width: frameWidth,
+      height: frameHeight,
+      has_local_palette: hasLocalPalette,
+      palette_offset: paletteOffset,
+      palette_size: paletteSize,
+      data_offset: dataOffset,
+      data_length: p - dataOffset,
+      transparent_index: transparentIndex,
+      interlaced,
+      delay,
+      disposal,
+      min_code_size: minCodeSize,
+    });
+
+    delay = 0;
+    transparentIndex = null;
+    disposal = 0;
+  }
+
+  return null;
+}
+
 /* ====== Reader (Decoder) ====== */
 // moved to types.ts
 
@@ -50,6 +251,9 @@ export class GifReader {
 
   private globalPaletteOffset!: number | null;
   private globalPaletteSize!: number | null;
+  private globalPal32rgba: Uint32Array | undefined;
+  private globalPal32bgra: Uint32Array | undefined;
+  private globalPal32TransparentIndex: number | null | undefined;
 
   private frames!: FrameInfo[];
   private loop_count!: number | null;
@@ -127,6 +331,17 @@ export class GifReader {
     // arrays keeps construction close to omggif's deliberately minimal
     // object setup.  Every consumer initializes its state before use.
     this.lastDecodedFrame = -1;
+
+    const fastParse = tryParseFastGif(data);
+    if (fastParse) {
+      this.width_ = fastParse.width;
+      this.height_ = fastParse.height;
+      this.globalPaletteOffset = fastParse.globalPaletteOffset;
+      this.globalPaletteSize = fastParse.globalPaletteSize;
+      this.frames = fastParse.frames;
+      this.loop_count = fastParse.loopCount;
+      return;
+    }
 
     let p = 0;
     const readByte = (): number => {
@@ -331,8 +546,14 @@ export class GifReader {
     while (true) {
       // Fill bit buffer
       while (bitCount < codeSize && q < bytes.length) {
-        bits |= (bytes[q++]! | 0) << bitCount;
-        bitCount += 8;
+        if (q + 1 < bytes.length) {
+          bits |= ((bytes[q]! | 0) | ((bytes[q + 1]! | 0) << 8)) << bitCount;
+          bitCount += 16;
+          q += 2;
+        } else {
+          bits |= (bytes[q++]! | 0) << bitCount;
+          bitCount += 8;
+        }
       }
 
       if (bitCount < codeSize) break;
@@ -446,6 +667,35 @@ export class GifReader {
   ): Uint32Array {
     if (frame.palette_offset === null || frame.palette_size === null) {
       throw new Error("GIF frame has no color palette.");
+    }
+
+    const usesGlobalPalette =
+      frame.palette_offset === this.globalPaletteOffset &&
+      frame.palette_size === this.globalPaletteSize;
+    if (usesGlobalPalette) {
+      const transparentIndex = frame.transparent_index;
+      if (
+        this.globalPal32TransparentIndex === transparentIndex &&
+        (order === "rgba" ? this.globalPal32rgba : this.globalPal32bgra)
+      ) {
+        return (order === "rgba"
+          ? this.globalPal32rgba
+          : this.globalPal32bgra)!;
+      }
+      const palette = buildPal32(
+        this.buf,
+        frame.palette_offset,
+        frame.palette_size,
+        order,
+        transparentIndex
+      );
+      this.globalPal32TransparentIndex = transparentIndex;
+      if (order === "rgba") {
+        this.globalPal32rgba = palette;
+      } else {
+        this.globalPal32bgra = palette;
+      }
+      return palette;
     }
 
     if (order === "rgba") {
@@ -1324,6 +1574,9 @@ export class GifReader {
       delete frame.opaquePositions;
       delete frame.decodeCount;
     }
+    this.globalPal32rgba = undefined;
+    this.globalPal32bgra = undefined;
+    this.globalPal32TransparentIndex = undefined;
     this.sequentialCompositedFrames = null;
     this.sequentialCompositedOrder = null;
     this.sequentialInitialCanvasZero = null;
@@ -1367,7 +1620,6 @@ export class GifReader {
       this.lastDecodedFrame = frameNum;
       return true;
     }
-
     const totalPixels = canvasPixels * this.frames.length;
     const cacheCandidate =
       this.frames.length >= 8 &&
@@ -1494,6 +1746,38 @@ export class GifReader {
     return target;
   }
 
+  private tryDecodeWasmFrame32(
+    frameNum: number,
+    pixels: Uint8Array,
+    order: "rgba" | "bgra",
+  ): boolean {
+    const wasmModule = getWasmCoreModule();
+    if (!wasmModule) return false;
+
+    this.wasmCore ??= new wasmModule.WtfGifCore(this.buf);
+    const decodeAndBlit =
+      order === "rgba"
+        ? this.wasmCore.decode_and_blit_frame_rgba
+        : this.wasmCore.decode_and_blit_frame_bgra;
+    if (!decodeAndBlit) return false;
+
+    try {
+      const canvasPixels = this.width_ * this.height_;
+      decodeAndBlit.call(
+        this.wasmCore,
+        frameNum,
+        pixels.byteLength === canvasPixels * 4
+          ? pixels
+          : pixels.subarray(0, canvasPixels * 4),
+      );
+      return true;
+    } catch {
+      // Custom/older Wasm modules may reject a frame shape.  Preserve the
+      // compatible JavaScript path as a fallback.
+      return false;
+    }
+  }
+
   private decodeAndBlitFrame32(
     frameNum: number,
     pixels: Uint8Array,
@@ -1515,6 +1799,21 @@ export class GifReader {
     const framePixels = frame.width * frame.height;
     const canvasPixels = this.width_ * this.height_;
     if (framePixels <= 4096) {
+      // Once a reader is clearly being used for an animation, the Wasm
+      // decoder's reusable scratch path beats the JS tiny-frame loop for
+      // medium rectangles.  Keep one-off/tiny reads on JS to avoid paying a
+      // Wasm core construction just for a single small frame.
+      if (
+        (frameNum < 2 || this.wasmCore != null) &&
+        this.frames.length >= 8 &&
+        framePixels >= 512 &&
+        canvasPixels >= 512 &&
+        framePixels * 2 >= canvasPixels &&
+        this.tryDecodeWasmFrame32(frameNum, pixels, order)
+      ) {
+        this.lastDecodedFrame = frameNum;
+        return;
+      }
       this.lzwDecodeAndBlitSmallFrame(frame, out32, order);
       this.lastDecodedFrame = frameNum;
       return;
@@ -1680,16 +1979,24 @@ export class GifReader {
     }
 
     if (!frame.interlaced) {
+      if (this.tryDecodeLiteralFrame(frame, out32, order)) {
+        return;
+      }
       this.lzwDecodeSmallNonInterlacedDirect(
         frame,
         out32,
         order,
-        paletteOffset,
       );
       return;
     }
 
     const framePixels = (frame.width * frame.height) | 0;
+    const minCodeSize = frame.min_code_size | 0;
+    const clearCode = 1 << minCodeSize;
+    const tableCapacity = Math.min(
+      GIF.MAX_CODE,
+      framePixels + clearCode + 2,
+    );
     let indices = this.directIndices;
     if (!indices || indices.length < framePixels) {
       indices = new Uint8Array(framePixels);
@@ -1697,16 +2004,14 @@ export class GifReader {
     }
 
     let table = this.directCodeTable;
-    if (!table) {
-      table = new Int32Array(GIF.MAX_CODE);
+    if (!table || table.length < tableCapacity) {
+      table = new Int32Array(tableCapacity);
       this.directCodeTable = table;
     }
 
     const data = this.buf;
     let p = (frame.data_offset | 0) + 1;
     let blockRemaining = data[p++]! | 0;
-    const minCodeSize = data[frame.data_offset]! | 0;
-    const clearCode = 1 << minCodeSize;
     const eoiCode = clearCode + 1;
     let nextCode = eoiCode + 1;
     let codeSize = (minCodeSize + 1) | 0;
@@ -1714,21 +2019,33 @@ export class GifReader {
     let bitBuffer = 0;
     let bitCount = 0;
     let outputLength = 0;
-    let previousCode: number | null = null;
+    let previousCode = -1;
     let firstCode = true;
+    let streamEnded = false;
 
     while (true) {
-      while (bitCount < codeSize) {
+      // Keep a full 16-bit window so sub-block boundary checks happen once
+      // per pair of input bytes instead of once per code.
+      while (bitCount < 16) {
         if (blockRemaining === 0) {
+          if (streamEnded) break;
           blockRemaining = data[p++]! | 0;
           if (blockRemaining === 0) {
-            bitCount = 0;
+            streamEnded = true;
             break;
           }
         }
-        bitBuffer |= (data[p++]! | 0) << bitCount;
-        bitCount += 8;
-        blockRemaining--;
+        if (blockRemaining >= 2) {
+          bitBuffer |=
+            ((data[p]! | 0) | ((data[p + 1]! | 0) << 8)) << bitCount;
+          bitCount += 16;
+          p += 2;
+          blockRemaining -= 2;
+        } else {
+          bitBuffer |= (data[p++]! | 0) << bitCount;
+          bitCount += 8;
+          blockRemaining--;
+        }
       }
       if (bitCount < codeSize) break;
 
@@ -1747,13 +2064,13 @@ export class GifReader {
         nextCode = eoiCode + 1;
         codeSize = (minCodeSize + 1) | 0;
         codeMask = (1 << codeSize) - 1;
-        previousCode = null;
+        previousCode = -1;
         continue;
       }
       if (code === eoiCode) break;
 
-      const chaseCode: number | null = code < nextCode ? code : previousCode;
-      if (chaseCode === null) break;
+      const chaseCode = code < nextCode ? code : previousCode;
+      if (chaseCode < 0) break;
 
       // Find the first byte and the sequence length, then write the sequence
       // backwards into the index scratch.  This is the same compact linked
@@ -1786,7 +2103,7 @@ export class GifReader {
       }
       outputLength = outputEnd;
 
-      if (previousCode !== null && nextCode < GIF.MAX_CODE) {
+      if (previousCode >= 0 && nextCode < GIF.MAX_CODE) {
         table[nextCode++] = (previousCode << 8) | first;
         if (nextCode >= codeMask + 1 && codeSize < 12) {
           codeSize++;
@@ -1856,29 +2173,127 @@ export class GifReader {
     }
   }
 
+  /**
+   * Decode fixed-width literal streams without constructing a LZW dictionary.
+   * The exact raw/sub-block length gate keeps this path opt-in for our literal
+   * writer; any ordinary compressed GIF falls through to the complete decoder.
+   */
+  private tryDecodeLiteralFrame(
+    frame: FrameInfo,
+    out32: Uint32Array,
+    order: "rgba" | "bgra",
+  ): boolean {
+    const framePixels = (frame.width * frame.height) | 0;
+    const minCodeSize = frame.min_code_size | 0;
+    if (minCodeSize < 2 || minCodeSize > 8) return false;
+    const codeBits = minCodeSize + 1;
+    const clearCode = 1 << minCodeSize;
+    const literalsPerClear = clearCode - 2;
+    if (frame.palette_size === null || frame.palette_size > clearCode) {
+      return false;
+    }
+    const clearCount = Math.ceil(framePixels / literalsPerClear);
+    const rawLength = Math.ceil(
+      ((framePixels + clearCount + 1) * codeBits) / 8,
+    );
+    const blockCount = Math.ceil(rawLength / 255);
+    if (frame.data_length !== 2 + rawLength + blockCount) return false;
+
+    const data = this.buf;
+    const width = this.width_ | 0;
+    const frameWidth = frame.width | 0;
+    const transparent = frame.transparent_index ?? 256;
+    const pal32 = this.getFramePalette(frame, order);
+    const fullFrame =
+      frame.x === 0 &&
+      frame.y === 0 &&
+      frameWidth === width &&
+      frame.height === this.height_;
+    let destination = ((frame.y | 0) * width + (frame.x | 0)) | 0;
+    let xleft = fullFrame ? framePixels : frameWidth;
+    const rowStride = fullFrame ? 0 : (width - frameWidth) | 0;
+    let p = (frame.data_offset | 0) + 1;
+    let blockRemaining = data[p++]! | 0;
+    let bitBuffer = 0;
+    let bitCount = 0;
+    let outputLength = 0;
+
+    const codeMask = clearCode * 2 - 1;
+    const readCode = (): number => {
+      while (bitCount < codeBits) {
+        if (blockRemaining === 0) {
+          blockRemaining = data[p++]! | 0;
+          if (blockRemaining === 0) return -1;
+        }
+        if (blockRemaining >= 2) {
+          bitBuffer |=
+            ((data[p]! | 0) | ((data[p + 1]! | 0) << 8)) << bitCount;
+          bitCount += 16;
+          p += 2;
+          blockRemaining -= 2;
+        } else {
+          bitBuffer |= (data[p++]! | 0) << bitCount;
+          bitCount += 8;
+          blockRemaining--;
+        }
+      }
+      const code = bitBuffer & codeMask;
+      bitBuffer >>>= codeBits;
+      bitCount -= codeBits;
+      return code;
+    };
+
+    for (let group = 0; group < clearCount; group++) {
+      if (readCode() !== clearCode) return false;
+      const groupLength = Math.min(literalsPerClear, framePixels - outputLength);
+      for (let index = 0; index < groupLength; index++) {
+        const code = readCode();
+        if (code < 0 || code >= clearCode) return false;
+        if (code >= pal32.length) return false;
+        if (code !== transparent) {
+          out32[destination] = pal32[code]!;
+        }
+        destination++;
+        if (--xleft === 0) {
+          destination += rowStride;
+          xleft = frameWidth;
+        }
+        outputLength++;
+      }
+    }
+    if (readCode() !== clearCode + 1 || outputLength !== framePixels) {
+      return false;
+    }
+
+    return true;
+  }
+
   private lzwDecodeSmallNonInterlacedDirect(
     frame: FrameInfo,
     out32: Uint32Array,
     order: "rgba" | "bgra",
-    paletteOffset: number,
   ): void {
     const framePixels = (frame.width * frame.height) | 0;
+    const minCodeSize = frame.min_code_size | 0;
+    const clearCode = 1 << minCodeSize;
+    const tableCapacity = Math.min(
+      GIF.MAX_CODE,
+      framePixels + clearCode + 2,
+    );
     let table = this.directCodeTable;
-    if (!table) {
-      table = new Int32Array(GIF.MAX_CODE);
+    if (!table || table.length < tableCapacity) {
+      table = new Int32Array(tableCapacity);
       this.directCodeTable = table;
     }
     let stack = this.directStack;
-    if (!stack) {
-      stack = new Uint8Array(GIF.MAX_CODE);
+    if (!stack || stack.length < framePixels) {
+      stack = new Uint8Array(framePixels);
       this.directStack = stack;
     }
 
     const data = this.buf;
     let p = (frame.data_offset | 0) + 1;
     let blockRemaining = data[p++]! | 0;
-    const minCodeSize = data[frame.data_offset]! | 0;
-    const clearCode = 1 << minCodeSize;
     const eoiCode = clearCode + 1;
     let nextCode = eoiCode + 1;
     let codeSize = (minCodeSize + 1) | 0;
@@ -1886,21 +2301,30 @@ export class GifReader {
     let bitBuffer = 0;
     let bitCount = 0;
     let pixelIndex = 0;
-    let previousCode: number | null = null;
+    let previousCode = -1;
     let firstCode = true;
+    let streamEnded = false;
 
     const width = this.width_ | 0;
     const frameWidth = frame.width | 0;
+    const fullFrame =
+      frame.x === 0 &&
+      frame.y === 0 &&
+      frameWidth === width &&
+      frame.height === this.height_;
     let destination = ((frame.y | 0) * width + (frame.x | 0)) | 0;
-    let xleft = frameWidth;
-    const rowStride = (width - frameWidth) | 0;
+    let xleft = fullFrame ? framePixels : frameWidth;
+    const rowStride = fullFrame ? 0 : (width - frameWidth) | 0;
     const transparent = frame.transparent_index ?? 256;
     const rgba = order === "rgba";
-    const palette = paletteOffset | 0;
+    const paletteOffset = frame.palette_offset;
+    if (paletteOffset === null || paletteOffset === undefined) {
+      throw new Error("GIF frame has no color palette.");
+    }
     const emit = (index: number): void => {
       if (pixelIndex >= framePixels) return;
       if (index !== transparent) {
-        const color = (palette + (index & 0xff) * 3) | 0;
+        const color = (paletteOffset + (index & 0xff) * 3) | 0;
         const r = data[color]! | 0;
         const g = data[color + 1]! | 0;
         const b = data[color + 2]! | 0;
@@ -1917,17 +2341,28 @@ export class GifReader {
     };
 
     while (true) {
-      while (bitCount < codeSize) {
+      // Keep a full 16-bit window so sub-block boundary checks happen once
+      // per pair of input bytes instead of once per code.
+      while (bitCount < 16) {
         if (blockRemaining === 0) {
+          if (streamEnded) break;
           blockRemaining = data[p++]! | 0;
           if (blockRemaining === 0) {
-            bitCount = 0;
+            streamEnded = true;
             break;
           }
         }
-        bitBuffer |= (data[p++]! | 0) << bitCount;
-        bitCount += 8;
-        blockRemaining--;
+        if (blockRemaining >= 2) {
+          bitBuffer |=
+            ((data[p]! | 0) | ((data[p + 1]! | 0) << 8)) << bitCount;
+          bitCount += 16;
+          p += 2;
+          blockRemaining -= 2;
+        } else {
+          bitBuffer |= (data[p++]! | 0) << bitCount;
+          bitCount += 8;
+          blockRemaining--;
+        }
       }
       if (bitCount < codeSize) break;
 
@@ -1947,13 +2382,13 @@ export class GifReader {
         nextCode = eoiCode + 1;
         codeSize = (minCodeSize + 1) | 0;
         codeMask = (1 << codeSize) - 1;
-        previousCode = null;
+        previousCode = -1;
         continue;
       }
       if (code === eoiCode) break;
 
-      const chaseCode: number | null = code < nextCode ? code : previousCode;
-      if (chaseCode === null) break;
+      const chaseCode = code < nextCode ? code : previousCode;
+      if (chaseCode < 0) break;
 
       let chase = chaseCode;
       let stackLength = 0;
@@ -1971,7 +2406,7 @@ export class GifReader {
         emit(first);
       }
 
-      if (previousCode !== null && nextCode < GIF.MAX_CODE) {
+      if (previousCode >= 0 && nextCode < GIF.MAX_CODE) {
         table[nextCode++] = (previousCode << 8) | first;
         if (nextCode >= codeMask + 1 && codeSize < 12) {
           codeSize++;
@@ -2226,8 +2661,15 @@ export class GifReader {
           while (true) {
             // Fill bit buffer to have at least codeSize bits
             while (bitCount < codeSize && q < bytes.length) {
-              bits |= (bytes[q++]! | 0) << bitCount;
-              bitCount += 8;
+              if (q + 1 < bytes.length) {
+                bits |=
+                  ((bytes[q]! | 0) | ((bytes[q + 1]! | 0) << 8)) << bitCount;
+                bitCount += 16;
+                q += 2;
+              } else {
+                bits |= (bytes[q++]! | 0) << bitCount;
+                bitCount += 8;
+              }
             }
             if (bitCount < codeSize) break;
 
@@ -2317,8 +2759,14 @@ export class GifReader {
         while (true) {
           // Fill bit buffer to have at least codeSize bits
           while (bitCount < codeSize && q < bytes.length) {
-            bits |= (bytes[q++]! | 0) << bitCount;
-            bitCount += 8;
+            if (q + 1 < bytes.length) {
+              bits |= ((bytes[q]! | 0) | ((bytes[q + 1]! | 0) << 8)) << bitCount;
+              bitCount += 16;
+              q += 2;
+            } else {
+              bits |= (bytes[q++]! | 0) << bitCount;
+              bitCount += 8;
+            }
           }
           if (bitCount < codeSize) break;
 
@@ -2422,8 +2870,14 @@ export class GifReader {
       while (true) {
         // Fill bit buffer
         while (bitCount < codeSize && q < bytes.length) {
-          bits |= (bytes[q++]! | 0) << bitCount;
-          bitCount += 8;
+          if (q + 1 < bytes.length) {
+            bits |= ((bytes[q]! | 0) | ((bytes[q + 1]! | 0) << 8)) << bitCount;
+            bitCount += 16;
+            q += 2;
+          } else {
+            bits |= (bytes[q++]! | 0) << bitCount;
+            bitCount += 8;
+          }
         }
         if (bitCount < codeSize) break;
 
