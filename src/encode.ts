@@ -1,11 +1,11 @@
 import { prepareWasmEncoderModule } from "./encoder/writer";
 import {
 	cleanupWasm as cleanupWasmRuntime,
-	getWasmEncodeCoreModule,
+	getWasmQualityCoreModule,
 	initializeGlobalWasm as initializeGlobalWasmRuntime,
 	initializeWasmModule as initializeWasmModuleRuntime,
-	setWasmEncodeCoreModule,
-} from "./wasm/encodeRuntime";
+	setWasmQualityCoreModule,
+} from "./wasm/qualityRuntime";
 
 export type {
 	EncodeIndexedGifFramesBackend,
@@ -25,20 +25,19 @@ export {
 	encodeRgbaGifFrames,
 	GifWriter,
 } from "./encoder/writer";
-export type { WasmEncodeWebModule as WasmWebModule } from "./wasm/encodeRuntime";
+export type { WasmQualityWebModule as WasmWebModule } from "./wasm/qualityRuntime";
 export {
-	getWasmEncodeCoreModule as getWasmCoreModule,
 	getWasmFeatures,
+	getWasmQualityCoreModule as getWasmCoreModule,
 	getWasmStatus,
 	isWasmReady,
-} from "./wasm/encodeRuntime";
+} from "./wasm/qualityRuntime";
 
 export async function initializeWasmGlobally(
 	moduleOrPath?: unknown,
 ): Promise<void> {
 	await initializeGlobalWasmRuntime(moduleOrPath);
-	prepareWasmEncoderModule(getWasmEncodeCoreModule());
-	await new Promise<void>((resolve) => setTimeout(resolve, 10));
+	prepareWasmEncoderModule(getWasmQualityCoreModule());
 }
 
 export async function initializeWasmModule(
@@ -46,14 +45,13 @@ export async function initializeWasmModule(
 	moduleOrPath?: unknown,
 ): Promise<void> {
 	await initializeWasmModuleRuntime(module, moduleOrPath);
-	prepareWasmEncoderModule(getWasmEncodeCoreModule());
-	await new Promise<void>((resolve) => setTimeout(resolve, 10));
+	prepareWasmEncoderModule(getWasmQualityCoreModule());
 }
 
 export function setWasmCoreModule(
-	module: Parameters<typeof setWasmEncodeCoreModule>[0],
+	module: Parameters<typeof setWasmQualityCoreModule>[0],
 ): void {
-	setWasmEncodeCoreModule(module);
+	setWasmQualityCoreModule(module);
 	prepareWasmEncoderModule(module);
 }
 

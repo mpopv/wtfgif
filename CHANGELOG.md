@@ -2,6 +2,24 @@
 
 All notable changes to wtfgif are documented here.
 
+## 2.4.0 - 2026-08-04
+
+- Ship a quality-only Wasm artifact for `wtfgif/encode`, with scalar and SIMD
+  Node/browser variants. The encode entry now loads only the ABI needed by the
+  arbitrary-RGBA quality path; the full `wtfgif` entry keeps the decoder and
+  indexed APIs.
+- Remove the synthetic initialization delay and eager ordinary-size scratch
+  reservation. Initialization binds Wasm memory only; the first real encode
+  reserves exactly the input range it needs, and no source pixels, palette, or
+  output are retained.
+- Avoid recording a per-pixel 5-bit histogram index when the final palette plan
+  cannot consume it. The 4-bit path keeps its direct index stream, and the
+  quality/pixel output contract is unchanged.
+- Current receipts on the real eight-frame 128×128 RGBA fixture are 190.15×
+  initialized, 30.90× for the first real encode after initialization, and
+  22.17× for a seven-process strict-cold `wtfgif/encode` run. Opaque input is
+  171.02× initialized; the 512×512×10 stress fixture is 1,007.97× initialized.
+
 ## 2.3.0 - 2026-08-04
 
 - Keep WebAssembly initialization limited to ordinary scratch allocation; no

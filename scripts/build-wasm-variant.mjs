@@ -10,7 +10,7 @@ const variant = featureOrVariant === "simd" ? "simd" : explicitVariant;
 
 if (!target || !outputDirectory || !["nodejs", "web"].includes(target)) {
 	throw new Error(
-		"Usage: build-wasm-variant.mjs <nodejs|web> <output-directory> [encode-only] [simd]",
+		"Usage: build-wasm-variant.mjs <nodejs|web> <output-directory> [encode-only|quality-only] [simd]",
 	);
 }
 

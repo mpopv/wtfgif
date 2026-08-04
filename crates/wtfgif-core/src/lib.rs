@@ -1,3 +1,5 @@
+#![cfg_attr(feature = "quality-only", allow(dead_code))]
+
 use wasm_bindgen::prelude::*;
 
 #[cfg(any(not(feature = "encode-only"), not(target_arch = "wasm32")))]
@@ -6734,7 +6736,17 @@ fn index_rgba_frames_quality_u32<const BITS: usize>(
         // Keep the exact-prefix fast path allocation-free. Once overflow is
         // known, rebuild only that prefix and scan the remaining pixels once.
         let mut histogram = take_quality_histogram_u32(1 << (BITS * 3));
-        let mut histogram_indices = take_quality_histogram_indices(pixel_count);
+        // A 5-bit histogram is commonly collapsed to a 4-bit mapping table
+        // once its occupied cells exceed the dominant-color limit. In that
+        // case recording a u16 cell for every pixel is pure write traffic: the
+        // plan cannot consume those cells. Keep the direct index stream for
+        // the 4-bit path, where it is always usable, and map 5-bit input from
+        // the source pixels only when the final plan needs it.
+        let mut histogram_indices = if BITS == 4 {
+            take_quality_histogram_indices(pixel_count)
+        } else {
+            Vec::new()
+        };
         let mut prefix_offset = 0usize;
         let rgba_pointer = rgba_stream.as_ptr();
         while prefix_offset < start_offset {
@@ -6744,28 +6756,49 @@ fn index_rgba_frames_quality_u32<const BITS: usize>(
             if ((packed >> 24) as u8) >= alpha_threshold {
                 add_quality_histogram_u32_bits_const::<BITS>(&mut histogram, packed);
             }
-            histogram_indices[prefix_offset / 4] = if ((packed >> 24) as u8) < alpha_threshold {
-                u16::MAX
-            } else {
-                quality_histogram_index_packed::<BITS>(packed) as u16
-            };
+            if BITS == 4 {
+                histogram_indices[prefix_offset / 4] = if ((packed >> 24) as u8) < alpha_threshold {
+                    u16::MAX
+                } else {
+                    quality_histogram_index_packed::<BITS>(packed) as u16
+                };
+            }
             prefix_offset += 4;
         }
         if all_opaque {
-            accumulate_quality_histogram_u32_bits_remaining_opaque::<BITS, true>(
-                &mut histogram,
-                rgba_stream,
-                start_offset,
-                &mut histogram_indices,
-            );
+            if BITS == 4 {
+                accumulate_quality_histogram_u32_bits_remaining_opaque::<BITS, true>(
+                    &mut histogram,
+                    rgba_stream,
+                    start_offset,
+                    &mut histogram_indices,
+                );
+            } else {
+                accumulate_quality_histogram_u32_bits_remaining_opaque::<BITS, false>(
+                    &mut histogram,
+                    rgba_stream,
+                    start_offset,
+                    &mut [],
+                );
+            }
         } else {
-            has_transparent_pixels |= accumulate_quality_histogram_u32_bits_remaining::<BITS, true>(
-                &mut histogram,
-                rgba_stream,
-                start_offset,
-                alpha_threshold,
-                &mut histogram_indices,
-            );
+            has_transparent_pixels |= if BITS == 4 {
+                accumulate_quality_histogram_u32_bits_remaining::<BITS, true>(
+                    &mut histogram,
+                    rgba_stream,
+                    start_offset,
+                    alpha_threshold,
+                    &mut histogram_indices,
+                )
+            } else {
+                accumulate_quality_histogram_u32_bits_remaining::<BITS, false>(
+                    &mut histogram,
+                    rgba_stream,
+                    start_offset,
+                    alpha_threshold,
+                    &mut [],
+                )
+            };
         }
         recycle_quantized_indexed(indexed);
 
@@ -6778,7 +6811,7 @@ fn index_rgba_frames_quality_u32<const BITS: usize>(
             has_transparent_pixels,
             colors,
             BITS,
-            Some(histogram_indices),
+            (BITS == 4).then_some(histogram_indices),
         );
         QualityIndexResult::Quantized(plan)
     } else {

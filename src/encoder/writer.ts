@@ -7,15 +7,20 @@ import type {
 	PaletteRGB,
 	WasmCoreModule,
 	WasmEncodeCoreModule,
+	WasmQualityCoreModule,
 } from "../types";
 import { writeNetscapeLoopCount } from "../utils/netscape";
 import { checkPalette, log2Pow2 } from "../utils/palette";
 import { getWasmEncodeCoreModule } from "../wasm/encodeRuntime";
+import { getWasmQualityCoreModule } from "../wasm/qualityRuntime";
 
 const WASM_LZW_MIN_INDEX_COUNT = 8192;
 const TRANSPARENT_ALPHA_THRESHOLD = 128;
-const INITIAL_RGBA_INPUT_BYTES = 128 * 128 * 8 * 4;
-let lzwScratchMemoryModule: WasmCoreModule | WasmEncodeCoreModule | null = null;
+let lzwScratchMemoryModule:
+	| WasmCoreModule
+	| WasmEncodeCoreModule
+	| WasmQualityCoreModule
+	| null = null;
 let lzwScratchMemory: WebAssembly.Memory | null = null;
 let lzwInputScratchPointer = 0;
 let lzwInputScratchCapacity = 0;
@@ -31,13 +36,21 @@ function getEncoderWasmCoreModule():
 	return getWasmEncodeCoreModule();
 }
 
+function getQualityEncoderWasmCoreModule(): WasmQualityCoreModule | null {
+	return getWasmQualityCoreModule() ?? getWasmEncodeCoreModule();
+}
+
 /**
- * Move the normal-size Wasm scratch setup behind the explicit initialization
- * boundary. This does not retain source pixels or encoded output; it only
- * reserves the ordinary input range used by the first user encode.
+ * Bind the Wasm memory without allocating source or output scratch. The first
+ * encode reserves exactly the input range it needs, keeping initialization
+ * cold and allocation-free.
  */
 export function prepareWasmEncoderModule(
-	wasmCore: WasmCoreModule | WasmEncodeCoreModule | null,
+	wasmCore:
+		| WasmCoreModule
+		| WasmEncodeCoreModule
+		| WasmQualityCoreModule
+		| null,
 ): void {
 	if (!wasmCore) {
 		lzwScratchMemoryModule = null;
@@ -48,11 +61,9 @@ export function prepareWasmEncoderModule(
 	}
 	if (lzwScratchMemoryModule === wasmCore && lzwScratchMemory) return;
 	lzwScratchMemoryModule = wasmCore;
-	const scratchMemory = wasmCore.wasm_memory();
-	lzwScratchMemory = scratchMemory;
-	lzwInputScratchPointer = wasmCore.indexed_lzw_input_scratch_reserve(
-		INITIAL_RGBA_INPUT_BYTES,
-	);
+	lzwScratchMemory = wasmCore.wasm_memory();
+	lzwInputScratchPointer = 0;
+	lzwInputScratchCapacity = 0;
 }
 
 export type IndexedGifFrame = Uint8Array | number[];
@@ -277,7 +288,7 @@ function isFastQualityWasmRequest(
 function encodeRgbaQualityWasm(
 	options: EncodeRgbaGifFramesOptions,
 ): Uint8Array | null {
-	const wasmCore = getEncoderWasmCoreModule();
+	const wasmCore = getQualityEncoderWasmCoreModule();
 	if (!wasmCore) return null;
 	const frames = options.frames;
 	const width = options.width | 0;

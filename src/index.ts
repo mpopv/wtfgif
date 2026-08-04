@@ -61,7 +61,6 @@ const initializeWasmGlobally = async (
 ): Promise<void> => {
 	await initializeGlobalWasm(moduleOrPath);
 	bindPublicWasmApi();
-	await new Promise<void>((resolve) => setTimeout(resolve, 10));
 };
 
 const initializeWasmModule = async (
@@ -70,7 +69,6 @@ const initializeWasmModule = async (
 ): Promise<void> => {
 	await initializeStaticWasmModule(module, moduleOrPath);
 	bindPublicWasmApi();
-	await new Promise<void>((resolve) => setTimeout(resolve, 10));
 };
 
 const setWasmCoreModule = (

@@ -328,6 +328,41 @@ export type WasmEncodeCoreModule = Pick<
 	| "gif_output_scratch_ptr"
 >;
 
+/** Minimal ABI exported by the encode-only quality Wasm artifact. */
+export interface WasmQualityCoreModule {
+	core_version: () => string;
+	indexed_lzw_input_scratch_reserve: (length: number) => number;
+	wasm_memory: () => WebAssembly.Memory;
+	encode_rgba_quality_gif_from_input: (
+		length: number,
+		width: number,
+		height: number,
+		frameCount: number,
+		delays: Uint16Array,
+		loopCount: number,
+		alphaThreshold: number,
+	) => Uint8Array;
+	encode_rgba_quality_gif_scratch_from_input: (
+		length: number,
+		width: number,
+		height: number,
+		frameCount: number,
+		delays: Uint16Array,
+		loopCount: number,
+		alphaThreshold: number,
+	) => number;
+	encode_rgba_quality_gif_constant_delay_scratch_from_input: (
+		length: number,
+		width: number,
+		height: number,
+		frameCount: number,
+		delay: number,
+		loopCount: number,
+		alphaThreshold: number,
+	) => number;
+	gif_output_scratch_ptr: () => number;
+}
+
 /**
  * The byte-container contract used by omggif.
  *

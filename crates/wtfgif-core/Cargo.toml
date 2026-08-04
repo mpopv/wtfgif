@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib", "staticlib"]
 [features]
 default = []
 encode-only = []
+quality-only = ["encode-only"]
 
 [dependencies]
 wasm-bindgen = "0.2"

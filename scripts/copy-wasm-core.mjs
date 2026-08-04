@@ -59,6 +59,30 @@ const packages = [
 		label: "encode browser SIMD",
 		moduleType: "module",
 	},
+	{
+		source: "pkg-quality",
+		target: "wasm-quality",
+		label: "quality encode Node",
+		moduleType: "commonjs",
+	},
+	{
+		source: "pkg-quality-web",
+		target: "wasm-quality-web",
+		label: "quality encode browser",
+		moduleType: "module",
+	},
+	{
+		source: "pkg-quality-simd",
+		target: "wasm-quality-simd",
+		label: "quality encode Node SIMD",
+		moduleType: "commonjs",
+	},
+	{
+		source: "pkg-quality-web-simd",
+		target: "wasm-quality-web-simd",
+		label: "quality encode browser SIMD",
+		moduleType: "module",
+	},
 ];
 
 for (const wasmPackage of packages) {

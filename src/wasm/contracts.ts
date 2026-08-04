@@ -1,4 +1,18 @@
-import type { WasmCoreModule, WasmEncodeCoreModule } from "../types";
+import type {
+	WasmCoreModule,
+	WasmEncodeCoreModule,
+	WasmQualityCoreModule,
+} from "../types";
+
+const QUALITY_EXPORTS = [
+	"core_version",
+	"indexed_lzw_input_scratch_reserve",
+	"wasm_memory",
+	"encode_rgba_quality_gif_from_input",
+	"encode_rgba_quality_gif_scratch_from_input",
+	"encode_rgba_quality_gif_constant_delay_scratch_from_input",
+	"gif_output_scratch_ptr",
+] as const satisfies readonly (keyof WasmQualityCoreModule)[];
 
 const ENCODE_EXPORTS = [
 	"core_version",
@@ -60,6 +74,12 @@ export function isWasmEncodeCoreModule(
 	value: unknown,
 ): value is WasmEncodeCoreModule {
 	return hasFunctions(value, ENCODE_EXPORTS);
+}
+
+export function isWasmQualityCoreModule(
+	value: unknown,
+): value is WasmQualityCoreModule {
+	return hasFunctions(value, QUALITY_EXPORTS);
 }
 
 export function isWasmCoreModule(value: unknown): value is WasmCoreModule {
