@@ -850,17 +850,54 @@ fn hinted_palette_lookup_matches_unhinted_exact_search() {
             for blue in (0..=255).step_by(17) {
                 let expected = tree.nearest(red, green, blue);
                 for hint in (0..palette.len()).step_by(19) {
+                    let hinted = Some((hint as u8, palette[hint]));
                     assert_eq!(
-                            tree.nearest_with_hint(
-                                red,
-                                green,
-                                blue,
-                                Some((hint as u8, palette[hint])),
-                            ),
-                            expected,
-                            "color {red},{green},{blue} hint {hint}",
-                        );
+                        tree.nearest_with_hint(red, green, blue, hinted),
+                        expected,
+                        "color {red},{green},{blue} hint {hint}",
+                    );
+                    assert_eq!(
+                        tree.nearest_with_hint_split(red, green, blue, hinted),
+                        expected,
+                        "split color {red},{green},{blue} hint {hint}",
+                    );
                 }
+            }
+        }
+    }
+}
+
+#[test]
+fn recolored_palette_tree_matches_rebuilt_tree() {
+    let initial = (0..256u32)
+        .map(|index| {
+            let red = (index * 73 + 19) & 255;
+            let green = (index * 151 + 7) & 255;
+            let blue = (index * 199 + 43) & 255;
+            (red << 16) | (green << 8) | blue
+        })
+        .collect::<Vec<_>>();
+    let updated = initial
+        .iter()
+        .enumerate()
+        .map(|(index, &color)| {
+            let red = ((color >> 16) as u8).wrapping_add((index * 11) as u8);
+            let green = ((color >> 8) as u8).wrapping_sub((index * 7) as u8);
+            let blue = (color as u8).wrapping_add((index * 5) as u8);
+            (u32::from(red) << 16) | (u32::from(green) << 8) | u32::from(blue)
+        })
+        .collect::<Vec<_>>();
+    let mut recolored = PaletteKdTree::new(&initial);
+    recolored.recolor(&updated);
+    let rebuilt = PaletteKdTree::new(&updated);
+    for red in (0..=255).step_by(11) {
+        for green in (0..=255).step_by(13) {
+            for blue in (0..=255).step_by(17) {
+                assert_eq!(
+                    recolored.nearest(red, green, blue),
+                    rebuilt.nearest(red, green, blue),
+                    "color {red},{green},{blue}",
+                );
             }
         }
     }
@@ -886,11 +923,27 @@ fn coarse_nearest_table_matches_exact_search() {
     for palette in palettes {
         let tree = PaletteKdTree::new(&palette);
         let table = tree.coarse_nearest_table(&palette);
+        let mut requested = [false; 1 << 12];
+        for red in 0..16usize {
+            for green in 0..16usize {
+                for blue in 0..16usize {
+                    let index = (red << 8) | (green << 4) | blue;
+                    requested[index] = (red + green * 3 + blue * 5) % 7 < 3;
+                }
+            }
+        }
+        let sparse_table = tree.coarse_nearest_table_for_cells(&palette, &requested);
         for red in 0..16u8 {
             for green in 0..16u8 {
                 for blue in 0..16u8 {
                     let index =
                         (usize::from(red) << 8) | (usize::from(green) << 4) | usize::from(blue);
+                    if requested[index] {
+                        assert_eq!(
+                            sparse_table[index], table[index],
+                            "sparse coarse cell {red},{green},{blue}",
+                        );
+                    }
                     assert_eq!(
                         table[index],
                         tree.nearest((red << 4) | 8, (green << 4) | 8, (blue << 4) | 8),
@@ -1140,7 +1193,7 @@ fn packed_quality_histogram_indices_match_channel_indices() {
 }
 
 #[test]
-fn in_place_quality_materialization_preserves_palette_indices() {
+fn quality_materialization_preserves_palette_indices() {
     let histogram_to_palette: Vec<u8> = (0..=4095u16).map(|value| value as u8).collect();
     let opaque = materialize_quality_indices(vec![0, 17, 255, 4095], None, &histogram_to_palette);
     assert_eq!(opaque, vec![0, 17, 255, 255]);

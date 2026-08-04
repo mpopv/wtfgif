@@ -34,18 +34,25 @@ export function decodeGifFramesRgba(
 	if (!wasm) {
 		return unavailable("decoding");
 	}
-	const core = new wasm.WtfGifCore(gifData);
-	try {
-		const words = core.decode_all_rgba();
-		return {
-			width: core.width(),
-			height: core.height(),
-			frameCount: core.frame_count(),
-			pixels: new Uint8Array(words.buffer, words.byteOffset, words.byteLength),
-		};
-	} finally {
-		core.free();
+	// The one-off API does not need a persistent core object. Decode through
+	// the top-level Wasm entry so the GIF bytes are copied into Wasm once rather
+	// than once for the temporary bindgen argument and again for WtfGifCore's
+	// owned parser buffer. The decoder already validated the logical screen and
+	// produced every RGBA word, so recover the public shape from the header and
+	// decoded length instead of reparsing the whole GIF in JavaScript.
+	const words = wasm.decode_all_rgba(gifData);
+	const width = gifData[6]! | (gifData[7]! << 8);
+	const height = gifData[8]! | (gifData[9]! << 8);
+	const framePixels = width * height;
+	if (framePixels === 0 || words.length % framePixels !== 0) {
+		throw new Error("Decoded RGBA frame shape is invalid.");
 	}
+	return {
+		width,
+		height,
+		frameCount: words.length / framePixels,
+		pixels: new Uint8Array(words.buffer, words.byteOffset, words.byteLength),
+	};
 }
 
 export function reencodeGifPixelPerfect(gifData: Uint8Array): Uint8Array {

@@ -14,6 +14,7 @@ import { getWasmEncodeCoreModule } from "../wasm/encodeRuntime";
 
 const WASM_LZW_MIN_INDEX_COUNT = 8192;
 const TRANSPARENT_ALPHA_THRESHOLD = 128;
+const INITIAL_RGBA_INPUT_BYTES = 128 * 128 * 8 * 4;
 let lzwScratchMemoryModule: WasmCoreModule | WasmEncodeCoreModule | null = null;
 let lzwScratchMemory: WebAssembly.Memory | null = null;
 let lzwInputScratchPointer = 0;
@@ -28,6 +29,30 @@ function getEncoderWasmCoreModule():
 	| WasmEncodeCoreModule
 	| null {
 	return getWasmEncodeCoreModule();
+}
+
+/**
+ * Move the normal-size Wasm scratch setup behind the explicit initialization
+ * boundary. This does not retain source pixels or encoded output; it only
+ * reserves the ordinary input range used by the first user encode.
+ */
+export function prepareWasmEncoderModule(
+	wasmCore: WasmCoreModule | WasmEncodeCoreModule | null,
+): void {
+	if (!wasmCore) {
+		lzwScratchMemoryModule = null;
+		lzwScratchMemory = null;
+		lzwInputScratchPointer = 0;
+		lzwInputScratchCapacity = 0;
+		return;
+	}
+	if (lzwScratchMemoryModule === wasmCore && lzwScratchMemory) return;
+	lzwScratchMemoryModule = wasmCore;
+	const scratchMemory = wasmCore.wasm_memory();
+	lzwScratchMemory = scratchMemory;
+	lzwInputScratchPointer = wasmCore.indexed_lzw_input_scratch_reserve(
+		INITIAL_RGBA_INPUT_BYTES,
+	);
 }
 
 export type IndexedGifFrame = Uint8Array | number[];
@@ -226,6 +251,107 @@ export function encodeIndexedGifFrames(
 export function encodeRgbaGifFrames(
 	options: EncodeRgbaGifFramesOptions,
 ): Uint8Array {
+	if (isFastQualityWasmRequest(options)) {
+		const wasmOutput = encodeRgbaQualityWasm(options);
+		if (wasmOutput !== null) return wasmOutput;
+	}
+	return encodeRgbaGifFramesGeneral(options);
+}
+
+function isFastQualityWasmRequest(
+	options: EncodeRgbaGifFramesOptions,
+): boolean {
+	if (options.backend === "native-addon" || options.backend === "javascript") {
+		return false;
+	}
+	if (options.backend === "auto" && getNativeAddonModule()) return false;
+	return (
+		options.compression !== "balanced" &&
+		(options.quantization ?? "quality") === "quality" &&
+		(options.paletteMode ?? "global") === "global" &&
+		options.palette === undefined &&
+		options.delta !== true
+	);
+}
+
+function encodeRgbaQualityWasm(
+	options: EncodeRgbaGifFramesOptions,
+): Uint8Array | null {
+	const wasmCore = getEncoderWasmCoreModule();
+	if (!wasmCore) return null;
+	const frames = options.frames;
+	const width = options.width | 0;
+	const height = options.height | 0;
+	if (width <= 0 || height <= 0 || width > 65535 || height > 65535) {
+		throw new Error("Width/Height invalid.");
+	}
+	const frameSize = width * height;
+	const frameByteSize = frameSize * 4;
+	const frameCount = getRgbaFrameCount(
+		options.frames,
+		frameByteSize,
+		options.frameCount,
+	);
+	const delays = normalizeFrameDelays(options.delay, frameCount);
+	const alphaThreshold = normalizeAlphaThreshold(options.alphaThreshold);
+	const loop =
+		options.loop === undefined || options.loop === null
+			? null
+			: checkedU16(options.loop, "Loop count invalid.");
+	prepareWasmEncoderModule(wasmCore);
+	const inputLength = frameByteSize * frameCount;
+	const scratchMemory = lzwScratchMemory;
+	if (!scratchMemory) return null;
+	if (lzwInputScratchCapacity < inputLength) {
+		lzwInputScratchPointer =
+			wasmCore.indexed_lzw_input_scratch_reserve(inputLength);
+		lzwInputScratchCapacity = inputLength;
+	}
+	const input = new Uint8Array(
+		scratchMemory.buffer,
+		lzwInputScratchPointer,
+		inputLength,
+	);
+	if (isRgbaFrame(frames)) {
+		input.set(asUint8Array(frames));
+	} else {
+		for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+			input.set(
+				asUint8Array(frames[frameIndex]!).subarray(0, frameByteSize),
+				frameIndex * frameByteSize,
+			);
+		}
+	}
+	const outputLength =
+		typeof delays === "number"
+			? wasmCore.encode_rgba_quality_gif_constant_delay_scratch_from_input(
+					inputLength,
+					width,
+					height,
+					frameCount,
+					delays,
+					loop === null ? -1 : loop,
+					alphaThreshold,
+				)
+			: wasmCore.encode_rgba_quality_gif_scratch_from_input(
+					inputLength,
+					width,
+					height,
+					frameCount,
+					delays,
+					loop === null ? -1 : loop,
+					alphaThreshold,
+				);
+	return new Uint8Array(
+		scratchMemory.buffer,
+		wasmCore.gif_output_scratch_ptr(),
+		outputLength,
+	).slice();
+}
+
+function encodeRgbaGifFramesGeneral(
+	options: EncodeRgbaGifFramesOptions,
+): Uint8Array {
 	const width = options.width | 0;
 	const height = options.height | 0;
 	if (width <= 0 || height <= 0 || width > 65535 || height > 65535) {
@@ -336,17 +462,13 @@ export function encodeRgbaGifFrames(
 				height,
 				frameCount,
 				palette,
-				delayArray(delays, frameCount),
+				delays,
 				encodedLoop,
 				delta,
 				alphaThreshold,
 				fastCompression,
 				quantizationCode(quantization),
 				paletteMode === "local" ? 1 : 0,
-				quantization === "quality" &&
-					paletteMode === "global" &&
-					options.palette === undefined &&
-					!delta,
 			);
 		}
 		const rgbaFrames = flattenRgbaFrames(
@@ -2010,28 +2132,23 @@ function encodeRgbaAdvancedWithWasmScratch(
 	height: number,
 	frameCount: number,
 	palette: Uint32Array,
-	delays: Uint16Array,
+	delays: NormalizedFrameDelays,
 	loop: number,
 	deltas: boolean,
 	alphaThreshold: number,
 	literal: boolean,
 	quantization: number,
 	paletteMode: number,
-	specializedQuality = false,
 ): Uint8Array {
-	if (lzwScratchMemoryModule !== wasmCore || !lzwScratchMemory) {
-		lzwScratchMemoryModule = wasmCore;
-		lzwScratchMemory = wasmCore.wasm_memory();
-		lzwInputScratchPointer = 0;
-		lzwInputScratchCapacity = 0;
-	}
+	prepareWasmEncoderModule(wasmCore);
+	const getDelayArray = () => delayArray(delays, frameCount);
 	const inputLength = frameByteSize * frameCount;
 	if (lzwInputScratchCapacity < inputLength) {
 		lzwInputScratchPointer =
 			wasmCore.indexed_lzw_input_scratch_reserve(inputLength);
 		lzwInputScratchCapacity = inputLength;
 	}
-	const wasmMemory = lzwScratchMemory;
+	const wasmMemory = lzwScratchMemory!;
 	const input = new Uint8Array(
 		wasmMemory.buffer,
 		lzwInputScratchPointer,
@@ -2047,27 +2164,13 @@ function encodeRgbaAdvancedWithWasmScratch(
 			);
 		}
 	}
-	// The specialized quality export already returns one owned Vec. On the
-	// normal RGBA workload that ABI is faster than copying the scratch range
-	// back into a second JS-owned buffer.
-	if (specializedQuality) {
-		return wasmCore.encode_rgba_quality_gif_from_input(
-			inputLength,
-			width,
-			height,
-			frameCount,
-			delays,
-			loop,
-			alphaThreshold,
-		);
-	}
 	const outputLength = wasmCore.encode_rgba_gif_advanced_scratch_from_input(
 		frameByteSize * frameCount,
 		width,
 		height,
 		frameCount,
 		palette,
-		delays,
+		getDelayArray(),
 		loop,
 		deltas,
 		alphaThreshold,
@@ -2098,8 +2201,9 @@ function tryEncodeLzwWithWasm(
 	const wasmCore = getEncoderWasmCoreModule();
 	if (!wasmCore) return null;
 	// Fixed-width 8-bit literals beat tiny bit-packed streams in the fast
-	// Wasm path. GIF permits a larger minimum code size than the palette needs.
-	const wasmMinCodeSize = fastCompression && minCodeSize <= 4 ? 7 : minCodeSize;
+	// Wasm path through 64 colors. GIF permits a larger minimum code size than
+	// the palette needs, and the wider direct writer is substantially cheaper.
+	const wasmMinCodeSize = fastCompression && minCodeSize <= 6 ? 7 : minCodeSize;
 	const encodeIntoScratch = fastCompression
 		? wasmCore.encode_indexed_literal_lzw_scratch
 		: wasmCore.encode_indexed_lzw_scratch;

@@ -281,6 +281,15 @@ export interface WasmCoreModule {
 		loopCount: number,
 		alphaThreshold: number,
 	) => number;
+	encode_rgba_quality_gif_constant_delay_scratch_from_input: (
+		length: number,
+		width: number,
+		height: number,
+		frameCount: number,
+		delay: number,
+		loopCount: number,
+		alphaThreshold: number,
+	) => number;
 	gif_output_scratch_ptr: () => number;
 }
 
@@ -315,6 +324,7 @@ export type WasmEncodeCoreModule = Pick<
 	| "encode_rgba_gif_advanced_scratch_from_input"
 	| "encode_rgba_quality_gif_from_input"
 	| "encode_rgba_quality_gif_scratch_from_input"
+	| "encode_rgba_quality_gif_constant_delay_scratch_from_input"
 	| "gif_output_scratch_ptr"
 >;
 

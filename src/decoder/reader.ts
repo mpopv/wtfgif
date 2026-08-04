@@ -36,6 +36,8 @@ type ChangedRect = {
 	height: number;
 };
 
+const SEQUENTIAL_COMPOSITED_PIXEL_LIMIT = 2_500_000;
+
 /* ====== Reader (Decoder) ====== */
 // moved to types.ts
 
@@ -67,6 +69,10 @@ export class GifReader {
 	// single-frame reads keep their existing memory and latency behavior.
 	private sequentialCompositedFrames: Uint32Array | null = null;
 	private sequentialCompositedOrder: "rgba" | "bgra" | null = null;
+	private sequentialCompositedScratchMemory: WebAssembly.Memory | null = null;
+	private sequentialCompositedScratchPointer = 0;
+	private sequentialCompositedScratchLength = 0;
+	private sequentialCompositedScratchCore: WasmCoreInstance | null = null;
 	private sequentialInitialCanvasZero: boolean | null = null;
 	private sequentialInitialCanvasBuffer: ArrayBufferLike | null = null;
 	private sequentialInitialCanvasByteOffset = 0;
@@ -1166,14 +1172,30 @@ export class GifReader {
 		this.globalPal32rgba = undefined;
 		this.globalPal32bgra = undefined;
 		this.globalPal32TransparentIndex = undefined;
-		this.sequentialCompositedFrames = null;
-		this.sequentialCompositedOrder = null;
+		this.clearSequentialCompositedCache();
 		this.sequentialInitialCanvasZero = null;
 		this.sequentialInitialCanvasBuffer = null;
 		this.sequentialInitialCanvasByteOffset = 0;
 		this.sequentialInitialCanvasByteLength = 0;
 		this.sequentialInitialCanvasOrder = null;
 		this.lastDecodedFrame = -1;
+	}
+
+	private clearSequentialCompositedCache(): void {
+		const cachedCore = this.sequentialCompositedScratchCore;
+		this.sequentialCompositedFrames = null;
+		this.sequentialCompositedOrder = null;
+		this.sequentialCompositedScratchMemory = null;
+		this.sequentialCompositedScratchPointer = 0;
+		this.sequentialCompositedScratchLength = 0;
+		this.sequentialCompositedScratchCore = null;
+		if (cachedCore) {
+			if (cachedCore === this.wasmCore) {
+				this.wasmCore = null;
+				this.wasmMemory = null;
+			}
+			cachedCore.free();
+		}
 	}
 
 	private tryDecodeSequentialCompositedFrame(
@@ -1184,17 +1206,46 @@ export class GifReader {
 		const canvasPixels = this.width_ * this.height_;
 		const cached = this.sequentialCompositedFrames;
 		if (cached && this.sequentialCompositedOrder === order) {
+			const scratchMemory = this.sequentialCompositedScratchMemory;
+			const scratchPointer = this.sequentialCompositedScratchPointer;
+			const scratchLength = this.sequentialCompositedScratchLength;
+			if (
+				!scratchMemory ||
+				scratchPointer <= 0 ||
+				scratchPointer + scratchLength * 4 > scratchMemory.buffer.byteLength
+			) {
+				this.clearSequentialCompositedCache();
+				return false;
+			}
+			const current =
+				cached.buffer === scratchMemory.buffer
+					? cached
+					: new Uint32Array(
+							scratchMemory.buffer,
+							scratchPointer,
+							scratchLength,
+						);
+			this.sequentialCompositedFrames = current;
 			const start = frameNum * canvasPixels;
-			out32.set(cached.subarray(start, start + canvasPixels), 0);
+			out32.set(current.subarray(start, start + canvasPixels), 0);
+			if (frameNum === this.frames.length - 1) {
+				// The ordinary sequential caller has consumed the final frame. Drop
+				// the retained Wasm owner now so short-lived readers do not accumulate
+				// one live Rust allocation per benchmark/job invocation.
+				this.clearSequentialCompositedCache();
+			}
 			this.lastDecodedFrame = frameNum;
 			return true;
+		}
+		if (cached) {
+			this.clearSequentialCompositedCache();
 		}
 		const totalPixels = canvasPixels * this.frames.length;
 		const cacheCandidate =
 			this.frames.length >= 8 &&
 			canvasPixels >= 512 &&
 			Number.isSafeInteger(totalPixels) &&
-			totalPixels <= 1_000_000;
+			totalPixels <= SEQUENTIAL_COMPOSITED_PIXEL_LIMIT;
 		if (frameNum === 0 && this.lastDecodedFrame === -1 && cacheCandidate) {
 			let zero = true;
 			for (let index = 0; index < canvasPixels; index++) {
@@ -1221,8 +1272,8 @@ export class GifReader {
 		// Do not turn an isolated frame read into a whole-animation decode. The
 		// cache is deliberately armed only by the first sequential pair into the
 		// same caller-owned canvas, and is bounded to keep a legacy reader from
-		// unexpectedly retaining a large animation in memory (1,000,000 output
-		// pixels at most).
+		// unexpectedly retaining a large animation in memory (2.5M output pixels
+		// at most).
 		if (
 			frameNum !== 1 ||
 			this.lastDecodedFrame !== 0 ||
@@ -1253,13 +1304,17 @@ export class GifReader {
 		) {
 			throw new Error("WebAssembly composited scratch buffer is invalid.");
 		}
-		const cachedFrames = new Uint32Array(totalPixels);
-		cachedFrames.set(
-			new Uint32Array(this.wasmMemory.buffer, preparedPointer, totalPixels),
+		const cachedFrames = new Uint32Array(
+			this.wasmMemory.buffer,
+			preparedPointer,
+			totalPixels,
 		);
-		this.releaseWasmCore();
 		this.sequentialCompositedFrames = cachedFrames;
 		this.sequentialCompositedOrder = order;
+		this.sequentialCompositedScratchMemory = this.wasmMemory;
+		this.sequentialCompositedScratchPointer = preparedPointer;
+		this.sequentialCompositedScratchLength = totalPixels;
+		this.sequentialCompositedScratchCore = this.wasmCore;
 		const start = frameNum * canvasPixels;
 		out32.set(cachedFrames.subarray(start, start + canvasPixels), 0);
 		this.lastDecodedFrame = frameNum;

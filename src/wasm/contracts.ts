@@ -29,6 +29,7 @@ const ENCODE_EXPORTS = [
 	"encode_rgba_gif_advanced_scratch_from_input",
 	"encode_rgba_quality_gif_from_input",
 	"encode_rgba_quality_gif_scratch_from_input",
+	"encode_rgba_quality_gif_constant_delay_scratch_from_input",
 	"gif_output_scratch_ptr",
 ] as const satisfies readonly (keyof WasmEncodeCoreModule)[];
 

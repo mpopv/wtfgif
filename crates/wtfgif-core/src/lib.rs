@@ -4006,12 +4006,11 @@ fn encode_rgba_quality_gif_inner_with_output(
     width: u16,
     height: u16,
     frame_count: usize,
-    delays: &[u16],
+    delays: DelaySource<'_>,
     loop_count: i32,
     alpha_threshold: u8,
     output: Vec<u8>,
 ) -> Result<Vec<u8>, String> {
-    let delays = DelaySource::PerFrame(delays);
     validate_rgba_stream(rgba_stream, width, height, frame_count, delays, loop_count)?;
     match index_rgba_frames_quality_result(rgba_stream, alpha_threshold) {
         QualityIndexResult::Exact((palette, indexed, transparent_index)) => {
@@ -4026,6 +4025,7 @@ fn encode_rgba_quality_gif_inner_with_output(
                 loop_count,
                 transparent_index,
             );
+            recycle_quality_palette(palette);
             recycle_quantized_indexed(indexed);
             encoded
         }
@@ -4044,6 +4044,7 @@ fn encode_rgba_quality_gif_inner_with_output(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[inline(never)]
 fn encode_quality_index_plan_literal_gif(
     mut output: Vec<u8>,
     rgba_stream: &[u8],
@@ -4085,6 +4086,7 @@ fn encode_quality_index_plan_literal_gif(
             loop_count,
             transparent_index,
         );
+        recycle_quality_palette(palette);
         recycle_quantized_indexed(indexed);
         return encoded;
     }
@@ -4131,6 +4133,7 @@ fn encode_quality_index_plan_literal_gif(
             loop_count,
             transparent_index,
         );
+        recycle_quality_palette(palette);
         recycle_quantized_indexed(indexed);
         return encoded;
     }
@@ -4204,13 +4207,14 @@ fn encode_quality_index_plan_literal_gif(
     }
     output.push(0x3b);
     recycle_quality_histogram_to_palette(histogram_to_palette);
+    recycle_quality_palette(palette);
     Ok(output)
 }
 
-/// Encode a 256-color quality plan directly from the retained histogram-cell
-/// indices. The low-resolution path already records one u16 cell per pixel
+/// Emit a 256-color quality plan directly from the retained histogram cells.
+/// The high-resolution histogram path already records one u16 cell per pixel
 /// while building the palette; materializing those cells into a second u8
-/// buffer before literal LZW was a redundant full-image pass.
+/// buffer before literal LZW is a redundant full-image pass.
 #[allow(clippy::too_many_arguments)]
 fn encode_quality_index_plan_literal_gif_from_histogram_indices(
     mut output: Vec<u8>,
@@ -4284,6 +4288,7 @@ fn encode_quality_index_plan_literal_gif_from_histogram_indices(
     }
     output.push(0x3b);
     recycle_quality_histogram_to_palette(histogram_to_palette);
+    recycle_quality_palette(palette);
     recycle_quality_histogram_indices(histogram_indices);
     Ok(output)
 }
@@ -5195,6 +5200,12 @@ struct QuantizedColorArenaBox {
     blue_range: u8,
 }
 
+thread_local! {
+    static REUSABLE_QUANTIZED_COLOR_BOXES:
+        std::cell::RefCell<Vec<QuantizedColorArenaBox>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
 impl QuantizedColorArenaBox {
     fn new(start: usize, end: usize, colors: &[QuantizedColor]) -> Self {
         let (weight, red_range, green_range, blue_range) =
@@ -5342,17 +5353,34 @@ fn weighted_axis_split_index_with_stats_const<const AXIS: usize>(
         let stats = quantized_color_stats(colors);
         return (1.min(total_len), stats, (0, u8::MAX, u8::MAX, u8::MAX));
     }
-    let mut weights = [0u64; 256];
+    // Median-cut splits repeatedly rebuild this byte-axis histogram. Keep the
+    // sparse weight slots uninitialized and track which byte values were seen;
+    // zeroing 256 u64s for every split is otherwise pure overhead.
+    let mut weights = [std::mem::MaybeUninit::<u64>::uninit(); 256];
+    let mut seen = [0u64; 4];
     for color in colors.iter() {
-        weights[usize::from(quantized_color_axis_const::<AXIS>(color))] += color.count;
+        let value = usize::from(quantized_color_axis_const::<AXIS>(color));
+        let word = value >> 6;
+        let bit = 1u64 << (value & 63);
+        if seen[word] & bit == 0 {
+            seen[word] |= bit;
+            weights[value].write(color.count);
+        } else {
+            unsafe {
+                *weights[value].assume_init_mut() += color.count;
+            }
+        }
     }
     let target = midpoint.max(1);
     let mut below_weight = 0u64;
     let mut split_axis = 0usize;
-    for (value, &weight) in weights.iter().enumerate() {
-        if weight == 0 {
+    for (value, weight_slot) in weights.iter().enumerate() {
+        let word = value >> 6;
+        let bit = 1u64 << (value & 63);
+        if seen[word] & bit == 0 {
             continue;
         }
+        let weight = unsafe { weight_slot.assume_init() };
         if target <= below_weight + weight {
             split_axis = value;
             break;
@@ -5436,34 +5464,23 @@ fn weighted_axis_split_index_with_stats_const<const AXIS: usize>(
     let mut right_equal_max_green = 0u8;
     let mut right_equal_max_blue = 0u8;
     for (index, color) in colors[less_end..greater_start].iter().enumerate() {
-        let target = if less_end + index < split {
-            (
-                &mut left_equal_weight,
-                &mut left_equal_min_red,
-                &mut left_equal_min_green,
-                &mut left_equal_min_blue,
-                &mut left_equal_max_red,
-                &mut left_equal_max_green,
-                &mut left_equal_max_blue,
-            )
+        if less_end + index < split {
+            left_equal_weight += color.count;
+            left_equal_min_red = left_equal_min_red.min(color.red);
+            left_equal_min_green = left_equal_min_green.min(color.green);
+            left_equal_min_blue = left_equal_min_blue.min(color.blue);
+            left_equal_max_red = left_equal_max_red.max(color.red);
+            left_equal_max_green = left_equal_max_green.max(color.green);
+            left_equal_max_blue = left_equal_max_blue.max(color.blue);
         } else {
-            (
-                &mut right_equal_weight,
-                &mut right_equal_min_red,
-                &mut right_equal_min_green,
-                &mut right_equal_min_blue,
-                &mut right_equal_max_red,
-                &mut right_equal_max_green,
-                &mut right_equal_max_blue,
-            )
-        };
-        *target.0 += color.count;
-        *target.1 = (*target.1).min(color.red);
-        *target.2 = (*target.2).min(color.green);
-        *target.3 = (*target.3).min(color.blue);
-        *target.4 = (*target.4).max(color.red);
-        *target.5 = (*target.5).max(color.green);
-        *target.6 = (*target.6).max(color.blue);
+            right_equal_weight += color.count;
+            right_equal_min_red = right_equal_min_red.min(color.red);
+            right_equal_min_green = right_equal_min_green.min(color.green);
+            right_equal_min_blue = right_equal_min_blue.min(color.blue);
+            right_equal_max_red = right_equal_max_red.max(color.red);
+            right_equal_max_green = right_equal_max_green.max(color.green);
+            right_equal_max_blue = right_equal_max_blue.max(color.blue);
+        }
     }
     let left_min_red = less_min_red.min(left_equal_min_red);
     let left_min_green = less_min_green.min(left_equal_min_green);
@@ -5685,6 +5702,9 @@ fn quality_colors_from_histogram_u32<const SAFE_SUMS: bool>(
     histogram: &[RgbHistogramBin32],
 ) -> Vec<QuantizedColor> {
     let mut colors = take_quality_colors();
+    if colors.capacity() < histogram.len() {
+        colors.reserve(histogram.len() - colors.capacity());
+    }
     for (histogram_index, bin) in histogram.iter().enumerate() {
         if bin.count == 0 {
             continue;
@@ -5735,6 +5755,9 @@ fn rounded_weighted_average_u32(sum: u32, count: u32) -> u8 {
 
 fn quality_colors_from_histogram_u64(histogram: &[RgbHistogramBin]) -> Vec<QuantizedColor> {
     let mut colors = take_quality_colors();
+    if colors.capacity() < histogram.len() {
+        colors.reserve(histogram.len() - colors.capacity());
+    }
     for (histogram_index, bin) in histogram.iter().enumerate() {
         if bin.count == 0 {
             continue;
@@ -5752,6 +5775,24 @@ fn quality_colors_from_histogram_u64(histogram: &[RgbHistogramBin]) -> Vec<Quant
 
 fn take_quality_colors() -> Vec<QuantizedColor> {
     REUSABLE_QUALITY_COLORS.with(|scratch| std::mem::take(&mut *scratch.borrow_mut()))
+}
+
+fn take_quality_palette(capacity: usize) -> Vec<u32> {
+    REUSABLE_QUALITY_PALETTE.with(|scratch| {
+        let mut palette = std::mem::take(&mut *scratch.borrow_mut());
+        palette.clear();
+        if palette.capacity() < capacity {
+            palette.reserve(capacity - palette.capacity());
+        }
+        palette
+    })
+}
+
+fn recycle_quality_palette(mut palette: Vec<u32>) {
+    palette.clear();
+    REUSABLE_QUALITY_PALETTE.with(|scratch| {
+        *scratch.borrow_mut() = palette;
+    });
 }
 
 fn recycle_quality_colors(mut colors: Vec<QuantizedColor>) {
@@ -5774,9 +5815,6 @@ fn index_rgba_frames_quality(
 fn index_rgba_frames_quality_result(rgba_stream: &[u8], alpha_threshold: u8) -> QualityIndexResult {
     let pixel_count = rgba_stream.len() / 4;
     if pixel_count <= QUALITY_LOW_RES_PIXEL_LIMIT {
-        // The quality scan already has to inspect every pixel. Keep the alpha
-        // check in that pass instead of paying for a separate full-stream
-        // preflight on the normal (opaque) workload.
         return if alpha_threshold == 0 {
             index_rgba_frames_quality_low_res::<false>(rgba_stream, alpha_threshold)
         } else {
@@ -5791,6 +5829,7 @@ fn index_rgba_frames_quality_result(rgba_stream: &[u8], alpha_threshold: u8) -> 
     index_rgba_frames_quality_high_res(rgba_stream, alpha_threshold, all_opaque)
 }
 
+#[inline(never)]
 fn index_rgba_frames_quality_low_res<const HAS_TRANSPARENT: bool>(
     rgba_stream: &[u8],
     alpha_threshold: u8,
@@ -5799,7 +5838,7 @@ fn index_rgba_frames_quality_low_res<const HAS_TRANSPARENT: bool>(
     const HISTOGRAM_LEN: usize = 1 << (HISTOGRAM_BITS * 3);
     let pixel_count = rgba_stream.len() / 4;
     let mut table = take_quality_color_index_table(COLOR_INDEX_CAP);
-    let mut palette = Vec::with_capacity(256);
+    let mut palette = take_quality_palette(256);
     // Delay histogram updates until the exact-color probe overflows. Exact
     // inputs are common for flat/illustrated frames, and their histogram is
     // discarded immediately; overflowing inputs replay only the tiny prefix
@@ -5809,7 +5848,7 @@ fn index_rgba_frames_quality_low_res<const HAS_TRANSPARENT: bool>(
     // The indexed stream is needed only if the exact-color probe succeeds.
     // Start with a small prefix buffer so the common quantized path does not
     // reserve the entire RGBA image just to discard the prefix after overflow.
-    let mut indexed = Vec::with_capacity(pixel_count.min(4_096));
+    let mut indexed = take_quality_probe_indices(pixel_count.min(4_096));
     let mut has_transparent_pixels = false;
     let rgba_pointer = rgba_stream.as_ptr();
     let mut overflow_offset = None;
@@ -5850,59 +5889,51 @@ fn index_rgba_frames_quality_low_res<const HAS_TRANSPARENT: bool>(
         indexed.push(index);
     }
     if let Some(start_offset) = overflow_offset {
+        recycle_quantized_indexed(indexed);
         // Rebuild the histogram cells for the exact prefix and finish only
         // the suffix after the palette limit was exceeded.
         let mut histogram = take_quality_histogram_u32(HISTOGRAM_LEN);
-        let mut histogram_indices = take_quality_histogram_indices(pixel_count);
         let mut prefix_offset = 0usize;
         while prefix_offset < start_offset {
             let packed = u32::from_le(unsafe {
                 std::ptr::read_unaligned(rgba_pointer.add(prefix_offset).cast())
             });
             let transparent = HAS_TRANSPARENT && ((packed >> 24) as u8) < alpha_threshold;
-            let index = if transparent {
-                u16::MAX
-            } else {
-                let index = quality_histogram_index_packed::<HISTOGRAM_BITS>(packed) as u16;
-                add_quality_histogram_u32_bits_indexed(&mut histogram, packed, usize::from(index));
-                index
-            };
-            unsafe {
-                histogram_indices
-                    .as_mut_ptr()
-                    .add(prefix_offset / 4)
-                    .write(index)
-            };
+            if !transparent {
+                let index = quality_histogram_index_packed::<HISTOGRAM_BITS>(packed);
+                add_quality_histogram_u32_bits_indexed(&mut histogram, packed, index);
+            }
             prefix_offset += 4;
         }
         if HAS_TRANSPARENT {
             has_transparent_pixels |=
-                accumulate_quality_histogram_u32_bits_remaining::<HISTOGRAM_BITS, true>(
+                accumulate_quality_histogram_u32_bits_remaining::<HISTOGRAM_BITS, false>(
                     &mut histogram,
                     rgba_stream,
                     start_offset,
                     alpha_threshold,
-                    &mut histogram_indices,
+                    &mut [],
                 );
         } else {
-            accumulate_quality_histogram_u32_bits_remaining_opaque::<HISTOGRAM_BITS, true>(
+            accumulate_quality_histogram_u32_bits_remaining_opaque::<HISTOGRAM_BITS, false>(
                 &mut histogram,
                 rgba_stream,
                 start_offset,
-                &mut histogram_indices,
+                &mut [],
             );
         }
         let colors = quality_colors_from_histogram_u32::<true>(&histogram);
         recycle_quality_color_index_table(table);
         recycle_quality_histogram_u32(histogram);
-        QualityIndexResult::Quantized(build_quality_index_plan_from_colors(
+        let plan = build_quality_index_plan_from_colors(
             rgba_stream,
             alpha_threshold,
             has_transparent_pixels,
             colors,
             HISTOGRAM_BITS,
-            Some(histogram_indices),
-        ))
+            None,
+        );
+        QualityIndexResult::Quantized(plan)
     } else {
         QualityIndexResult::Exact(finish_quality_exact_indexed(
             rgba_stream,
@@ -6074,7 +6105,14 @@ fn recycle_quality_histogram_to_palette(table: Vec<u8>) {
 fn take_quality_histogram_indices(pixel_count: usize) -> Vec<u16> {
     REUSABLE_QUANTIZED_INDEXED.with(|scratch| {
         let mut indices = std::mem::take(&mut *scratch.borrow_mut());
-        indices.resize(pixel_count, 0);
+        if indices.capacity() >= pixel_count {
+            // Both histogram accumulation variants write every cell before
+            // the indexed stream is read, so the common-size scratch range
+            // does not need a redundant zeroing pass.
+            unsafe { indices.set_len(pixel_count) };
+        } else {
+            indices.resize(pixel_count, 0);
+        }
         indices
     })
 }
@@ -6088,7 +6126,14 @@ fn recycle_quality_histogram_indices(indices: Vec<u16>) {
 fn take_quantized_indexed(pixel_count: usize) -> Vec<u8> {
     REUSABLE_QUANTIZED_BYTES.with(|scratch| {
         let mut indexed = std::mem::take(&mut *scratch.borrow_mut());
-        indexed.resize(pixel_count, 0);
+        if indexed.capacity() >= pixel_count {
+            // Every caller fills each indexed byte before reading it. The
+            // Wasm start hook reserves this common-size range, so only the
+            // logical length needs updating on the first real encode.
+            unsafe { indexed.set_len(pixel_count) };
+        } else {
+            indexed.resize(pixel_count, 0);
+        }
         indexed
     })
 }
@@ -6097,6 +6142,17 @@ fn recycle_quantized_indexed(indexed: Vec<u8>) {
     REUSABLE_QUANTIZED_BYTES.with(|scratch| {
         *scratch.borrow_mut() = indexed;
     });
+}
+
+fn take_quality_probe_indices(capacity: usize) -> Vec<u8> {
+    REUSABLE_QUANTIZED_BYTES.with(|scratch| {
+        let mut indexed = std::mem::take(&mut *scratch.borrow_mut());
+        indexed.clear();
+        if indexed.capacity() < capacity {
+            indexed.reserve(capacity - indexed.capacity());
+        }
+        indexed
+    })
 }
 
 #[inline(always)]
@@ -6631,10 +6687,10 @@ fn index_rgba_frames_quality_u32<const BITS: usize>(
 ) -> QualityIndexResult {
     let pixel_count = rgba_stream.len() / 4;
     let mut table = take_quality_color_index_table(COLOR_INDEX_CAP);
-    let mut palette = Vec::with_capacity(256);
+    let mut palette = take_quality_palette(256);
     // Quantized inputs discard the exact-prefix indices, so avoid reserving a
     // full-image buffer before the palette decision is known.
-    let mut indexed = Vec::with_capacity(pixel_count.min(4_096));
+    let mut indexed = take_quality_probe_indices(pixel_count.min(4_096));
     let mut has_transparent_pixels = false;
     let rgba_pointer = rgba_stream.as_ptr();
     let mut overflow_offset = None;
@@ -6716,14 +6772,15 @@ fn index_rgba_frames_quality_u32<const BITS: usize>(
         let colors = quality_colors_from_histogram_u32::<true>(&histogram);
         recycle_quality_color_index_table(table);
         recycle_quality_histogram_u32(histogram);
-        QualityIndexResult::Quantized(build_quality_index_plan_from_colors(
+        let plan = build_quality_index_plan_from_colors(
             rgba_stream,
             alpha_threshold,
             has_transparent_pixels,
             colors,
             BITS,
             Some(histogram_indices),
-        ))
+        );
+        QualityIndexResult::Quantized(plan)
     } else {
         QualityIndexResult::Exact(finish_quality_exact_indexed(
             rgba_stream,
@@ -6743,8 +6800,8 @@ fn index_rgba_frames_quality_u64(
 ) -> QualityIndexResult {
     let pixel_count = rgba_stream.len() / 4;
     let mut table = take_quality_color_index_table(COLOR_INDEX_CAP);
-    let mut palette = Vec::with_capacity(256);
-    let mut indexed = Vec::with_capacity(pixel_count.min(4096));
+    let mut palette = take_quality_palette(256);
+    let mut indexed = take_quality_probe_indices(pixel_count.min(4096));
     // Keep the exact-color probe independent from the large histogram. Exact
     // inputs return their indexed stream directly, so building a histogram
     // that will be discarded would turn a linear scan into needless work.
@@ -6825,6 +6882,7 @@ fn index_rgba_frames_quality_u64(
     ))
 }
 
+#[inline(never)]
 fn build_quality_index_plan_from_colors(
     rgba_stream: &[u8],
     _alpha_threshold: u8,
@@ -6851,17 +6909,22 @@ fn build_quality_index_plan_from_colors(
     let (mut palette, histogram_to_palette) = if colors.len() <= QUALITY_DOMINANT_COLOR_LIMIT {
         let palette_len = colors.len().min(opaque_color_limit);
         // The normal arbitrary-image path has only a few thousand occupied
-        // histogram bins. A single full sort is cheaper than quickselect plus
-        // a second sort of the selected prefix, while preserving the exact
-        // count/index ordering used for palette selection.
+        // histogram bins. Select only the palette prefix, then sort that
+        // prefix by the exact count/index key used for palette selection.
         if colors
             .iter()
             .all(|color| color.count < QUANTIZED_SORT_COUNT_LIMIT)
         {
-            colors.sort_unstable_by_key(|color| {
+            let order = |color: &QuantizedColor| {
                 ((QUANTIZED_SORT_COUNT_LIMIT - 1 - color.count) << 16)
                     | u64::from(color.histogram_index)
-            });
+            };
+            if colors.len() > palette_len {
+                colors.select_nth_unstable_by_key(palette_len - 1, order);
+                colors[..palette_len].sort_unstable_by_key(order);
+            } else {
+                colors.sort_unstable_by_key(order);
+            }
         } else {
             colors.sort_unstable_by_key(|color| {
                 (std::cmp::Reverse(color.count), color.histogram_index)
@@ -6871,21 +6934,39 @@ fn build_quality_index_plan_from_colors(
         for color in colors.iter().take(palette_len) {
             palette.push(rgb_key(color.red, color.green, color.blue));
         }
-        let initial_tree = PaletteKdTree::new(&palette);
-        let mut requested_coarse_cells = [false; 512];
-        for color in colors.iter().skip(palette_len) {
-            requested_coarse_cells[(usize::from(color.red >> 5) << 6)
-                | (usize::from(color.green >> 5) << 3)
-                | usize::from(color.blue >> 5)] = true;
-        }
-        let initial_coarse_hints =
-            initial_tree.coarse_hint_table_for_cells(&palette, &requested_coarse_cells);
+        let mut initial_tree = PaletteKdTree::new(&palette);
         let mut histogram_to_palette = take_quality_histogram_to_palette(mapping_len);
-        let mut palette_lookup = take_quality_color_index_table(COLOR_INDEX_CAP);
-        for (index, &color) in palette.iter().enumerate() {
-            palette_lookup.insert_if_absent(color, index as u8);
+        let duplicate_palette = palette
+            .iter()
+            .enumerate()
+            .any(|(index, &color)| palette[..index].contains(&color));
+        // A histogram cell has exactly one representative color, so a cell
+        // occupied by a selected palette entry is an exact lookup. Keep the
+        // compact direct table for the transparent/255-color case; a full
+        // 256-color table would collide with the `u8::MAX` miss sentinel and
+        // costs more to fill than the hash table it replaces.
+        let use_direct_palette_cells = mapping_bits == 4 && palette_len < 256 && !duplicate_palette;
+        let mut palette_lookup = if use_direct_palette_cells {
+            ColorIndexTable::empty()
+        } else {
+            take_quality_color_index_table(COLOR_INDEX_CAP)
+        };
+        if use_direct_palette_cells {
+            histogram_to_palette.fill(u8::MAX);
+            for (index, color) in colors.iter().take(palette_len).enumerate() {
+                histogram_to_palette[usize::from(color.histogram_index)] = index as u8;
+            }
+        } else {
+            for (index, &color) in palette.iter().enumerate() {
+                palette_lookup.insert_if_absent(color, index as u8);
+            }
         }
+        // Map histogram cells in spatial order so the previous cell's exact
+        // winner is a useful seed for the next KD search. Palette membership
+        // was recorded above, before this reorder, so palette order is fixed.
+        colors.sort_unstable_by_key(|color| color.histogram_index);
         let mut palette_changed = false;
+        let mut previous_hint = None;
         // Every caller that reaches the u32 histogram has already bounded the
         // source pixel count by QUALITY_U32_PIXEL_LIMIT. The u64 histogram is
         // the only path that can exceed it, so use the input length directly
@@ -6896,22 +6977,33 @@ fn build_quality_index_plan_from_colors(
             let mut green_sums = [0u32; 256];
             let mut blue_sums = [0u32; 256];
             for color in &colors {
-                let rgb = rgb_key(color.red, color.green, color.blue);
-                let index = if let Some(index) = palette_lookup.get(rgb) {
-                    usize::from(index)
+                let index = if use_direct_palette_cells {
+                    let cell = usize::from(color.histogram_index);
+                    let candidate = histogram_to_palette[cell];
+                    if candidate != u8::MAX {
+                        usize::from(candidate)
+                    } else {
+                        usize::from(initial_tree.nearest_with_hint_split(
+                            color.red,
+                            color.green,
+                            color.blue,
+                            previous_hint,
+                        ))
+                    }
                 } else {
-                    let coarse_index = (usize::from(color.red >> 5) << 6)
-                        | (usize::from(color.green >> 5) << 3)
-                        | usize::from(color.blue >> 5);
-                    let hint_index = initial_coarse_hints[coarse_index];
-                    usize::from(initial_tree.nearest_with_hint_index_split(
-                        color.red,
-                        color.green,
-                        color.blue,
-                        hint_index,
-                        palette[usize::from(hint_index)],
-                    ))
+                    let rgb = rgb_key(color.red, color.green, color.blue);
+                    if let Some(index) = palette_lookup.get(rgb) {
+                        usize::from(index)
+                    } else {
+                        usize::from(initial_tree.nearest_with_hint_split(
+                            color.red,
+                            color.green,
+                            color.blue,
+                            previous_hint,
+                        ))
+                    }
                 };
+                previous_hint = Some((index as u8, palette[index]));
                 let count = color.count as u32;
                 histogram_to_palette[usize::from(color.histogram_index)] = index as u8;
                 counts[index] += count;
@@ -6929,7 +7021,8 @@ fn build_quality_index_plan_from_colors(
                     rounded_weighted_average_u32(green_sums[index], count),
                     rounded_weighted_average_u32(blue_sums[index], count),
                 );
-                palette_changed |= palette[index] != representative;
+                let changed = palette[index] != representative;
+                palette_changed |= changed;
                 palette[index] = representative;
             }
         } else {
@@ -6938,22 +7031,33 @@ fn build_quality_index_plan_from_colors(
             let mut green_sums = [0u64; 256];
             let mut blue_sums = [0u64; 256];
             for color in &colors {
-                let rgb = rgb_key(color.red, color.green, color.blue);
-                let index = if let Some(index) = palette_lookup.get(rgb) {
-                    usize::from(index)
+                let index = if use_direct_palette_cells {
+                    let cell = usize::from(color.histogram_index);
+                    let candidate = histogram_to_palette[cell];
+                    if candidate != u8::MAX {
+                        usize::from(candidate)
+                    } else {
+                        usize::from(initial_tree.nearest_with_hint_split(
+                            color.red,
+                            color.green,
+                            color.blue,
+                            previous_hint,
+                        ))
+                    }
                 } else {
-                    let coarse_index = (usize::from(color.red >> 5) << 6)
-                        | (usize::from(color.green >> 5) << 3)
-                        | usize::from(color.blue >> 5);
-                    let hint_index = initial_coarse_hints[coarse_index];
-                    usize::from(initial_tree.nearest_with_hint_index_split(
-                        color.red,
-                        color.green,
-                        color.blue,
-                        hint_index,
-                        palette[usize::from(hint_index)],
-                    ))
+                    let rgb = rgb_key(color.red, color.green, color.blue);
+                    if let Some(index) = palette_lookup.get(rgb) {
+                        usize::from(index)
+                    } else {
+                        usize::from(initial_tree.nearest_with_hint_split(
+                            color.red,
+                            color.green,
+                            color.blue,
+                            previous_hint,
+                        ))
+                    }
                 };
+                previous_hint = Some((index as u8, palette[index]));
                 histogram_to_palette[usize::from(color.histogram_index)] = index as u8;
                 counts[index] += color.count;
                 red_sums[index] += u64::from(color.red) * color.count;
@@ -6970,25 +7074,29 @@ fn build_quality_index_plan_from_colors(
                     ((green_sums[index] + count / 2) / count) as u8,
                     ((blue_sums[index] + count / 2) / count) as u8,
                 );
-                palette_changed |= palette[index] != representative;
+                let changed = palette[index] != representative;
+                palette_changed |= changed;
                 palette[index] = representative;
             }
         }
         if palette_changed {
-            let palette_tree = PaletteKdTree::new(&palette);
+            // Representative updates do not change the palette indices or
+            // the tree's membership. Recolor the existing topology instead
+            // of selecting every median a second time. This refinement uses
+            // split-plane search, so subtree bounds are not needed here.
+            initial_tree.recolor_without_bounds(&palette);
             for color in &colors {
                 // The first-pass assignment is a much tighter exact seed
                 // than a coarse cell-center lookup after representatives move
                 // only one refinement step. The KD search still proves the
                 // final nearest color, so this changes no output or tie rule.
                 let hint_index = histogram_to_palette[usize::from(color.histogram_index)];
-                histogram_to_palette[usize::from(color.histogram_index)] = palette_tree
-                    .nearest_with_hint_index_split(
+                histogram_to_palette[usize::from(color.histogram_index)] = initial_tree
+                    .nearest_with_hint_split(
                         color.red,
                         color.green,
                         color.blue,
-                        hint_index,
-                        palette[usize::from(hint_index)],
+                        Some((hint_index, palette[usize::from(hint_index)])),
                     );
             }
         }
@@ -6997,7 +7105,12 @@ fn build_quality_index_plan_from_colors(
         (palette, histogram_to_palette)
     } else {
         let mut colors = colors;
-        let mut boxes = vec![QuantizedColorArenaBox::new(0, colors.len(), &colors)];
+        let mut boxes = REUSABLE_QUANTIZED_COLOR_BOXES.with(|scratch| {
+            let mut boxes = std::mem::take(&mut *scratch.borrow_mut());
+            boxes.clear();
+            boxes.push(QuantizedColorArenaBox::new(0, colors.len(), &colors));
+            boxes
+        });
         while boxes.len() < opaque_color_limit {
             let Some((split_index, _)) = boxes
                 .iter()
@@ -7027,9 +7140,17 @@ fn build_quality_index_plan_from_colors(
         }
 
         let mut histogram_to_palette = take_quality_histogram_to_palette(mapping_len);
+        let mut requested_cells = [false; 1 << 12];
+        for color in &colors {
+            let coarse_index = (usize::from(color.red >> 4) << 8)
+                | (usize::from(color.green >> 4) << 4)
+                | usize::from(color.blue >> 4);
+            requested_cells[coarse_index] = true;
+        }
+        let palette_tree = PaletteKdTree::new(&palette);
+        let coarse_nearest =
+            palette_tree.coarse_nearest_table_for_cells(&palette, &requested_cells);
         if histogram_bits == 4 {
-            let palette_tree = PaletteKdTree::new(&palette);
-            let coarse_nearest = palette_tree.coarse_nearest_table(&palette);
             for color_box in &boxes {
                 for color in &colors[color_box.start..color_box.end] {
                     let index = (usize::from(color.red >> 4) << 8)
@@ -7040,8 +7161,6 @@ fn build_quality_index_plan_from_colors(
                 }
             }
         } else {
-            let palette_tree = PaletteKdTree::new(&palette);
-            let coarse_nearest = palette_tree.coarse_nearest_table(&palette);
             for color_box in &boxes {
                 for color in &colors[color_box.start..color_box.end] {
                     let coarse_index = (usize::from(color.red >> 4) << 8)
@@ -7056,6 +7175,9 @@ fn build_quality_index_plan_from_colors(
                 }
             }
         }
+        REUSABLE_QUANTIZED_COLOR_BOXES.with(|scratch| {
+            *scratch.borrow_mut() = boxes;
+        });
         recycle_quality_colors(colors);
         (palette, histogram_to_palette)
     };
@@ -7587,6 +7709,11 @@ struct PaletteKdTree {
     root: u16,
 }
 
+thread_local! {
+    static REUSABLE_PALETTE_KD_NODES: std::cell::RefCell<Vec<PaletteKdNode>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
 impl PaletteKdTree {
     fn new(palette_rgb: &[u32]) -> Self {
         fn component(color: u32, axis: u8) -> u8 {
@@ -7682,17 +7809,86 @@ impl PaletteKdTree {
         for (index, value) in indices.iter_mut().take(palette_rgb.len()).enumerate() {
             *value = index;
         }
-        let mut nodes = Vec::with_capacity(palette_rgb.len());
+        let mut nodes = REUSABLE_PALETTE_KD_NODES.with(|scratch| {
+            let mut nodes = std::mem::take(&mut *scratch.borrow_mut());
+            nodes.clear();
+            if nodes.capacity() < palette_rgb.len() {
+                nodes.reserve(palette_rgb.len() - nodes.capacity());
+            }
+            nodes
+        });
         let root = build(&mut indices[..palette_rgb.len()], palette_rgb, &mut nodes);
         Self { nodes, root }
     }
 
-    /// Build a coarse 3-bit/channel nearest-color table used only as an exact
-    /// search seed. The final KD-tree lookup still proves the true nearest
-    /// palette entry, but starting from the cell's candidate sharply tightens
-    /// its branch-and-bound distance for dense 5-bit histograms.
-    fn coarse_hint_table(&self, palette_rgb: &[u32]) -> [u8; 512] {
-        self.coarse_hint_table_for_cells(palette_rgb, &[true; 512])
+    /// Update the colors and exact subtree bounds without rebuilding the
+    /// median topology. Palette representatives may move after the weighted
+    /// assignment pass, but node membership and palette indices stay fixed.
+    /// The retained topology supplies traversal order; bounds are recomputed
+    /// from the current colors so pruning remains exact even when a
+    /// representative crosses an old split plane.
+    #[cfg(all(test, not(feature = "encode-only")))]
+    fn recolor(&mut self, palette_rgb: &[u32]) {
+        fn visit(
+            nodes: &mut [PaletteKdNode],
+            node_index: u16,
+            palette_rgb: &[u32],
+        ) -> ([u8; 3], [u8; 3]) {
+            let index = usize::from(node_index);
+            let (left, right, palette_index, axis) = {
+                let node = &nodes[index];
+                (node.left, node.right, node.palette_index, node.axis)
+            };
+            let color = palette_rgb[usize::from(palette_index)];
+            let current = [(color >> 16) as u8, (color >> 8) as u8, color as u8];
+            let mut min = current;
+            let mut max = current;
+            if left != PALETTE_KD_EMPTY {
+                let bounds = visit(nodes, left, palette_rgb);
+                for channel in 0..3 {
+                    min[channel] = min[channel].min(bounds.0[channel]);
+                    max[channel] = max[channel].max(bounds.1[channel]);
+                }
+            }
+            if right != PALETTE_KD_EMPTY {
+                let bounds = visit(nodes, right, palette_rgb);
+                for channel in 0..3 {
+                    min[channel] = min[channel].min(bounds.0[channel]);
+                    max[channel] = max[channel].max(bounds.1[channel]);
+                }
+            }
+            let node = &mut nodes[index];
+            node.red = current[0];
+            node.green = current[1];
+            node.blue = current[2];
+            node.split = current[usize::from(axis)];
+            node.min_red = min[0];
+            node.min_green = min[1];
+            node.min_blue = min[2];
+            node.max_red = max[0];
+            node.max_green = max[1];
+            node.max_blue = max[2];
+            (min, max)
+        }
+
+        if self.root != PALETTE_KD_EMPTY {
+            visit(&mut self.nodes, self.root, palette_rgb);
+        }
+    }
+
+    #[inline]
+    fn recolor_without_bounds(&mut self, palette_rgb: &[u32]) {
+        for node in &mut self.nodes {
+            let color = palette_rgb[usize::from(node.palette_index)];
+            node.red = (color >> 16) as u8;
+            node.green = (color >> 8) as u8;
+            node.blue = color as u8;
+            node.split = match node.axis {
+                0 => node.red,
+                1 => node.green,
+                _ => node.blue,
+            };
+        }
     }
 
     /// Build the exact 4-bit/channel nearest-color table used by the median
@@ -7700,8 +7896,29 @@ impl PaletteKdTree {
     /// adjacent cell, which is a much tighter seed than the coarser 3-bit
     /// lookup. Duplicate palette colors keep the original coarse seed so the
     /// zero-distance early exit cannot change the existing lowest-index tie.
+    #[cfg(all(test, not(feature = "encode-only")))]
     fn coarse_nearest_table(&self, palette_rgb: &[u32]) -> [u8; 1 << 12] {
-        let coarse_hints = self.coarse_hint_table(palette_rgb);
+        self.coarse_nearest_table_for_cells(palette_rgb, &[true; 1 << 12])
+    }
+
+    fn coarse_nearest_table_for_cells(
+        &self,
+        palette_rgb: &[u32],
+        requested_cells: &[bool; 1 << 12],
+    ) -> [u8; 1 << 12] {
+        let mut requested_coarse_cells = [false; 512];
+        for red in 0..16usize {
+            for green in 0..16usize {
+                for blue in 0..16usize {
+                    let index = (red << 8) | (green << 4) | blue;
+                    if requested_cells[index] {
+                        requested_coarse_cells[(red >> 1) << 6 | (green >> 1) << 3 | (blue >> 1)] =
+                            true;
+                    }
+                }
+            }
+        }
+        let coarse_hints = self.coarse_hint_table_for_cells(palette_rgb, &requested_coarse_cells);
         let mut has_duplicate = false;
         'duplicate_search: for (index, &color) in palette_rgb.iter().enumerate() {
             if palette_rgb[..index].contains(&color) {
@@ -7716,15 +7933,18 @@ impl PaletteKdTree {
                 for blue in 0..16u8 {
                     let index =
                         (usize::from(red) << 8) | (usize::from(green) << 4) | usize::from(blue);
+                    if !requested_cells[index] {
+                        continue;
+                    }
                     let coarse_index = (usize::from(red >> 1) << 6)
                         | (usize::from(green >> 1) << 3)
                         | usize::from(blue >> 1);
                     let hint_index = if use_neighbor_hints {
-                        if blue != 0 {
+                        if blue != 0 && requested_cells[index - 1] {
                             table[index - 1]
-                        } else if green != 0 {
+                        } else if green != 0 && requested_cells[index - (1 << 4)] {
                             table[index - (1 << 4)]
-                        } else if red != 0 {
+                        } else if red != 0 && requested_cells[index - (1 << 8)] {
                             table[index - (1 << 8)]
                         } else {
                             coarse_hints[coarse_index]
@@ -8510,6 +8730,15 @@ fn reencode_gif_literal_worker_with_scratch(
     }
 }
 
+impl Drop for PaletteKdTree {
+    fn drop(&mut self) {
+        let nodes = std::mem::take(&mut self.nodes);
+        REUSABLE_PALETTE_KD_NODES.with(|scratch| {
+            *scratch.borrow_mut() = nodes;
+        });
+    }
+}
+
 #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
 struct ReencodeDispatchContext<'a> {
     data: &'a [u8],
@@ -9243,6 +9472,8 @@ std::thread_local! {
         const { std::cell::RefCell::new(Vec::new()) };
     static REUSABLE_QUALITY_COLORS: std::cell::RefCell<Vec<QuantizedColor>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    static REUSABLE_QUALITY_PALETTE: std::cell::RefCell<Vec<u32>> =
+        const { std::cell::RefCell::new(Vec::new()) };
     static REUSABLE_QUALITY_COLOR_INDEX: std::cell::RefCell<ColorIndexTable> =
         std::cell::RefCell::new(ColorIndexTable::empty());
     static REUSABLE_QUANTIZED_INDEXED: std::cell::RefCell<Vec<u16>> =
@@ -9473,7 +9704,7 @@ fn encode_six_bit_literal_lzw_direct_to<const VALIDATE: bool>(
     let raw_length = ((index_stream.len() + clear_count + 1) * CODE_SIZE).div_ceil(8);
     let block_count = raw_length.div_ceil(255);
     let output_start = output.len();
-    output.resize(output_start + 2 + block_count + raw_length, 0);
+    resize_output_uninitialized(output, output_start + 2 + block_count + raw_length);
     output[output_start] = 5;
     let mut writer = DirectGifSubblockWriter {
         output: &mut output[output_start..],
@@ -9558,7 +9789,7 @@ fn encode_seven_bit_literal_lzw_direct_to<const VALIDATE: bool>(
     let raw_length = ((index_stream.len() + clear_count + 1) * CODE_SIZE).div_ceil(8);
     let block_count = raw_length.div_ceil(255);
     let output_start = output.len();
-    output.resize(output_start + 2 + block_count + raw_length, 0);
+    resize_output_uninitialized(output, output_start + 2 + block_count + raw_length);
     output[output_start] = 6;
     let mut writer = DirectGifSubblockWriter {
         output: &mut output[output_start..],
@@ -9639,7 +9870,7 @@ fn encode_eight_bit_literal_lzw_direct_to<const VALIDATE: bool>(
     let block_count = raw_length.div_ceil(255);
     let output_start = output.len();
     let output_length = output_start + 2 + block_count + raw_length;
-    output.resize(output_length, 0);
+    resize_output_uninitialized(output, output_length);
     output[output_start] = 7;
     let mut writer = DirectGifSubblockWriter {
         output: &mut output[output_start..],
@@ -9678,6 +9909,20 @@ struct DirectGifSubblockWriter<'a> {
     position: usize,
     block_remaining: usize,
     raw_position: usize,
+}
+
+/// Extend an output buffer without paying to zero bytes that the caller will
+/// immediately overwrite. Every caller must fill the entire new range before
+/// it is observed by safe code.
+#[inline(always)]
+fn resize_output_uninitialized(output: &mut Vec<u8>, new_len: usize) {
+    debug_assert!(new_len >= output.len());
+    if output.capacity() < new_len {
+        output.reserve(new_len - output.len());
+    }
+    // SAFETY: callers of this helper write every byte in the extended range
+    // before reading it or exposing it to safe code.
+    unsafe { output.set_len(new_len) };
 }
 
 impl DirectGifSubblockWriter<'_> {
@@ -9745,7 +9990,7 @@ fn encode_four_bit_literal_lzw_direct_to<const VALIDATE: bool>(
     let raw_length = ((index_stream.len() + clear_count + 1) * 4).div_ceil(8);
     let block_count = raw_length.div_ceil(255);
     let output_start = output.len();
-    output.resize(output_start + 2 + block_count + raw_length, 0);
+    resize_output_uninitialized(output, output_start + 2 + block_count + raw_length);
     output[output_start] = 3;
     let mut writer = DirectGifSubblockWriter {
         output: &mut output[output_start..],
@@ -9838,7 +10083,7 @@ fn encode_nine_bit_literal_lzw_direct_to<const VALIDATE: bool>(
         .div_ceil(8);
     let block_count = raw_length.div_ceil(255);
     let output_start = output.len();
-    output.resize(output_start + 2 + block_count + raw_length + 8, 0);
+    resize_output_uninitialized(output, output_start + 2 + block_count + raw_length + 8);
     output[output_start] = 8;
     let mut writer = DirectGifSubblockWriter {
         output: &mut output[output_start..],
@@ -9933,7 +10178,11 @@ fn encode_nine_bit_literal_lzw_palette_mapped_to(
         .div_ceil(8);
     let block_count = raw_length.div_ceil(255);
     let output_start = output.len();
-    output.resize(output_start + 2 + block_count + raw_length, 0);
+    let output_length = output_start + 2 + block_count + raw_length;
+    // The direct writer fills every byte in this range, including the
+    // sub-block length slots written after the literal stream. Avoid asking
+    // Wasm's allocator to zero the encoded payload before overwriting it.
+    resize_output_uninitialized(output, output_length);
     output[output_start] = 8;
     let mut writer = DirectGifSubblockWriter {
         output: &mut output[output_start..],
@@ -10097,6 +10346,7 @@ fn exact_palette_index_packed_cached(
 
 /// Encode the 256-color literal stream directly from RGBA input. The quality
 /// palette has already been built, so retaining a full indexed scratch buffer
+#[inline(never)]
 fn encode_nine_bit_literal_lzw_mapped_to<const BITS: usize, const HAS_TRANSPARENT: bool>(
     output: &mut Vec<u8>,
     rgba_stream: &[u8],
@@ -10117,7 +10367,7 @@ fn encode_nine_bit_literal_lzw_mapped_to<const BITS: usize, const HAS_TRANSPAREN
         .div_ceil(8);
     let block_count = raw_length.div_ceil(255);
     let output_start = output.len();
-    output.resize(output_start + 2 + block_count + raw_length, 0);
+    resize_output_uninitialized(output, output_start + 2 + block_count + raw_length);
     output[output_start] = 8;
     let mut writer = DirectGifSubblockWriter {
         output: &mut output[output_start..],
@@ -10128,6 +10378,7 @@ fn encode_nine_bit_literal_lzw_mapped_to<const BITS: usize, const HAS_TRANSPAREN
     let mut bits = 0u64;
     let mut bit_count = 0usize;
     let rgba_pointer = rgba_stream.as_ptr();
+    let histogram_to_palette_pointer = histogram_to_palette.as_ptr();
 
     for chunk_start in (0..pixel_count).step_by(254) {
         append_nine_bit_literal_code_to_direct(&mut writer, &mut bits, &mut bit_count, 256);
@@ -10145,43 +10396,43 @@ fn encode_nine_bit_literal_lzw_mapped_to<const BITS: usize, const HAS_TRANSPAREN
                 packed0,
                 alpha_threshold,
                 transparent_index,
-                histogram_to_palette,
+                histogram_to_palette_pointer,
             );
             let code1 = mapped_quality_pixel::<BITS, HAS_TRANSPARENT>(
                 packed1,
                 alpha_threshold,
                 transparent_index,
-                histogram_to_palette,
+                histogram_to_palette_pointer,
             );
             let code2 = mapped_quality_pixel::<BITS, HAS_TRANSPARENT>(
                 packed2,
                 alpha_threshold,
                 transparent_index,
-                histogram_to_palette,
+                histogram_to_palette_pointer,
             );
             let code3 = mapped_quality_pixel::<BITS, HAS_TRANSPARENT>(
                 packed3,
                 alpha_threshold,
                 transparent_index,
-                histogram_to_palette,
+                histogram_to_palette_pointer,
             );
             let code4 = mapped_quality_pixel::<BITS, HAS_TRANSPARENT>(
                 packed4,
                 alpha_threshold,
                 transparent_index,
-                histogram_to_palette,
+                histogram_to_palette_pointer,
             );
             let code5 = mapped_quality_pixel::<BITS, HAS_TRANSPARENT>(
                 packed5,
                 alpha_threshold,
                 transparent_index,
-                histogram_to_palette,
+                histogram_to_palette_pointer,
             );
             let code6 = mapped_quality_pixel::<BITS, HAS_TRANSPARENT>(
                 packed6,
                 alpha_threshold,
                 transparent_index,
-                histogram_to_palette,
+                histogram_to_palette_pointer,
             );
             let packed_codes = u64::from(code0)
                 | (u64::from(code1) << 9)
@@ -10216,7 +10467,7 @@ fn encode_nine_bit_literal_lzw_mapped_to<const BITS: usize, const HAS_TRANSPAREN
                 packed,
                 alpha_threshold,
                 transparent_index,
-                histogram_to_palette,
+                histogram_to_palette_pointer,
             );
             append_nine_bit_literal_code_to_direct(
                 &mut writer,
@@ -10294,7 +10545,7 @@ fn encode_nine_bit_literal_lzw_histogram_indices_impl<const HAS_TRANSPARENT: boo
         .div_ceil(8);
     let block_count = raw_length.div_ceil(255);
     let output_start = output.len();
-    output.resize(output_start + 2 + block_count + raw_length, 0);
+    resize_output_uninitialized(output, output_start + 2 + block_count + raw_length);
     output[output_start] = 8;
     let mut writer = DirectGifSubblockWriter {
         output: &mut output[output_start..],
@@ -10311,9 +10562,6 @@ fn encode_nine_bit_literal_lzw_histogram_indices_impl<const HAS_TRANSPARENT: boo
         let chunk_end = (chunk_start + 254).min(pixel_count);
         let mut pixel_index = chunk_start;
         while pixel_index + 7 <= chunk_end {
-            // The histogram-cell stream is a dense u16 array. Read a complete
-            // seven-pixel group in one unaligned load, matching the 63 bits of
-            // 9-bit literal payload emitted below.
             let packed_indices = u64::from_le(unsafe {
                 std::ptr::read_unaligned(histogram_pointer.add(pixel_index).cast::<u64>())
             });
@@ -10439,13 +10687,13 @@ fn mapped_quality_pixel<const BITS: usize, const HAS_TRANSPARENT: bool>(
     packed: u32,
     alpha_threshold: u8,
     transparent_index: u8,
-    histogram_to_palette: &[u8],
+    histogram_to_palette: *const u8,
 ) -> u8 {
     if HAS_TRANSPARENT && ((packed >> 24) as u8) < alpha_threshold {
         transparent_index
     } else {
         let index = quality_histogram_index_packed::<BITS>(packed);
-        unsafe { *histogram_to_palette.get_unchecked(index) }
+        unsafe { *histogram_to_palette.add(index) }
     }
 }
 
@@ -10603,7 +10851,7 @@ fn encode_four_bit_literal_codes(output: &mut Vec<u8>, index_stream: &[u8]) -> R
     let clear_count = index_stream.len().div_ceil(6);
     let raw_length = ((index_stream.len() + clear_count + 1) * 4).div_ceil(8);
     let output_start = output.len();
-    output.resize(output_start + raw_length, 0);
+    resize_output_uninitialized(output, output_start + raw_length);
     let output_pointer = unsafe { output.as_mut_ptr().add(output_start) };
     let mut output_position = 0usize;
     let mut bits = 0u64;
@@ -10702,7 +10950,7 @@ fn encode_fixed_width_literal_codes<const CODE_BITS: usize>(
     let clear_count = index_stream.len().div_ceil(literals_per_clear);
     let raw_length = ((index_stream.len() + clear_count + 1) * CODE_BITS).div_ceil(8);
     let output_start = output.len();
-    output.resize(output_start + raw_length, 0);
+    resize_output_uninitialized(output, output_start + raw_length);
     let output_pointer = unsafe { output.as_mut_ptr().add(output_start) };
     let mut output_position = 0usize;
     let mut bits = 0u64;
@@ -10798,7 +11046,7 @@ fn encode_five_bit_literal_codes(output: &mut Vec<u8>, index_stream: &[u8]) -> R
     let clear_count = index_stream.len().div_ceil(14);
     let raw_length = ((index_stream.len() + clear_count + 1) * 5).div_ceil(8);
     let output_start = output.len();
-    output.resize(output_start + raw_length, 0);
+    resize_output_uninitialized(output, output_start + raw_length);
     let output_pointer = unsafe { output.as_mut_ptr().add(output_start) };
     let input_pointer = index_stream.as_ptr();
     let mut output_position = 0usize;
@@ -10943,7 +11191,7 @@ fn encode_nine_bit_literal_codes(output: &mut Vec<u8>, index_stream: &[u8]) -> R
     let writable_length = raw_length
         .checked_add(8)
         .ok_or_else(|| "Encoded GIF size overflow".to_string())?;
-    output.resize(output_start + writable_length, 0);
+    resize_output_uninitialized(output, output_start + writable_length);
     let output_pointer = unsafe { output.as_mut_ptr().add(output_start) };
     let mut output_position = 0usize;
     let mut bits = 0u64;
@@ -11060,7 +11308,7 @@ where
     let block_count = raw_length.div_ceil(255);
     let output_start = output.len();
     let output_length = output_start + 2 + block_count + raw_length;
-    output.resize(output_length, 0);
+    resize_output_uninitialized(output, output_length);
     output[output_start] = 2;
     let mut writer = DirectGifSubblockWriter {
         output: &mut output[output_start..],
@@ -11162,7 +11410,7 @@ where
     let raw_length = ((pixel_count + clear_count + 1) * CODE_BITS).div_ceil(8);
     let block_count = raw_length.div_ceil(255);
     let output_start = output.len();
-    output.resize(output_start + 2 + block_count + raw_length + 8, 0);
+    resize_output_uninitialized(output, output_start + 2 + block_count + raw_length + 8);
     output[output_start] = CODE_BITS as u8 - 1;
     let mut writer = DirectGifSubblockWriter {
         output: &mut output[output_start..],
@@ -11410,7 +11658,7 @@ fn encode_two_bit_literal_codes(
     let raw_bit_length = pair_count * 9 + usize::from(index_stream.len() % 2 != 0) * 6 + 3;
     let raw_length = raw_bit_length.div_ceil(8);
     let output_start = output.len();
-    output.resize(output_start + raw_length, 0);
+    resize_output_uninitialized(output, output_start + raw_length);
     let output_pointer = unsafe { output.as_mut_ptr().add(output_start) };
     let mut output_position = 0usize;
     let mut bits = 0u64;

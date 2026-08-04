@@ -83,6 +83,7 @@ const fakeCoreModule = {
 	encode_rgba_gif_advanced_scratch_from_input: zero,
 	encode_rgba_quality_gif_from_input: emptyBytes,
 	encode_rgba_quality_gif_scratch_from_input: zero,
+	encode_rgba_quality_gif_constant_delay_scratch_from_input: zero,
 	gif_output_scratch_ptr: zero,
 } satisfies WasmCoreModule;
 

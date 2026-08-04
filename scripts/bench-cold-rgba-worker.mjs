@@ -53,7 +53,8 @@ function makeStressFixture(width, height, frameCount) {
 	return { width, height, frameCount, rgba };
 }
 
-const started = performance.now();
+const initializedFirst = process.env.BENCH_INITIALIZED_FIRST === "1";
+let started = performance.now();
 const fixture =
 	fixtureName === "stress"
 		? makeStressFixture(512, 512, 10)
@@ -165,6 +166,7 @@ if (implementation === "baseline") {
 		import("omggif"),
 		import("image-q"),
 	]);
+	if (initializedFirst) started = performance.now();
 	output = encodeBaselineGif(GifWriter, quantizeImageQGlobal(ImageQ));
 } else if (implementation === "wtfgif") {
 	const entry =
@@ -173,6 +175,7 @@ if (implementation === "baseline") {
 			: "../dist/index.mjs";
 	const { encodeRgbaGifFrames, initializeWasmGlobally } = await import(entry);
 	await initializeWasmGlobally();
+	if (initializedFirst) started = performance.now();
 	output = encodeRgbaGifFrames({
 		alphaThreshold,
 		backend: "wasm",

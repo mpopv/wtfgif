@@ -10,6 +10,7 @@ import {
 	encodeIndexedGifFrames,
 	encodeRgbaGifFrames,
 	GifWriter,
+	prepareWasmEncoderModule,
 } from "./encoder/writer";
 import {
 	decodeGifFramesRgba,
@@ -34,6 +35,7 @@ import {
 const bindPublicWasmApi = () => {
 	const wasmCore = getWasmCoreModule();
 	setWasmEncodeCoreModule(wasmCore);
+	prepareWasmEncoderModule(wasmCore);
 	prepareWasmOneOffApi(wasmCore);
 	const decodeBackendStatus = GifReader.getDecodeBackendStatus();
 	if (wasmCore) {
@@ -59,6 +61,7 @@ const initializeWasmGlobally = async (
 ): Promise<void> => {
 	await initializeGlobalWasm(moduleOrPath);
 	bindPublicWasmApi();
+	await new Promise<void>((resolve) => setTimeout(resolve, 10));
 };
 
 const initializeWasmModule = async (
@@ -67,6 +70,7 @@ const initializeWasmModule = async (
 ): Promise<void> => {
 	await initializeStaticWasmModule(module, moduleOrPath);
 	bindPublicWasmApi();
+	await new Promise<void>((resolve) => setTimeout(resolve, 10));
 };
 
 const setWasmCoreModule = (

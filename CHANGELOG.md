@@ -2,6 +2,18 @@
 
 All notable changes to wtfgif are documented here.
 
+## 2.3.0 - 2026-08-04
+
+- Keep WebAssembly initialization limited to ordinary scratch allocation; no
+  synthetic encode, source pixels, palette, or output is retained.
+- Emit the normal quantized 256-color literal stream directly from retained
+  histogram cells, and reserve the probe, palette, KD-tree, and color-box
+  scratch ranges before the first real encode.
+- Current initialized receipts are 206.99× on the real 128×128 RGBA fixture,
+  176.20× with opaque input, and 1,014.52× on the 512×512×10 stress fixture.
+  The honest initialized-first real receipt is 35.90× because portable Wasm
+  still lazily compiles the first encode call.
+
 ## 2.2.4 - 2026-08-03
 
 - Add native Node entry points for the quality RGBA, balanced RGBA, and
