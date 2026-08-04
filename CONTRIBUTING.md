@@ -28,8 +28,8 @@ experimental native addon.
 
 ## Release checklist
 
-The release branch is `master`. Before publishing, run `npm run check`, confirm
-the package and lockfile versions match, push the tagged commit to `master`, and
+The release branch is `main`. Before publishing, run `npm run check`, confirm
+the package and lockfile versions match, push the tagged commit to `main`, and
 publish the same version to npm. The initialized RGBA race and strict-cold RGBA
 race are separate contracts; report both when performance changes affect
 startup or allocation behavior.

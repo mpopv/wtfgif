@@ -1,22 +1,3 @@
-export {
-	encodeIndexedGifFrames,
-	encodeRgbaGifFrames,
-	GifWriter,
-} from "./encoder/writer";
-
-export {
-	cleanupWasm,
-	getWasmEncodeCoreModule as getWasmCoreModule,
-	getWasmInitPromise,
-	getWasmStatus,
-	getWasmFeatures,
-	initializeGlobalWasm as initializeWasmGlobally,
-	initializeWasmModule,
-	isWasmReady,
-	setWasmEncodeCoreModule as setWasmCoreModule,
-	setWasmInitPromise,
-} from "./wasm/encodeRuntime";
-
 export type {
 	EncodeIndexedGifFramesBackend,
 	EncodeIndexedGifFramesOptions,
@@ -30,5 +11,19 @@ export type {
 	RgbaGifFrame,
 	RgbaGifFrames,
 } from "./encoder/writer";
-
+export {
+	encodeIndexedGifFrames,
+	encodeRgbaGifFrames,
+	GifWriter,
+} from "./encoder/writer";
 export type { WasmEncodeWebModule as WasmWebModule } from "./wasm/encodeRuntime";
+export {
+	cleanupWasm,
+	getWasmEncodeCoreModule as getWasmCoreModule,
+	getWasmFeatures,
+	getWasmStatus,
+	initializeGlobalWasm as initializeWasmGlobally,
+	initializeWasmModule,
+	isWasmReady,
+	setWasmEncodeCoreModule as setWasmCoreModule,
+} from "./wasm/encodeRuntime";

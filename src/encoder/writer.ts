@@ -1,12 +1,12 @@
 import { GIF } from "../constants/gif";
 import { getNativeAddonModule } from "../native/encodeRuntime";
-import {
+import type {
 	FrameOptions,
 	GifBinary,
 	GifOptions,
 	PaletteRGB,
-	WasmEncodeCoreModule,
 	WasmCoreModule,
+	WasmEncodeCoreModule,
 } from "../types";
 import { writeNetscapeLoopCount } from "../utils/netscape";
 import { checkPalette, log2Pow2 } from "../utils/palette";
@@ -14,10 +14,7 @@ import { getWasmEncodeCoreModule } from "../wasm/encodeRuntime";
 
 const WASM_LZW_MIN_INDEX_COUNT = 8192;
 const TRANSPARENT_ALPHA_THRESHOLD = 128;
-let lzwScratchMemoryModule:
-	| WasmCoreModule
-	| WasmEncodeCoreModule
-	| null = null;
+let lzwScratchMemoryModule: WasmCoreModule | WasmEncodeCoreModule | null = null;
 let lzwScratchMemory: WebAssembly.Memory | null = null;
 let lzwInputScratchPointer = 0;
 let lzwInputScratchCapacity = 0;
@@ -37,9 +34,8 @@ export type IndexedGifFrame = Uint8Array | number[];
 export type IndexedGifFrames = Uint8Array | IndexedGifFrame[];
 export type EncodeIndexedGifFramesBackend =
 	| "auto"
-	| "rust"
 	| "wasm"
-	| "native"
+	| "native-addon"
 	| "javascript";
 export type RgbaGifFrame = Uint8Array | Uint8ClampedArray;
 export type RgbaGifFrames = Uint8Array | Uint8ClampedArray | RgbaGifFrame[];
@@ -90,6 +86,24 @@ type IndexedSourceRect = {
 
 type LzwIndexStream = IndexedPixels | IndexedSourceRect;
 
+function resolveEncoderBackends(backend: EncodeIndexedGifFramesBackend) {
+	const nativeAddon =
+		backend === "auto" || backend === "native-addon"
+			? getNativeAddonModule()
+			: null;
+	const wasmCore =
+		backend === "auto" || backend === "wasm"
+			? getEncoderWasmCoreModule()
+			: null;
+	if (backend === "native-addon" && !nativeAddon) {
+		throw new Error("The wtfgif native addon is not installed.");
+	}
+	if (backend === "wasm" && !wasmCore) {
+		throw new Error("The wtfgif WebAssembly encoder is not initialized.");
+	}
+	return { nativeAddon, wasmCore };
+}
+
 export function encodeIndexedGifFrames(
 	options: EncodeIndexedGifFramesOptions,
 ): Uint8Array {
@@ -111,23 +125,13 @@ export function encodeIndexedGifFrames(
 		options.loop === undefined || options.loop === null
 			? null
 			: checkedU16(options.loop, "Loop count invalid.");
-
 	const backend = options.backend ?? "auto";
-	const wasmCore = backend === "javascript" ? null : getEncoderWasmCoreModule();
-	// Literal LZW is lossless for indexed pixels and is the fast default. Keep
-	// the dictionary compressor available as an explicit `balanced` opt-in.
-	const fastCompression =
-		options.compression === undefined || options.compression === "fast";
-	const nativeAddon =
-		backend === "javascript" || backend === "wasm"
-			? null
-			: getNativeAddonModule();
-	if ((backend === "rust" || backend === "wasm") && !nativeAddon && !wasmCore) {
-		throw new Error(
-			"Fast Rust backend unavailable. Initialize WebAssembly or install the native addon before encoding.",
-		);
-	}
-	if (fastCompression && nativeAddon) {
+	const { nativeAddon, wasmCore } = resolveEncoderBackends(backend);
+	const fastCompression = options.compression !== "balanced";
+	const delta = options.delta === true;
+	const palette = paletteToUint32Array(options.palette);
+
+	if (nativeAddon) {
 		const flatFrames = flattenIndexedFrames(
 			options.frames,
 			frameSize,
@@ -135,18 +139,22 @@ export function encodeIndexedGifFrames(
 			colorCount,
 			false,
 		);
-		return nativeAddon.encodeIndexedFast(
+		const encode = fastCompression
+			? nativeAddon.encodeIndexedFast
+			: nativeAddon.encodeIndexedBalanced;
+		return encode(
 			flatFrames,
 			width,
 			height,
 			frameCount,
-			paletteToUint32Array(options.palette),
+			palette,
 			delayArray(delays, frameCount),
 			loop === null ? -1 : loop,
-			options.delta === true,
+			delta,
 		);
 	}
-	if (!fastCompression && nativeAddon?.encodeIndexedBalanced) {
+
+	if (wasmCore) {
 		const flatFrames = flattenIndexedFrames(
 			options.frames,
 			frameSize,
@@ -154,87 +162,52 @@ export function encodeIndexedGifFrames(
 			colorCount,
 			false,
 		);
-		return nativeAddon.encodeIndexedBalanced(
-			flatFrames,
-			width,
-			height,
-			frameCount,
-			paletteToUint32Array(options.palette),
-			delayArray(delays, frameCount),
-			loop === null ? -1 : loop,
-			options.delta === true,
-		);
-	}
-	if (typeof delays === "number") {
-		const encodeIndexedGif = fastCompression
-			? options.delta
-				? wasmCore?.encode_indexed_literal_delta_gif
-				: wasmCore?.encode_indexed_literal_gif
-			: options.delta
-				? wasmCore?.encode_indexed_delta_gif
-				: wasmCore?.encode_indexed_gif;
-		if (encodeIndexedGif) {
-			const flatFrames = flattenIndexedFrames(
-				options.frames,
-				frameSize,
-				frameCount,
-				colorCount,
-				false,
-			);
-			if (fastCompression && !options.delta) {
-				const scratchOutput = tryEncodeIndexedGifWithWasmScratch(
+		if (typeof delays === "number") {
+			if (fastCompression && !delta) {
+				return encodeIndexedGifWithWasmScratch(
 					wasmCore,
 					flatFrames,
 					width,
 					height,
 					frameCount,
-					paletteToUint32Array(options.palette),
+					palette,
 					delays,
 					loop === null ? -1 : loop,
 				);
-				if (scratchOutput) {
-					return scratchOutput;
-				}
 			}
-			return encodeIndexedGif(
+			const encode = fastCompression
+				? delta
+					? wasmCore.encode_indexed_literal_delta_gif
+					: wasmCore.encode_indexed_literal_gif
+				: delta
+					? wasmCore.encode_indexed_delta_gif
+					: wasmCore.encode_indexed_gif;
+			return encode(
 				flatFrames,
 				width,
 				height,
 				frameCount,
-				paletteToUint32Array(options.palette),
+				palette,
 				delays,
 				loop === null ? -1 : loop,
 			);
 		}
-	} else {
-		const encodeIndexedGifWithDelays = fastCompression
-			? options.delta
-				? wasmCore?.encode_indexed_literal_delta_gif_with_delays
-				: wasmCore?.encode_indexed_literal_gif_with_delays
-			: options.delta
-				? wasmCore?.encode_indexed_delta_gif_with_delays
-				: wasmCore?.encode_indexed_gif_with_delays;
-		if (encodeIndexedGifWithDelays) {
-			const flatFrames = flattenIndexedFrames(
-				options.frames,
-				frameSize,
-				frameCount,
-				colorCount,
-				false,
-			);
-			return encodeIndexedGifWithDelays(
-				flatFrames,
-				width,
-				height,
-				frameCount,
-				paletteToUint32Array(options.palette),
-				delays,
-				loop === null ? -1 : loop,
-			);
-		}
-	}
-	if (backend === "native") {
-		throw new Error("Rust/Wasm GIF encoder unavailable.");
+		const encode = fastCompression
+			? delta
+				? wasmCore.encode_indexed_literal_delta_gif_with_delays
+				: wasmCore.encode_indexed_literal_gif_with_delays
+			: delta
+				? wasmCore.encode_indexed_delta_gif_with_delays
+				: wasmCore.encode_indexed_gif_with_delays;
+		return encode(
+			flatFrames,
+			width,
+			height,
+			frameCount,
+			palette,
+			delays,
+			loop === null ? -1 : loop,
+		);
 	}
 
 	return encodeIndexedGifFramesJavascript(
@@ -246,7 +219,7 @@ export function encodeIndexedGifFrames(
 		options.palette,
 		delays,
 		loop,
-		options.delta === true,
+		delta,
 	);
 }
 
@@ -258,10 +231,7 @@ export function encodeRgbaGifFrames(
 	if (width <= 0 || height <= 0 || width > 65535 || height > 65535) {
 		throw new Error("Width/Height invalid.");
 	}
-
-	if (options.palette !== undefined) {
-		checkPalette(options.palette);
-	}
+	if (options.palette !== undefined) checkPalette(options.palette);
 
 	const frameSize = width * height;
 	const frameByteSize = frameSize * 4;
@@ -276,246 +246,165 @@ export function encodeRgbaGifFrames(
 		options.loop === undefined || options.loop === null
 			? null
 			: checkedU16(options.loop, "Loop count invalid.");
-
 	const backend = options.backend ?? "auto";
-	const wasmCore = backend === "javascript" ? null : getEncoderWasmCoreModule();
-	// The normal RGBA path is quality quantization with literal LZW: it is
-	// lossless at the GIF-pixel level and avoids spending time building a
-	// compression dictionary. Keep the explicit `compression: "fast"` behavior
-	// (exact quantization) for backwards compatibility.
-	const fastCompression =
-		options.compression === undefined || options.compression === "fast";
-	const quantization =
-		options.quantization ??
-		(options.compression === "fast" ? "exact" : "quality");
+	const { nativeAddon, wasmCore } = resolveEncoderBackends(backend);
+	const fastCompression = options.compression !== "balanced";
+	const quantization = options.quantization ?? "quality";
 	const paletteMode = options.paletteMode ?? "global";
+	const delta = options.delta === true;
 	if (paletteMode === "local" && options.palette !== undefined) {
 		throw new Error(
 			"Local palette mode cannot use a caller-supplied global palette.",
 		);
 	}
-	if (paletteMode === "local" && options.delta) {
+	if (paletteMode === "local" && delta) {
 		throw new Error("Local palette mode does not support delta frames.");
 	}
 	const useAdvancedEncoder =
-		options.quantization !== undefined ||
-		paletteMode === "local" ||
-		quantization === "quality";
-	const nativeAddon =
-		backend === "javascript" || backend === "wasm"
-			? null
-			: getNativeAddonModule();
-	if ((backend === "rust" || backend === "wasm") && !nativeAddon && !wasmCore) {
-		throw new Error(
-			"Fast Rust backend unavailable. Initialize WebAssembly or install the native addon before encoding.",
-		);
-	}
-	const useNativeQualityEncoder =
-		useAdvancedEncoder &&
-		fastCompression &&
-		quantization === "quality" &&
-		paletteMode === "global" &&
-		options.palette === undefined &&
-		options.delta !== true &&
-		nativeAddon?.encodeRgbaQuality !== undefined;
-	if (useNativeQualityEncoder) {
+		paletteMode === "local" || quantization !== "exact";
+	const encodedLoop = loop === null ? -1 : loop;
+	const palette = paletteToUint32Array(options.palette ?? EMPTY_PALETTE);
+
+	if (nativeAddon) {
 		const rgbaFrames = flattenRgbaFrames(
 			options.frames,
 			frameByteSize,
 			frameCount,
 		);
-		return nativeAddon!.encodeRgbaQuality!(
-			rgbaFrames,
-			width,
-			height,
-			frameCount,
-			delayArray(delays, frameCount),
-			loop === null ? -1 : loop,
-			alphaThreshold,
-		);
+		if (
+			useAdvancedEncoder &&
+			fastCompression &&
+			quantization === "quality" &&
+			paletteMode === "global" &&
+			options.palette === undefined &&
+			!delta
+		) {
+			return nativeAddon.encodeRgbaQuality(
+				rgbaFrames,
+				width,
+				height,
+				frameCount,
+				delayArray(delays, frameCount),
+				encodedLoop,
+				alphaThreshold,
+			);
+		}
+		if (!fastCompression && paletteMode === "global") {
+			return nativeAddon.encodeRgbaBalanced(
+				rgbaFrames,
+				width,
+				height,
+				frameCount,
+				palette,
+				delayArray(delays, frameCount),
+				encodedLoop,
+				delta,
+				alphaThreshold,
+				quantizationCode(quantization),
+			);
+		}
+		if (
+			!useAdvancedEncoder &&
+			fastCompression &&
+			alphaThreshold === TRANSPARENT_ALPHA_THRESHOLD
+		) {
+			return nativeAddon.encodeRgbaFast(
+				rgbaFrames,
+				width,
+				height,
+				frameCount,
+				palette,
+				delayArray(delays, frameCount),
+				encodedLoop,
+				delta,
+			);
+		}
+		if (backend === "native-addon") {
+			throw new Error(
+				"The native addon does not support the requested RGBA encoding mode.",
+			);
+		}
 	}
-	const useNativeBalancedEncoder =
-		!fastCompression &&
-		useAdvancedEncoder &&
-		paletteMode === "global" &&
-		nativeAddon?.encodeRgbaBalanced !== undefined;
-	if (useNativeBalancedEncoder) {
+
+	if (wasmCore) {
+		if (useAdvancedEncoder) {
+			return encodeRgbaAdvancedWithWasmScratch(
+				wasmCore,
+				options.frames,
+				frameByteSize,
+				width,
+				height,
+				frameCount,
+				palette,
+				delayArray(delays, frameCount),
+				encodedLoop,
+				delta,
+				alphaThreshold,
+				fastCompression,
+				quantizationCode(quantization),
+				paletteMode === "local" ? 1 : 0,
+				quantization === "quality" &&
+					paletteMode === "global" &&
+					options.palette === undefined &&
+					!delta,
+			);
+		}
 		const rgbaFrames = flattenRgbaFrames(
 			options.frames,
 			frameByteSize,
 			frameCount,
 		);
-		return nativeAddon!.encodeRgbaBalanced!(
+		if (
+			fastCompression &&
+			typeof delays === "number" &&
+			alphaThreshold === TRANSPARENT_ALPHA_THRESHOLD
+		) {
+			const encode = delta
+				? wasmCore.encode_rgba_literal_delta_gif
+				: wasmCore.encode_rgba_literal_gif;
+			return encode(
+				rgbaFrames,
+				width,
+				height,
+				frameCount,
+				palette,
+				delays,
+				encodedLoop,
+			);
+		}
+		if (fastCompression) {
+			const encode = delta
+				? wasmCore.encode_rgba_literal_delta_gif_with_options
+				: wasmCore.encode_rgba_literal_gif_with_options;
+			return encode(
+				rgbaFrames,
+				width,
+				height,
+				frameCount,
+				palette,
+				delayArray(delays, frameCount),
+				encodedLoop,
+				alphaThreshold,
+			);
+		}
+		return wasmCore.encode_rgba_gif_with_options(
 			rgbaFrames,
 			width,
 			height,
 			frameCount,
-			paletteToUint32Array(options.palette ?? EMPTY_PALETTE),
+			palette,
 			delayArray(delays, frameCount),
-			loop === null ? -1 : loop,
-			options.delta === true,
+			encodedLoop,
+			delta,
 			alphaThreshold,
-			quantizationCode(quantization),
 		);
 	}
-	const useSpecializedQualityEncoder =
-		useAdvancedEncoder &&
-		fastCompression &&
-		quantization === "quality" &&
-		paletteMode === "global" &&
-		options.palette === undefined &&
-		options.delta !== true &&
-		wasmCore?.encode_rgba_quality_gif_scratch_from_input !== undefined;
-	if (useSpecializedQualityEncoder) {
-		const scratchOutput = tryEncodeRgbaAdvancedWithWasmScratch(
-			wasmCore,
-			options.frames,
-			frameByteSize,
-			width,
-			height,
-			frameCount,
-			EMPTY_PALETTE_UINT32,
-			delayArray(delays, frameCount),
-			loop === null ? -1 : loop,
-			false,
-			alphaThreshold,
-			true,
-			quantizationCode(quantization),
-			0,
-			true,
-		);
-		if (scratchOutput) {
-			return scratchOutput;
-		}
-	}
-	if (useAdvancedEncoder && wasmCore?.encode_rgba_gif_advanced_from_input) {
-		const scratchOutput = tryEncodeRgbaAdvancedWithWasmScratch(
-			wasmCore,
-			options.frames,
-			frameByteSize,
-			width,
-			height,
-			frameCount,
-			paletteToUint32Array(options.palette ?? EMPTY_PALETTE),
-			delayArray(delays, frameCount),
-			loop === null ? -1 : loop,
-			options.delta === true,
-			alphaThreshold,
-			fastCompression,
-			quantizationCode(quantization),
-			paletteMode === "local" ? 1 : 0,
-		);
-		if (scratchOutput) {
-			return scratchOutput;
-		}
-	}
+
 	const rgbaFrames = flattenRgbaFrames(
 		options.frames,
 		frameByteSize,
 		frameCount,
 	);
-	if (useAdvancedEncoder && wasmCore?.encode_rgba_gif_advanced) {
-		return wasmCore.encode_rgba_gif_advanced(
-			rgbaFrames,
-			width,
-			height,
-			frameCount,
-			paletteToUint32Array(options.palette ?? EMPTY_PALETTE),
-			delayArray(delays, frameCount),
-			loop === null ? -1 : loop,
-			options.delta === true,
-			alphaThreshold,
-			fastCompression,
-			quantizationCode(quantization),
-			paletteMode === "local" ? 1 : 0,
-		);
-	}
-	if (
-		!useAdvancedEncoder &&
-		fastCompression &&
-		alphaThreshold === TRANSPARENT_ALPHA_THRESHOLD &&
-		nativeAddon
-	) {
-		return nativeAddon.encodeRgbaFast(
-			rgbaFrames,
-			width,
-			height,
-			frameCount,
-			paletteToUint32Array(options.palette ?? EMPTY_PALETTE),
-			delayArray(delays, frameCount),
-			loop === null ? -1 : loop,
-			options.delta === true,
-		);
-	}
-	if (
-		!useAdvancedEncoder &&
-		typeof delays === "number" &&
-		alphaThreshold === TRANSPARENT_ALPHA_THRESHOLD
-	) {
-		if (fastCompression) {
-			const encodeRgbaGif = options.delta
-				? wasmCore?.encode_rgba_literal_delta_gif
-				: wasmCore?.encode_rgba_literal_gif;
-			if (encodeRgbaGif) {
-				return encodeRgbaGif(
-					rgbaFrames,
-					width,
-					height,
-					frameCount,
-					paletteToUint32Array(options.palette ?? EMPTY_PALETTE),
-					delays,
-					loop === null ? -1 : loop,
-				);
-			}
-		} else if (wasmCore?.encode_rgba_gif) {
-			return wasmCore.encode_rgba_gif(
-				rgbaFrames,
-				width,
-				height,
-				frameCount,
-				paletteToUint32Array(options.palette ?? EMPTY_PALETTE),
-				delays,
-				loop === null ? -1 : loop,
-				options.delta === true,
-			);
-		}
-	}
-	if (!useAdvancedEncoder && fastCompression) {
-		const encodeRgbaLiteralGifWithOptions = options.delta
-			? wasmCore?.encode_rgba_literal_delta_gif_with_options
-			: wasmCore?.encode_rgba_literal_gif_with_options;
-		if (encodeRgbaLiteralGifWithOptions) {
-			return encodeRgbaLiteralGifWithOptions(
-				rgbaFrames,
-				width,
-				height,
-				frameCount,
-				paletteToUint32Array(options.palette ?? EMPTY_PALETTE),
-				delayArray(delays, frameCount),
-				loop === null ? -1 : loop,
-				alphaThreshold,
-			);
-		}
-	}
-	const encodeRgbaGifWithOptions = useAdvancedEncoder
-		? undefined
-		: wasmCore?.encode_rgba_gif_with_options;
-	if (encodeRgbaGifWithOptions) {
-		return encodeRgbaGifWithOptions(
-			rgbaFrames,
-			width,
-			height,
-			frameCount,
-			paletteToUint32Array(options.palette ?? EMPTY_PALETTE),
-			delayArray(delays, frameCount),
-			loop === null ? -1 : loop,
-			options.delta === true,
-			alphaThreshold,
-		);
-	}
-	if (backend === "native") {
-		throw new Error("Rust/Wasm GIF encoder unavailable.");
-	}
 	if (paletteMode === "local") {
 		return encodeRgbaGifFramesLocalJavascript(
 			rgbaFrames,
@@ -529,24 +418,26 @@ export function encodeRgbaGifFrames(
 			quantization,
 		);
 	}
-
-	const { indexed, palette, transparentIndex } =
-		indexRgbaFramesWithQuantizationJavascript(
-			rgbaFrames,
-			options.palette,
-			alphaThreshold,
-			quantization,
-		);
+	const {
+		indexed,
+		palette: indexedPalette,
+		transparentIndex,
+	} = indexRgbaFramesWithQuantizationJavascript(
+		rgbaFrames,
+		options.palette,
+		alphaThreshold,
+		quantization,
+	);
 	return encodeIndexedGifFramesJavascript(
 		indexed,
 		width,
 		height,
 		frameSize,
 		frameCount,
-		palette,
+		indexedPalette,
 		delays,
 		loop,
-		options.delta === true,
+		delta,
 		transparentIndex,
 		fastCompression ? "fast" : "balanced",
 	);
@@ -755,7 +646,7 @@ export class GifWriter {
 			: this.globalMinCodeSize;
 
 		const delay = (o.delay ?? 0) | 0;
-		let disposal = (o.disposal ?? 0) | 0;
+		const disposal = (o.disposal ?? 0) | 0;
 		if (disposal < 0 || disposal > 3) throw new Error("Disposal out of range.");
 
 		let useTrans = false;
@@ -1935,15 +1826,21 @@ function GifWriterOutputLZWCodeStream_fast(
 	// Capacity: power-of-two above the 4096-code GIF dictionary keeps probe
 	// counts low on patterned frames while still fitting comfortably in cache.
 	const CAP = 16384;
-	const keys = (GifWriterOutputLZWCodeStream_fast._keys ??= new Int32Array(
-		CAP,
-	)) as Int32Array;
-	const vals = (GifWriterOutputLZWCodeStream_fast._vals ??= new Int16Array(
-		CAP,
-	)) as Int16Array;
-	const gen = (GifWriterOutputLZWCodeStream_fast._gen ??= new Int32Array(
-		CAP,
-	)) as Int32Array;
+	const cachedKeys = GifWriterOutputLZWCodeStream_fast._keys;
+	const keys = cachedKeys ?? new Int32Array(CAP);
+	if (!cachedKeys) {
+		GifWriterOutputLZWCodeStream_fast._keys = keys;
+	}
+	const cachedVals = GifWriterOutputLZWCodeStream_fast._vals;
+	const vals = cachedVals ?? new Int16Array(CAP);
+	if (!cachedVals) {
+		GifWriterOutputLZWCodeStream_fast._vals = vals;
+	}
+	const cachedGen = GifWriterOutputLZWCodeStream_fast._gen;
+	const gen = cachedGen ?? new Int32Array(CAP);
+	if (!cachedGen) {
+		GifWriterOutputLZWCodeStream_fast._gen = gen;
+	}
 	let epoch = ((GifWriterOutputLZWCodeStream_fast._epoch ?? 0) + 1) | 0;
 	GifWriterOutputLZWCodeStream_fast._epoch = epoch;
 	if (epoch <= 0) {
@@ -2105,7 +2002,7 @@ namespace GifWriterOutputLZWCodeStream_fast {
 	export let _epoch: number | undefined;
 }
 
-function tryEncodeRgbaAdvancedWithWasmScratch(
+function encodeRgbaAdvancedWithWasmScratch(
 	wasmCore: WasmCoreModule | WasmEncodeCoreModule,
 	frames: RgbaGifFrames,
 	frameByteSize: number,
@@ -2121,38 +2018,20 @@ function tryEncodeRgbaAdvancedWithWasmScratch(
 	quantization: number,
 	paletteMode: number,
 	specializedQuality = false,
-): Uint8Array | null {
-	const reserve = wasmCore.indexed_lzw_input_scratch_reserve;
-	const encode = (specializedQuality
-		? wasmCore.encode_rgba_quality_gif_from_input
-		: wasmCore.encode_rgba_gif_advanced_from_input) as
-		| ((...args: unknown[]) => Uint8Array)
-		| undefined;
-	const encodeScratch = (specializedQuality
-		? wasmCore.encode_rgba_quality_gif_scratch_from_input
-		: wasmCore.encode_rgba_gif_advanced_scratch_from_input) as
-		| ((...args: unknown[]) => number)
-		| undefined;
-	const outputScratchPtr = wasmCore.gif_output_scratch_ptr;
-	const memory = wasmCore.wasm_memory;
-	if (!reserve || !encode || !memory) {
-		return null;
-	}
+): Uint8Array {
 	if (lzwScratchMemoryModule !== wasmCore || !lzwScratchMemory) {
 		lzwScratchMemoryModule = wasmCore;
-		lzwScratchMemory = memory();
+		lzwScratchMemory = wasmCore.wasm_memory();
 		lzwInputScratchPointer = 0;
 		lzwInputScratchCapacity = 0;
 	}
 	const inputLength = frameByteSize * frameCount;
 	if (lzwInputScratchCapacity < inputLength) {
-		lzwInputScratchPointer = reserve(inputLength);
+		lzwInputScratchPointer =
+			wasmCore.indexed_lzw_input_scratch_reserve(inputLength);
 		lzwInputScratchCapacity = inputLength;
 	}
 	const wasmMemory = lzwScratchMemory;
-	if (!wasmMemory) {
-		return null;
-	}
 	const input = new Uint8Array(
 		wasmMemory.buffer,
 		lzwInputScratchPointer,
@@ -2170,54 +2049,37 @@ function tryEncodeRgbaAdvancedWithWasmScratch(
 	}
 	// The specialized quality export already returns one owned Vec. On the
 	// normal RGBA workload that ABI is faster than copying the scratch range
-	// back into a second JS-owned buffer; keep scratch output for the generic
-	// advanced/indexed paths where it still wins.
-	if (encodeScratch && outputScratchPtr && !specializedQuality) {
-		const outputLength = encodeScratch(
-			frameByteSize * frameCount,
+	// back into a second JS-owned buffer.
+	if (specializedQuality) {
+		return wasmCore.encode_rgba_quality_gif_from_input(
+			inputLength,
 			width,
 			height,
 			frameCount,
-			palette,
 			delays,
 			loop,
-			deltas,
 			alphaThreshold,
-			literal,
-			quantization,
-			paletteMode,
 		);
-		const outputPointer = outputScratchPtr();
-		return new Uint8Array(
-			wasmMemory.buffer,
-			outputPointer,
-			outputLength,
-		).slice();
 	}
-	return specializedQuality
-		? encode(
-				frameByteSize * frameCount,
-				width,
-				height,
-				frameCount,
-				delays,
-				loop,
-				alphaThreshold,
-			)
-		: encode(
-				frameByteSize * frameCount,
-				width,
-				height,
-				frameCount,
-				palette,
-				delays,
-				loop,
-				deltas,
-				alphaThreshold,
-				literal,
-				quantization,
-				paletteMode,
-			);
+	const outputLength = wasmCore.encode_rgba_gif_advanced_scratch_from_input(
+		frameByteSize * frameCount,
+		width,
+		height,
+		frameCount,
+		palette,
+		delays,
+		loop,
+		deltas,
+		alphaThreshold,
+		literal,
+		quantization,
+		paletteMode,
+	);
+	return new Uint8Array(
+		wasmMemory.buffer,
+		wasmCore.gif_output_scratch_ptr(),
+		outputLength,
+	).slice();
 }
 
 function tryEncodeLzwWithWasm(
@@ -2234,64 +2096,51 @@ function tryEncodeLzwWithWasm(
 	}
 
 	const wasmCore = getEncoderWasmCoreModule();
+	if (!wasmCore) return null;
 	// Fixed-width 8-bit literals beat tiny bit-packed streams in the fast
 	// Wasm path. GIF permits a larger minimum code size than the palette needs.
-	const wasmMinCodeSize =
-		fastCompression && minCodeSize <= 4 ? 7 : minCodeSize;
+	const wasmMinCodeSize = fastCompression && minCodeSize <= 4 ? 7 : minCodeSize;
 	const encodeIntoScratch = fastCompression
-		? wasmCore?.encode_indexed_literal_lzw_scratch
-		: wasmCore?.encode_indexed_lzw_scratch;
-	const canUseDirectInput =
-		minCodeSize > 4 &&
-		wasmCore?.indexed_lzw_input_scratch_reserve &&
-		wasmCore.encode_indexed_lzw_scratch_from_input;
-	if (
-		wasmCore &&
-		encodeIntoScratch &&
-		wasmCore.indexed_lzw_scratch_ptr &&
-		wasmCore.wasm_memory
-	) {
-		if (lzwScratchMemoryModule !== wasmCore || !lzwScratchMemory) {
-			lzwScratchMemoryModule = wasmCore;
-			lzwScratchMemory = wasmCore.wasm_memory();
-			lzwInputScratchPointer = 0;
-			lzwInputScratchCapacity = 0;
-		}
-		let length: number;
-		if (canUseDirectInput) {
-			if (lzwInputScratchCapacity < indexStream.length) {
-				lzwInputScratchPointer = wasmCore.indexed_lzw_input_scratch_reserve!(
-					indexStream.length,
-				);
-				lzwInputScratchCapacity = indexStream.length;
-			}
-			new Uint8Array(
-				lzwScratchMemory.buffer,
-				lzwInputScratchPointer,
-				indexStream.length,
-			).set(indexStream);
-			length = wasmCore.encode_indexed_lzw_scratch_from_input!(
-				indexStream.length,
-				wasmMinCodeSize,
-				colorCount,
-				fastCompression,
-			);
-		} else {
-			length = encodeIntoScratch(indexStream, wasmMinCodeSize, colorCount);
-		}
-		return new Uint8Array(
-			lzwScratchMemory.buffer,
-			wasmCore.indexed_lzw_scratch_ptr(),
-			length,
-		);
+		? wasmCore.encode_indexed_literal_lzw_scratch
+		: wasmCore.encode_indexed_lzw_scratch;
+	const canUseDirectInput = minCodeSize > 4;
+	if (lzwScratchMemoryModule !== wasmCore || !lzwScratchMemory) {
+		lzwScratchMemoryModule = wasmCore;
+		lzwScratchMemory = wasmCore.wasm_memory();
+		lzwInputScratchPointer = 0;
+		lzwInputScratchCapacity = 0;
 	}
-	return wasmCore?.encode_indexed_lzw
-		? wasmCore.encode_indexed_lzw(indexStream, minCodeSize, colorCount)
-		: null;
+	let length: number;
+	if (canUseDirectInput) {
+		if (lzwInputScratchCapacity < indexStream.length) {
+			lzwInputScratchPointer = wasmCore.indexed_lzw_input_scratch_reserve(
+				indexStream.length,
+			);
+			lzwInputScratchCapacity = indexStream.length;
+		}
+		new Uint8Array(
+			lzwScratchMemory.buffer,
+			lzwInputScratchPointer,
+			indexStream.length,
+		).set(indexStream);
+		length = wasmCore.encode_indexed_lzw_scratch_from_input(
+			indexStream.length,
+			wasmMinCodeSize,
+			colorCount,
+			fastCompression,
+		);
+	} else {
+		length = encodeIntoScratch(indexStream, wasmMinCodeSize, colorCount);
+	}
+	return new Uint8Array(
+		lzwScratchMemory.buffer,
+		wasmCore.indexed_lzw_scratch_ptr(),
+		length,
+	);
 }
 
-function tryEncodeIndexedGifWithWasmScratch(
-	wasmCore: WasmCoreModule | WasmEncodeCoreModule | null,
+function encodeIndexedGifWithWasmScratch(
+	wasmCore: WasmCoreModule | WasmEncodeCoreModule,
 	indexStream: Uint8Array,
 	width: number,
 	height: number,
@@ -2299,25 +2148,17 @@ function tryEncodeIndexedGifWithWasmScratch(
 	palette: Uint32Array,
 	delay: number,
 	loopCount: number,
-): Uint8Array | null {
-	const reserve = wasmCore?.indexed_lzw_input_scratch_reserve;
-	const encode = wasmCore?.encode_indexed_literal_gif_scratch_from_input;
-	const outputScratchPtr = wasmCore?.gif_output_scratch_ptr;
-	const memory = wasmCore?.wasm_memory;
-	if (!reserve || !encode || !outputScratchPtr || !memory) {
-		return null;
-	}
+): Uint8Array {
 	if (lzwScratchMemoryModule !== wasmCore || !lzwScratchMemory) {
 		lzwScratchMemoryModule = wasmCore;
-		lzwScratchMemory = memory();
+		lzwScratchMemory = wasmCore.wasm_memory();
 		lzwInputScratchPointer = 0;
 		lzwInputScratchCapacity = 0;
 	}
-	if (!lzwScratchMemory) {
-		return null;
-	}
 	if (lzwInputScratchCapacity < indexStream.length) {
-		lzwInputScratchPointer = reserve(indexStream.length);
+		lzwInputScratchPointer = wasmCore.indexed_lzw_input_scratch_reserve(
+			indexStream.length,
+		);
 		lzwInputScratchCapacity = indexStream.length;
 	}
 	new Uint8Array(
@@ -2325,7 +2166,7 @@ function tryEncodeIndexedGifWithWasmScratch(
 		lzwInputScratchPointer,
 		indexStream.length,
 	).set(indexStream);
-	const outputLength = encode(
+	const outputLength = wasmCore.encode_indexed_literal_gif_scratch_from_input(
 		indexStream.length,
 		width,
 		height,
@@ -2334,10 +2175,9 @@ function tryEncodeIndexedGifWithWasmScratch(
 		delay,
 		loopCount,
 	);
-	const outputPointer = outputScratchPtr();
 	return new Uint8Array(
 		lzwScratchMemory.buffer,
-		outputPointer,
+		wasmCore.gif_output_scratch_ptr(),
 		outputLength,
 	).slice();
 }

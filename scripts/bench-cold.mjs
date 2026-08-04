@@ -11,8 +11,7 @@ const fixtureFilter = process.env.BENCH_FILTER ?? "";
 const decodeOnly = process.env.BENCH_DECODE_ONLY === "1";
 const reencodeOnly = process.env.BENCH_REENCODE_ONLY === "1";
 const encodeOnly = process.env.BENCH_ENCODE_ONLY === "1";
-const pageLoadPrepared =
-	process.env.WTFGIF_PREPARE_WASM_AT_PAGE_LOAD === "1";
+const pageLoadPrepared = process.env.WTFGIF_PREPARE_WASM_AT_PAGE_LOAD === "1";
 const losslessRemux = process.env.WTFGIF_REENCODE_MODE === "remux";
 
 if (!Number.isInteger(iterations) || iterations < 1) {

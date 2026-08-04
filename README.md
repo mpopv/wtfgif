@@ -34,9 +34,6 @@ const gif = encodeRgbaGifFrames({
 });
 ```
 
-Initialization includes a tiny internal Wasm warmup (no user data) so the
-first real encode uses the same hot path as later calls.
-
 If you also decode GIFs, import `initializeWasmGlobally` and
 `encodeRgbaGifFrames` from `wtfgif` instead. Do not mix the two entrypoints'
 initializers: each entry owns its own Wasm module.
@@ -48,9 +45,8 @@ The quality-first RGBA pipeline is selected explicitly with
 `compression: "fast", quantization: "quality"`: adaptive palette quantization
 followed by literal LZW. Literal LZW is lossless for the indexed GIF pixels, so
 it never trades away visual quality for speed; it only produces larger files.
-For backwards compatibility, omitting `quantization` keeps the older exact
-fast-mode behavior; use the quality options above for arbitrary full-color
-input.
+`quality` is the default quantization mode. Select `quantization: "exact"`
+when every source color must already fit in one GIF palette.
 The Wasm build selects a SIMD artifact when the runtime supports it and falls
 back to the portable scalar artifact otherwise. Large noisy/photo-like inputs
 use a fast 4-bit histogram/table pass; smooth ramps use the finer 5-bit
@@ -75,8 +71,12 @@ for (let frame = 0; frame < reader.numFrames(); frame += 1) {
 
 In the full `wtfgif` entry, `await initializeWasmGlobally()` also enables the
 exact-parity Rust/Wasm backend used by `preparePlayback()` and `prepareFrames()`.
-The legacy `decodeAndBlitFrameRGBA/BGRA()` methods remain compatible with
-omggif and do not require that prepared-frame API.
+The omggif-compatible `decodeAndBlitFrameRGBA/BGRA()` methods do not require
+the prepared-frame API.
+
+Encoder backend selection is explicit: use `wasm`, `native-addon`, or
+`javascript`. The package root is side-effect free; import `wtfgif/global`
+only when a script-tag-style `window.wtfgif` namespace is required.
 
 ## How fast?
 
@@ -104,7 +104,7 @@ wtfgif), with 2,973,381 output bytes and 26.12 dB PSNR versus the baseline's
 BENCH_RGBA_FIXTURE=stress BENCH_ITERATIONS=3 BENCH_WARMUP_ITERATIONS=1 node scripts/bench-rgba.mjs
 ```
 
-That 1,250× result is not a cache trick: both encoders read all 2,621,440
+That 1,196.59× result is not a cache trick: both encoders read all 2,621,440
 source pixels and produce a valid GIF. The ratio grows on this larger fixture
 because wtfgif's histogram, lookup, and literal writer stay linear.
 
@@ -157,14 +157,5 @@ BENCH_RGBA_FIXTURE=stress BENCH_ITERATIONS=5 BENCH_WARMUP_ITERATIONS=2 npm run b
 See [BENCHMARKS.md](BENCHMARKS.md) for every condition, output-size tradeoff,
 and reproduction command. The initialized race is the normal app contract;
 strict-cold numbers include process and Wasm startup and are shown separately.
-
-## Upgrade note for 2.0
-
-The old internal WebAssembly warmup-primer hooks were removed. If you used
-`WasmWebModule` directly, remove calls to
-`prepare_reencode_hot_path`, `reencode_hot_path_primer`, and
-`remux_hot_path_primer`; `initializeWasmGlobally()` or `initializeWasmModule()`
-is now sufficient. The public GIF reader, writer, RGBA encoder, and compression
-options remain available.
 
 [MIT](LICENSE)

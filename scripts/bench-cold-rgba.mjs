@@ -24,9 +24,11 @@ function runWorker(implementation) {
 	});
 	if (result.status !== 0) {
 		throw new Error(
-			[`Cold RGBA worker failed: ${implementation}`, result.stdout, result.stderr].join(
-				"\n",
-			),
+			[
+				`Cold RGBA worker failed: ${implementation}`,
+				result.stdout,
+				result.stderr,
+			].join("\n"),
 		);
 	}
 	return JSON.parse(result.stdout);
@@ -40,7 +42,8 @@ function median(values) {
 const samples = { baseline: [], wtfgif: [] };
 let outputBytes = 0;
 for (let iteration = 0; iteration < iterations; iteration += 1) {
-	const order = iteration % 2 === 0 ? ["baseline", "wtfgif"] : ["wtfgif", "baseline"];
+	const order =
+		iteration % 2 === 0 ? ["baseline", "wtfgif"] : ["wtfgif", "baseline"];
 	for (const implementation of order) {
 		const result = runWorker(implementation);
 		samples[implementation].push(result.elapsedMs);

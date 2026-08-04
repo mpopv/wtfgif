@@ -15,7 +15,7 @@ export interface NativeAddonModule {
 		loopCount: number,
 		delta: boolean,
 	) => Uint8Array;
-	encodeIndexedBalanced?: (
+	encodeIndexedBalanced: (
 		indexedFrames: Uint8Array,
 		width: number,
 		height: number,
@@ -35,7 +35,7 @@ export interface NativeAddonModule {
 		loopCount: number,
 		delta: boolean,
 	) => Uint8Array;
-	encodeRgbaBalanced?: (
+	encodeRgbaBalanced: (
 		rgbaFrames: Uint8Array,
 		width: number,
 		height: number,
@@ -47,7 +47,7 @@ export interface NativeAddonModule {
 		alphaThreshold: number,
 		quantization: number,
 	) => Uint8Array;
-	encodeRgbaQuality?: (
+	encodeRgbaQuality: (
 		rgbaFrames: Uint8Array,
 		width: number,
 		height: number,
@@ -62,6 +62,22 @@ export interface NativeAddonModule {
 let nativeAddonModule: NativeAddonModule | null = null;
 
 export function setNativeAddonModule(module: NativeAddonModule | null): void {
+	if (module) {
+		const exports = [
+			"decodeFramesRgba",
+			"encodeIndexedFast",
+			"encodeIndexedBalanced",
+			"encodeRgbaFast",
+			"encodeRgbaBalanced",
+			"encodeRgbaQuality",
+			"reencodeGifFast",
+		] as const satisfies readonly (keyof NativeAddonModule)[];
+		if (exports.some((name) => typeof module[name] !== "function")) {
+			throw new Error(
+				"The supplied native addon does not implement the wtfgif contract",
+			);
+		}
+	}
 	nativeAddonModule = module;
 }
 

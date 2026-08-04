@@ -426,9 +426,19 @@ select {
 }
 
 @keyframes count-pop {
-	0% { opacity: 0; transform: scale(1.12); }
-	22%, 72% { opacity: 1; transform: scale(1); }
-	100% { opacity: 0; transform: scale(0.92); }
+	0% {
+		opacity: 0;
+		transform: scale(1.12);
+	}
+	22%,
+	72% {
+		opacity: 1;
+		transform: scale(1);
+	}
+	100% {
+		opacity: 0;
+		transform: scale(0.92);
+	}
 }
 
 .output-preview {

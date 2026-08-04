@@ -62,12 +62,7 @@ const packages = [
 ];
 
 for (const wasmPackage of packages) {
-	const sourceDir = join(
-		root,
-		"crates",
-		"wtfgif-core",
-		wasmPackage.source,
-	);
+	const sourceDir = join(root, "crates", "wtfgif-core", wasmPackage.source);
 	const targetDir = join(root, "dist", wasmPackage.target);
 	const missing = files.filter((file) => !existsSync(join(sourceDir, file)));
 	if (missing.length > 0) {

@@ -460,17 +460,11 @@ for (const file of fixtures) {
 	const boomerangDelays = [...decoded.delays, ...reversedDelays];
 
 	const makeEmojiReverse = measure(() =>
-		makeEmojiExport(
-			{ ...decoded, frames: reversedFrames },
-			reversedDelays,
-		),
+		makeEmojiExport({ ...decoded, frames: reversedFrames }, reversedDelays),
 	);
 	const wtfgifReverse = measure(() => compiled.reverseFrames());
 	const makeEmojiBoomerang = measure(() =>
-		makeEmojiExport(
-			{ ...decoded, frames: boomerangFrames },
-			boomerangDelays,
-		),
+		makeEmojiExport({ ...decoded, frames: boomerangFrames }, boomerangDelays),
 	);
 	const wtfgifBoomerang = measure(() => compiled.boomerangFrames());
 
@@ -492,10 +486,8 @@ for (const file of fixtures) {
 	structuralRows.push({
 		file,
 		shape: `${decoded.width}x${decoded.height}x${decoded.frames.length}`,
-		reverseSpeedup:
-			makeEmojiReverse.medianMs / wtfgifReverse.medianMs,
-		boomerangSpeedup:
-			makeEmojiBoomerang.medianMs / wtfgifBoomerang.medianMs,
+		reverseSpeedup: makeEmojiReverse.medianMs / wtfgifReverse.medianMs,
+		boomerangSpeedup: makeEmojiBoomerang.medianMs / wtfgifBoomerang.medianMs,
 		reverseMs: wtfgifReverse.medianMs,
 		boomerangMs: wtfgifBoomerang.medianMs,
 	});

@@ -8,9 +8,9 @@ import {
 	decodeGifFramesRgba,
 	encodeIndexedGifFrames,
 	encodeRgbaGifFrames,
-	GifReader as WtfGifReader,
 	setNativeAddonModule,
 	setWasmCoreModule,
+	GifReader as WtfGifReader,
 } from "../dist/index.mjs";
 
 const require = createRequire(import.meta.url);
@@ -97,10 +97,8 @@ function decodeAllOmggif(data) {
 }
 
 function decodeAllWtfgif(data, backend) {
-	WtfGifReader.setDecodeBackend(
-		backend === "native" ? wasmDecodeBackend : null,
-	);
-	const reader = WtfGifReader.createUnpooled(data);
+	WtfGifReader.setDecodeBackend(backend === "wasm" ? wasmDecodeBackend : null);
+	const reader = new WtfGifReader(data);
 	const prepared = reader.preparePlayback({
 		backend,
 		dedupe: "none",
@@ -119,7 +117,7 @@ function decodeAllWtfgif(data, backend) {
 		checksum,
 		dispose() {
 			prepared.dispose();
-			reader.returnToPool();
+			reader.dispose();
 		},
 	};
 }
@@ -301,7 +299,7 @@ function encodeIndexedWtfgif(fixture, delta, compression) {
 		loop: 0,
 		delta,
 		compression,
-		backend: "native",
+		backend: "native-addon",
 	});
 }
 
@@ -316,7 +314,7 @@ function encodeRgbaWtfgif(fixture, delta, compression) {
 		loop: 0,
 		delta,
 		compression,
-		backend: "native",
+		backend: "native-addon",
 	});
 }
 
@@ -407,13 +405,13 @@ for (const file of readdirSync(gifsDir)
 	.toSorted()) {
 	const data = readFileSync(join(gifsDir, file));
 	assertDecodeParity(data, file, "javascript");
-	assertDecodeParity(data, file, "native");
+	assertDecodeParity(data, file, "wasm");
 	assertNativeAddonDecodeParity(data, file);
 	decodeRows.push({
 		file,
 		omg: measure(() => decodeAllOmggif(data)),
 		js: measure(() => decodeAllWtfgif(data, "javascript")),
-		wasm: measure(() => decodeAllWtfgif(data, "native")),
+		wasm: measure(() => decodeAllWtfgif(data, "wasm")),
 		native: measure(() => decodeAllNativeAddon(data)),
 	});
 }

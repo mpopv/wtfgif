@@ -8,8 +8,8 @@ import {
 	encodeIndexedGifFrames,
 	encodeRgbaGifFrames,
 	initializeWasmGlobally,
-	remuxGifPixelPerfect,
 	reencodeGifPixelPerfect,
+	remuxGifPixelPerfect,
 	setNativeAddonModule,
 	setWasmCoreModule,
 } from "../dist/index.mjs";
@@ -242,7 +242,7 @@ function encodeIndexedNative(fixture, delta) {
 		palette: fixture.palette,
 		delay: 2,
 		loop: 0,
-		backend: "native",
+		backend: "native-addon",
 		delta,
 		compression: "fast",
 	});
@@ -282,7 +282,7 @@ function encodeRgbaNative(fixture, delta) {
 		palette: fixture.palette,
 		delay: 2,
 		loop: 0,
-		backend: "native",
+		backend: "native-addon",
 		delta,
 		compression: "fast",
 	});

@@ -6,8 +6,8 @@ import {
 	compileGif,
 	GifReader,
 	GifWriter,
-	reverseGifPixelPerfect,
 	retimeGifPixelPerfect,
+	reverseGifPixelPerfect,
 } from "../src/index";
 
 function createGif(
@@ -52,7 +52,11 @@ function createTransparentGif(
 }
 
 function findSequence(bytes: Uint8Array, sequence: ArrayLike<number>): number {
-	outer: for (let offset = 0; offset <= bytes.length - sequence.length; offset++) {
+	outer: for (
+		let offset = 0;
+		offset <= bytes.length - sequence.length;
+		offset++
+	) {
 		for (let index = 0; index < sequence.length; index++) {
 			if (bytes[offset + index] !== sequence[index]) {
 				continue outer;
@@ -106,8 +110,7 @@ function decodeCompositedFrames(gif: Uint8Array): Uint8Array[] {
 	const frames: Uint8Array[] = [];
 	for (let index = 0; index < reader.numFrames(); index++) {
 		const info = reader.frameInfo(index);
-		const restore =
-			info.disposal === 3 ? new Uint8Array(canvas) : null;
+		const restore = info.disposal === 3 ? new Uint8Array(canvas) : null;
 		reader.decodeAndBlitFrameRGBA(index, canvas);
 		frames.push(new Uint8Array(canvas));
 		if (info.disposal === 2) {
@@ -229,19 +232,50 @@ describe("CompiledGif", () => {
 
 	test("promotes GIF87a only when adding an extension", () => {
 		const source = Uint8Array.of(
-			0x47, 0x49, 0x46, 0x38, 0x37, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0x2c, 0x00, 0x00,
-			0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x02, 0x02, 0x44, 0x01,
-			0x00, 0x3b,
+			0x47,
+			0x49,
+			0x46,
+			0x38,
+			0x37,
+			0x61,
+			0x01,
+			0x00,
+			0x01,
+			0x00,
+			0x80,
+			0x00,
+			0x00,
+			0x00,
+			0x00,
+			0x00,
+			0xff,
+			0xff,
+			0xff,
+			0x2c,
+			0x00,
+			0x00,
+			0x00,
+			0x00,
+			0x01,
+			0x00,
+			0x01,
+			0x00,
+			0x00,
+			0x02,
+			0x02,
+			0x44,
+			0x01,
+			0x00,
+			0x3b,
 		);
 		const compiled = compileGif(source);
 		expect(compiled.toUint8Array()).toStrictEqual(source);
 
 		const retimed = compiled.withDelays(5).toUint8Array();
 		expect(String.fromCharCode(...retimed.subarray(0, 6))).toBe("GIF89a");
-		expect(retimed.filter((byte, index) => byte !== source[index])).not.toHaveLength(
-			0,
-		);
+		expect(
+			retimed.filter((byte, index) => byte !== source[index]),
+		).not.toHaveLength(0);
 		expect(decodeFrames(retimed)).toStrictEqual(decodeFrames(source));
 	});
 
@@ -307,9 +341,7 @@ describe("CompiledGif", () => {
 		expect(idOffset).toBeGreaterThanOrEqual(0);
 		animExts.set(animExtsId, idOffset);
 		const animExtsPatched = compileGif(animExts).withLoop(65535).toUint8Array();
-		expect(
-			compileGif(animExtsPatched).loopCount,
-		).toBe(65535);
+		expect(compileGif(animExtsPatched).loopCount).toBe(65535);
 		expect(animExtsPatched.slice(idOffset, idOffset + 11)).toStrictEqual(
 			animExtsId,
 		);

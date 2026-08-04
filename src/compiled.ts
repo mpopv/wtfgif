@@ -378,10 +378,7 @@ function parseGif(input: GifBinary): CompiledLayout {
 				disposal: pendingDisposal,
 				hasTransparency: pendingHasTransparency,
 				isFullCanvas:
-					x === 0 &&
-					y === 0 &&
-					frameWidth === width &&
-					frameHeight === height,
+					x === 0 && y === 0 && frameWidth === width && frameHeight === height,
 			});
 			pendingControlOffset = null;
 			pendingControlEndOffset = null;
@@ -428,12 +425,8 @@ function readNetscapeLoopExtension(
 		return null;
 	}
 	ensureRange(source, position, 12);
-	const matchesApplicationId = (
-		applicationId: readonly number[],
-	) =>
-		applicationId.every(
-			(byte, index) => source[position + 1 + index] === byte,
-		);
+	const matchesApplicationId = (applicationId: readonly number[]) =>
+		applicationId.every((byte, index) => source[position + 1 + index] === byte);
 	if (
 		!matchesApplicationId(NETSCAPE_APPLICATION_ID) &&
 		!matchesApplicationId(ANIMEXTS_APPLICATION_ID)

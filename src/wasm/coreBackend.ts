@@ -1,4 +1,4 @@
-import {
+import type {
 	GifDecodeBackend,
 	PreparedFrameFormat,
 	PreparedGifFrame,
@@ -147,48 +147,24 @@ function prepareWasmCoreCompositedFrames(
 		metadata.frame_count,
 	);
 	const canvasPixels = metadata.width * metadata.height;
-	let wasmMemory: WebAssembly.Memory | undefined;
-	try {
-		wasmMemory = wasmModule.wasm_memory?.();
-	} catch {
-		// Custom modules may expose a throwing/partial memory accessor.
-	}
+	const wasmMemory = wasmModule.wasm_memory();
 	let nativeFrames: NativeCompositedFrame[];
 	if (options.deltas) {
 		const scratchPrepare =
 			options.format === "rgba"
 				? core.prepare_composited_delta_rgba_scratch
 				: core.prepare_composited_delta_bgra_scratch;
-		const scratchPointer = core.composited_scratch_ptr;
-		let preparedStream: Uint32Array | null = null;
-		if (scratchPrepare && scratchPointer && wasmMemory) {
-			try {
-				const preparedLength = scratchPrepare.call(core, requestedFrames);
-				const pointer = scratchPointer.call(core);
-				const byteLength = preparedLength * Uint32Array.BYTES_PER_ELEMENT;
-				if (
-					preparedLength >= COMPOSITED_DELTA_HEADER_LEN &&
-					pointer > 0 &&
-					(pointer & (Uint32Array.BYTES_PER_ELEMENT - 1)) === 0 &&
-					pointer + byteLength <= wasmMemory.buffer.byteLength
-				) {
-					preparedStream = new Uint32Array(
-						wasmMemory.buffer,
-						pointer,
-						preparedLength,
-					);
-				}
-			} catch {
-				// Older/custom modules may expose only part of the scratch API.
-			}
+		const preparedLength = scratchPrepare.call(core, requestedFrames);
+		if (preparedLength < COMPOSITED_DELTA_HEADER_LEN) {
+			throw new Error("Native composited delta buffer is too short.");
 		}
+		const preparedStream = readWasmUint32Scratch(
+			wasmMemory,
+			core.composited_scratch_ptr(),
+			preparedLength,
+		);
 		nativeFrames = readNativeCompositedDeltaFrames(
-			preparedStream ??
-				toUint32Array(
-					options.format === "rgba"
-						? core.prepare_composited_delta_rgba(requestedFrames)
-						: core.prepare_composited_delta_bgra(requestedFrames),
-				),
+			preparedStream,
 			canvasPixels,
 		);
 	} else {
@@ -201,40 +177,20 @@ function prepareWasmCoreCompositedFrames(
 			options.format === "rgba"
 				? core.prepare_composited_rgba_scratch
 				: core.prepare_composited_bgra_scratch;
-		const scratchPointer = core.composited_scratch_ptr;
-		let preparedPixels: Uint32Array | null = null;
-		if (scratchPrepare && scratchPointer && wasmMemory) {
-			try {
-				const preparedLength = scratchPrepare.call(core, requestedFrames);
-				const pointer = scratchPointer.call(core);
-				const expectedLength =
-					requestedFrames.reduce((count, requested) => count + (requested ? 1 : 0), 0) *
-						canvasPixels;
-				const byteLength = preparedLength * Uint32Array.BYTES_PER_ELEMENT;
-				if (
-					preparedLength === expectedLength &&
-					pointer > 0 &&
-					(pointer & (Uint32Array.BYTES_PER_ELEMENT - 1)) === 0 &&
-					pointer + byteLength <= wasmMemory.buffer.byteLength
-				) {
-					preparedPixels = new Uint32Array(
-						wasmMemory.buffer,
-						pointer,
-						preparedLength,
-					);
-				}
-			} catch {
-				// Older/custom modules may expose only part of the scratch API.
-				// Fall back to the stable wasm-bindgen return value below.
-			}
+		const preparedLength = scratchPrepare.call(core, requestedFrames);
+		const expectedLength =
+			requestedFrames.reduce(
+				(count, requested) => count + (requested ? 1 : 0),
+				0,
+			) * canvasPixels;
+		if (preparedLength !== expectedLength) {
+			throw new Error("Prepared frame buffer has the wrong length.");
 		}
-		if (!preparedPixels) {
-			preparedPixels = toUint32Array(
-				options.format === "rgba"
-					? core.prepare_composited_rgba(requestedFrames)
-					: core.prepare_composited_bgra(requestedFrames),
-			);
-		}
+		const preparedPixels = readWasmUint32Scratch(
+			wasmMemory,
+			core.composited_scratch_ptr(),
+			preparedLength,
+		);
 		nativeFrames = readNativeCompositedFullFrames(
 			preparedPixels,
 			requestedFrames,
@@ -340,6 +296,22 @@ function prepareWasmCoreCompositedFrames(
 		transparentByIndex,
 		core,
 	);
+}
+
+function readWasmUint32Scratch(
+	memory: WebAssembly.Memory,
+	pointer: number,
+	length: number,
+): Uint32Array {
+	const byteLength = length * Uint32Array.BYTES_PER_ELEMENT;
+	if (
+		pointer <= 0 ||
+		(pointer & (Uint32Array.BYTES_PER_ELEMENT - 1)) !== 0 ||
+		pointer + byteLength > memory.buffer.byteLength
+	) {
+		throw new Error("WebAssembly scratch buffer is out of bounds.");
+	}
+	return new Uint32Array(memory.buffer, pointer, length);
 }
 
 function readNativeCompositedFullFrames(
@@ -767,8 +739,4 @@ function enforceByteBudget(byteLength: number, maxBytes?: number): void {
 
 function toUint8Array(value: Uint8Array | number[]): Uint8Array {
 	return value instanceof Uint8Array ? value : Uint8Array.from(value);
-}
-
-function toUint32Array(value: Uint32Array | number[]): Uint32Array {
-	return value instanceof Uint32Array ? value : Uint32Array.from(value);
 }

@@ -472,10 +472,7 @@ function validatePixelPerfectReencode(data, label) {
 	const sourceReader = new OmgGifReader(data);
 	const sourcePixels = new Uint8Array(wasmCore.decode_all_rgba(data).buffer);
 	for (const [operation, output] of [
-		[
-			"reencode",
-			toByteArray(wasmCore.reencode_gif_pixel_perfect(data)),
-		],
+		["reencode", toByteArray(wasmCore.reencode_gif_pixel_perfect(data))],
 		["remux", toByteArray(wasmCore.remux_gif_pixel_perfect(data))],
 	]) {
 		const outputReader = new OmgGifReader(output);
@@ -654,9 +651,18 @@ function validateNativeIndexedDeltaGifPerFrameDelays() {
 	const encoded = toByteArray(
 		wasmCore.encode_indexed_delta_gif_with_delays(
 			new Uint8Array([
-				1, 1, 1, 1, //
-				1, 2, 1, 1, //
-				1, 2, 1, 1,
+				1,
+				1,
+				1,
+				1, //
+				1,
+				2,
+				1,
+				1, //
+				1,
+				2,
+				1,
+				1,
 			]),
 			width,
 			height,
@@ -680,8 +686,8 @@ function validateNativeRgbaGifEncoding() {
 	const width = 2;
 	const height = 2;
 	const frames = new Uint8Array([
-		255, 0, 0, 255, 255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255,
-		0, 255, 0, 255, 0, 0, 255, 255, 255, 0, 0, 255, 255, 0, 0, 255,
+		255, 0, 0, 255, 255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 0, 255, 0,
+		255, 0, 0, 255, 255, 255, 0, 0, 255, 255, 0, 0, 255,
 	]);
 	const encoded = toByteArray(
 		wasmCore.encode_rgba_gif(
@@ -759,8 +765,8 @@ function validateNativeRgbaDeltaGifEncoding() {
 	const width = 3;
 	const height = 2;
 	const frame0 = new Uint8Array([
-		255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255,
-		255, 0, 0, 255, 255, 0, 0, 255,
+		255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0,
+		255, 255, 0, 0, 255,
 	]);
 	const frame1 = frame0.slice();
 	frame1.set([0, 255, 0, 255], 8);

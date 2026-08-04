@@ -1,14 +1,14 @@
 import {
-	GifReader as OmgGifReader,
 	GifWriter,
 	ImageQ,
+	GifReader as OmgGifReader,
 } from "./vendor/omggif.mjs";
 import {
 	encodeRgbaGifFrames,
-	GifReader as WtfGifReader,
 	getFastBackendStatus,
 	initializeWasmGlobally,
 	remuxGifPixelPerfect,
+	GifReader as WtfGifReader,
 } from "./vendor/wtfgif.mjs";
 
 const BUILT_IN_IMAGES = [

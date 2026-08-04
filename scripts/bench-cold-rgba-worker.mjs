@@ -2,15 +2,23 @@ import { readFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 
 if (process.env.WTFGIF_COLD_RGBA_WORKER !== "1") {
-	throw new Error("bench-cold-rgba-worker.mjs must be launched by bench-cold-rgba.mjs");
+	throw new Error(
+		"bench-cold-rgba-worker.mjs must be launched by bench-cold-rgba.mjs",
+	);
 }
 
 const implementation = process.argv[2];
 const alphaThreshold = Math.trunc(
 	Number(process.env.BENCH_ALPHA_THRESHOLD ?? 179),
 );
-if (!Number.isInteger(alphaThreshold) || alphaThreshold < 0 || alphaThreshold > 255) {
-	throw new Error("BENCH_ALPHA_THRESHOLD must be an integer from 0 through 255");
+if (
+	!Number.isInteger(alphaThreshold) ||
+	alphaThreshold < 0 ||
+	alphaThreshold > 255
+) {
+	throw new Error(
+		"BENCH_ALPHA_THRESHOLD must be an integer from 0 through 255",
+	);
 }
 
 const fixtureName = process.env.BENCH_COLD_RGBA_FIXTURE ?? "real";
@@ -50,15 +58,15 @@ const fixture =
 	fixtureName === "stress"
 		? makeStressFixture(512, 512, 10)
 		: {
-			width: 128,
-			height: 128,
-			frameCount: 8,
-			rgba: new Uint8Array(
-				readFileSync(
-					new URL("../test/rgba/makeemoji-128x128x8.rgba", import.meta.url),
+				width: 128,
+				height: 128,
+				frameCount: 8,
+				rgba: new Uint8Array(
+					readFileSync(
+						new URL("../test/rgba/makeemoji-128x128x8.rgba", import.meta.url),
+					),
 				),
-			),
-		};
+			};
 const { width, height, frameCount, rgba } = fixture;
 
 function pointColor(point) {
@@ -94,7 +102,11 @@ function quantizeImageQGlobal(ImageQ) {
 		opaqueRgba[target + 3] = 255;
 		opaqueOffset += 1;
 	}
-	const points = ImageQ.utils.PointContainer.fromUint8Array(opaqueRgba, opaqueCount, 1);
+	const points = ImageQ.utils.PointContainer.fromUint8Array(
+		opaqueRgba,
+		opaqueCount,
+		1,
+	);
 	const paletteObject = ImageQ.buildPaletteSync([points], {
 		paletteQuantization: "rgbquant",
 		colors: opaqueCount === pixelCount ? 256 : 255,
@@ -108,7 +120,8 @@ function quantizeImageQGlobal(ImageQ) {
 		.map(pointColor);
 	const colorToIndex = new Map(palette.map((color, index) => [color, index]));
 	const quantizedColors = quantized.getPointArray();
-	const transparentIndex = opaqueCount === pixelCount ? undefined : palette.length;
+	const transparentIndex =
+		opaqueCount === pixelCount ? undefined : palette.length;
 	if (transparentIndex !== undefined) palette.push(0);
 	const indexed = new Uint8Array(pixelCount);
 	opaqueOffset = 0;
@@ -123,7 +136,6 @@ function quantizeImageQGlobal(ImageQ) {
 	return { indexed, palette: padPalette(palette), transparentIndex };
 }
 
-
 function encodeBaselineGif(GifWriter, quantized) {
 	const output = new Uint8Array(quantized.indexed.length * 2 + 8 * 1024 + 8192);
 	const writer = new GifWriter(output, width, height, {
@@ -137,7 +149,10 @@ function encodeBaselineGif(GifWriter, quantized) {
 			0,
 			width,
 			height,
-			quantized.indexed.subarray(frame * framePixels, (frame + 1) * framePixels),
+			quantized.indexed.subarray(
+				frame * framePixels,
+				(frame + 1) * framePixels,
+			),
 			{ delay: 10, disposal: 2, transparent: quantized.transparentIndex },
 		);
 	}
@@ -152,9 +167,10 @@ if (implementation === "baseline") {
 	]);
 	output = encodeBaselineGif(GifWriter, quantizeImageQGlobal(ImageQ));
 } else if (implementation === "wtfgif") {
-	const entry = process.env.BENCH_WTFFIG_ENTRY === "encode"
-		? "../dist/encode.mjs"
-		: "../dist/index.mjs";
+	const entry =
+		process.env.BENCH_WTFFIG_ENTRY === "encode"
+			? "../dist/encode.mjs"
+			: "../dist/index.mjs";
 	const { encodeRgbaGifFrames, initializeWasmGlobally } = await import(entry);
 	await initializeWasmGlobally();
 	output = encodeRgbaGifFrames({
@@ -174,5 +190,8 @@ if (implementation === "baseline") {
 }
 
 process.stdout.write(
-	JSON.stringify({ elapsedMs: performance.now() - started, outputBytes: output.length }),
+	JSON.stringify({
+		elapsedMs: performance.now() - started,
+		outputBytes: output.length,
+	}),
 );

@@ -9,10 +9,7 @@ import {
 import initWasm, * as wasmBindings from "../../dist/wasm-web/wtfgif_core.js";
 import wasmModule from "../../dist/wasm-web/wtfgif_core_bg.wasm";
 
-await initializeWasmModule(
-	{ ...wasmBindings, default: initWasm },
-	wasmModule,
-);
+await initializeWasmModule({ ...wasmBindings, default: initWasm }, wasmModule);
 
 const equalBytes = (left, right) =>
 	left.length === right.length &&
@@ -25,7 +22,7 @@ export default {
 			height: 2,
 			frames: new Uint8Array([0, 1, 1, 0]),
 			palette: [0, 0xffffff],
-			backend: "rust",
+			backend: "wasm",
 			compression: "fast",
 		});
 		const remuxed = remuxGifPixelPerfect(source);

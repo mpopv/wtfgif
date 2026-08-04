@@ -1,9 +1,27 @@
 import {
+	boomerangGifPixelPerfect,
+	CompiledGif,
+	compileGif,
+	retimeGifPixelPerfect,
+	reverseGifPixelPerfect,
+} from "./compiled";
+import { GifReader } from "./decoder/reader";
+import {
 	encodeIndexedGifFrames,
 	encodeRgbaGifFrames,
 	GifWriter,
 } from "./encoder/writer";
-import { GifReader } from "./decoder/reader";
+import {
+	decodeGifFramesRgba,
+	getFastBackendStatus,
+	getNativeAddonStatus,
+	prepareWasmOneOffApi,
+	reencodeGifPixelPerfect,
+	remuxGifPixelPerfect,
+	setNativeAddonModule,
+} from "./native/runtime";
+import { createWasmCoreDecodeBackend } from "./wasm/coreBackend";
+import { setWasmEncodeCoreModule } from "./wasm/encodeRuntime";
 import {
 	cleanupWasm as cleanupWasmRuntime,
 	getWasmCoreModule,
@@ -12,33 +30,10 @@ import {
 	initializeWasmModule as initializeStaticWasmModule,
 	setWasmCoreModule as setWasmCoreModuleRuntime,
 } from "./wasm/runtime";
-import { setWasmEncodeFallback } from "./wasm/encodeRuntime";
-import { createWasmCoreDecodeBackend } from "./wasm/coreBackend";
-import {
-	getFastBackendStatus,
-	getNativeAddonStatus,
-	prepareWasmOneOffApi,
-	setNativeAddonModule,
-} from "./native/runtime";
-import {
-	decodeGifFramesRgba,
-	remuxGifPixelPerfect,
-	reencodeGifPixelPerfect,
-} from "./native/oneOff";
-import {
-	boomerangGifPixelPerfect,
-	CompiledGif,
-	compileGif,
-	reverseGifPixelPerfect,
-	retimeGifPixelPerfect,
-} from "./compiled";
-
-// Keep the full package's historical auto-backend behavior without making
-// the encode-only entry import the decoder/remux Wasm runtime.
-setWasmEncodeFallback(() => getWasmCoreModule());
 
 const bindPublicWasmApi = () => {
 	const wasmCore = getWasmCoreModule();
+	setWasmEncodeCoreModule(wasmCore);
 	prepareWasmOneOffApi(wasmCore);
 	const decodeBackendStatus = GifReader.getDecodeBackendStatus();
 	if (wasmCore) {
@@ -57,10 +52,11 @@ const bindPublicWasmApi = () => {
 		// cleanup; the reader falls back to its portable JavaScript path.
 		GifReader.setDecodeBackend(null);
 	}
-	browserExports.remuxGifPixelPerfect = remuxGifPixelPerfect;
 };
 
-const initializeWasmGlobally = async (moduleOrPath?: unknown): Promise<void> => {
+const initializeWasmGlobally = async (
+	moduleOrPath?: unknown,
+): Promise<void> => {
 	await initializeGlobalWasm(moduleOrPath);
 	bindPublicWasmApi();
 };
@@ -91,30 +87,7 @@ const installWasmCoreBackend = () => {
 	return GifReader.getDecodeBackendStatus();
 };
 
-export {
-	encodeIndexedGifFrames,
-	encodeRgbaGifFrames,
-	GifWriter,
-	GifReader,
-	initializeWasmGlobally,
-	initializeWasmModule,
-	getWasmStatus,
-	cleanupWasm,
-	setWasmCoreModule,
-	createWasmCoreDecodeBackend,
-	installWasmCoreBackend,
-	setNativeAddonModule,
-	getNativeAddonStatus,
-	getFastBackendStatus,
-	decodeGifFramesRgba,
-	remuxGifPixelPerfect,
-	reencodeGifPixelPerfect,
-	CompiledGif,
-	compileGif,
-	reverseGifPixelPerfect,
-	boomerangGifPixelPerfect,
-	retimeGifPixelPerfect,
-};
+export type { GifFrameDelays } from "./compiled";
 
 export type {
 	EncodeIndexedGifFramesBackend,
@@ -134,19 +107,15 @@ export type {
 	NativeAddonModule,
 	NativeDecodedRgbaFrames,
 } from "./native/runtime";
-
-export type { WasmWebModule } from "./wasm/runtime";
-export type { GifFrameDelays } from "./compiled";
-
 export type {
-	GifDecodeBackend,
-	GifDecodeBackendStatus,
-	GifBinary,
-	GifOptions,
-	GifPixelBuffer,
 	Frame,
 	FrameInfo,
 	FrameOptions,
+	GifBinary,
+	GifDecodeBackend,
+	GifDecodeBackendStatus,
+	GifOptions,
+	GifPixelBuffer,
 	PreparedFrameBackendPreference,
 	PreparedFrameCacheMode,
 	PreparedFrameDedupeMode,
@@ -158,39 +127,28 @@ export type {
 	WasmCoreInstance,
 	WasmCoreModule,
 } from "./types";
-
-const browserExports = {
+export type { WasmWebModule } from "./wasm/runtime";
+export {
+	boomerangGifPixelPerfect,
+	CompiledGif,
+	cleanupWasm,
+	compileGif,
+	createWasmCoreDecodeBackend,
+	decodeGifFramesRgba,
 	encodeIndexedGifFrames,
 	encodeRgbaGifFrames,
-	GifWriter,
 	GifReader,
+	GifWriter,
+	getFastBackendStatus,
+	getNativeAddonStatus,
+	getWasmStatus,
 	initializeWasmGlobally,
 	initializeWasmModule,
-	getWasmStatus,
-	cleanupWasm,
-	setWasmCoreModule,
-	createWasmCoreDecodeBackend,
 	installWasmCoreBackend,
-	setNativeAddonModule,
-	getNativeAddonStatus,
-	getFastBackendStatus,
-	decodeGifFramesRgba,
-	remuxGifPixelPerfect,
 	reencodeGifPixelPerfect,
-	CompiledGif,
-	compileGif,
-	reverseGifPixelPerfect,
-	boomerangGifPixelPerfect,
+	remuxGifPixelPerfect,
 	retimeGifPixelPerfect,
+	reverseGifPixelPerfect,
+	setNativeAddonModule,
+	setWasmCoreModule,
 };
-
-if (typeof window !== "undefined") {
-	(window as Window & { wtfgif: typeof browserExports }).wtfgif =
-		browserExports;
-}
-
-declare global {
-	interface Window {
-		wtfgif: typeof browserExports;
-	}
-}

@@ -16,13 +16,13 @@
 			import {
 				compileGif,
 				decodeGifFramesRgba,
-				GifReader,
 				encodeIndexedGifFrames,
+				GifReader,
 				getWasmStatus,
 				initializeWasmGlobally,
 				installWasmCoreBackend,
 				remuxGifPixelPerfect,
-			} from "../dist/index.mjs";
+			} from "../dist/global.mjs";
 
 			const result = document.querySelector("#result");
 			const benchmark = document.querySelector("#benchmark");
@@ -61,7 +61,7 @@
 					height: 2,
 					frames: new Uint8Array([0, 1, 1, 0]),
 					palette: [0, 0xffffff],
-					backend: "rust",
+					backend: "wasm",
 				});
 				const reencoded = remuxGifPixelPerfect(gif);
 				const reader = new GifReader(gif);

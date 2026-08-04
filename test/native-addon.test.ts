@@ -5,7 +5,7 @@ import {
 	encodeRgbaGifFrames,
 	getFastBackendStatus,
 	getNativeAddonStatus,
-	NativeAddonModule,
+	type NativeAddonModule,
 	reencodeGifPixelPerfect,
 	setNativeAddonModule,
 } from "../src";
@@ -21,7 +21,10 @@ function makeNativeAddon(
 			pixels: new Uint8Array([1, 2, 3, 255]),
 		}),
 		encodeIndexedFast: () => new Uint8Array([71, 73, 70]),
+		encodeIndexedBalanced: () => new Uint8Array([71, 73, 70]),
 		encodeRgbaFast: () => new Uint8Array([71, 73, 70]),
+		encodeRgbaBalanced: () => new Uint8Array([71, 73, 70]),
+		encodeRgbaQuality: () => new Uint8Array([71, 73, 70]),
 		reencodeGifFast: () => new Uint8Array([71, 73, 70]),
 		...overrides,
 	};
@@ -68,7 +71,8 @@ describe("one-off native addon API", () => {
 			delay: 3,
 			loop: 0,
 			compression: "fast",
-			backend: "native",
+			quantization: "exact",
+			backend: "native-addon",
 		});
 
 		expect(encoded).toStrictEqual(new Uint8Array([71, 73, 70]));
@@ -80,9 +84,9 @@ describe("one-off native addon API", () => {
 	});
 
 	test("routes quality RGBA encoding through the installed addon", () => {
-		const encodeRgbaQuality = vi.fn<
-			NonNullable<NativeAddonModule["encodeRgbaQuality"]>
-		>(() => new Uint8Array([71, 73, 70]));
+		const encodeRgbaQuality = vi.fn<NativeAddonModule["encodeRgbaQuality"]>(
+			() => new Uint8Array([71, 73, 70]),
+		);
 		setNativeAddonModule(makeNativeAddon({ encodeRgbaQuality }));
 
 		const encoded = encodeRgbaGifFrames({
@@ -94,7 +98,7 @@ describe("one-off native addon API", () => {
 			loop: 0,
 			compression: "fast",
 			quantization: "quality",
-			backend: "native",
+			backend: "native-addon",
 		});
 
 		expect(encoded).toStrictEqual(new Uint8Array([71, 73, 70]));
@@ -121,7 +125,7 @@ describe("one-off native addon API", () => {
 			loop: 0,
 			compression: "fast",
 			delta: true,
-			backend: "native",
+			backend: "native-addon",
 		});
 
 		expect(encoded).toStrictEqual(new Uint8Array([71, 73, 70]));

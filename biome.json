@@ -8,7 +8,11 @@
 	"linter": {
 		"enabled": true,
 		"rules": {
-			"preset": "none"
+			"preset": "recommended"
 		}
+	},
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab"
 	}
 }

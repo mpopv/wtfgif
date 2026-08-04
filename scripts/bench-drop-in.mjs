@@ -20,7 +20,8 @@ const benchmark = process.argv[2] ?? "all";
 const outputKind =
 	process.env.BENCH_OUTPUT ?? (benchmark === "encode" ? "typed" : "array");
 const compression =
-	process.env.BENCH_COMPRESSION ?? (benchmark === "encode" ? "fast" : "balanced");
+	process.env.BENCH_COMPRESSION ??
+	(benchmark === "encode" ? "fast" : "balanced");
 const gifFilter = process.env.BENCH_GIF_FILTER;
 const encodeColorCounts = (process.env.BENCH_COLOR_COUNTS ?? "256")
 	.split(",")
@@ -28,7 +29,7 @@ const encodeColorCounts = (process.env.BENCH_COLOR_COUNTS ?? "256")
 let sink = 0;
 
 if (!["all", "decode", "encode"].includes(benchmark)) {
-	throw new Error('Usage: bench-drop-in.mjs [all|decode|encode]');
+	throw new Error("Usage: bench-drop-in.mjs [all|decode|encode]");
 }
 if (!["array", "typed"].includes(outputKind)) {
 	throw new Error('BENCH_OUTPUT must be "array" or "typed"');
@@ -45,7 +46,9 @@ if (
 			(colorCount & (colorCount - 1)) !== 0,
 	)
 ) {
-	throw new Error("BENCH_COLOR_COUNTS must contain powers of two from 2 to 256");
+	throw new Error(
+		"BENCH_COLOR_COUNTS must contain powers of two from 2 to 256",
+	);
 }
 
 function median(values) {
@@ -55,8 +58,7 @@ function median(values) {
 
 function geomean(values) {
 	return Math.exp(
-		values.reduce((total, value) => total + Math.log(value), 0) /
-			values.length,
+		values.reduce((total, value) => total + Math.log(value), 0) / values.length,
 	);
 }
 
@@ -166,10 +168,7 @@ function makeIndexedFixture(colorCount) {
 		for (let row = 0; row < height; row++) {
 			for (let column = 0; column < width; column++) {
 				pixels[row * width + column] =
-					(column * 17 +
-						row * 31 +
-						frame * 13 +
-						((column * row) >> 3)) &
+					(column * 17 + row * 31 + frame * 13 + ((column * row) >> 3)) &
 					(colorCount - 1);
 			}
 		}
@@ -190,11 +189,7 @@ function encodeAll(Writer, fixture) {
 	const output =
 		outputKind === "typed"
 			? new Uint8Array(
-					fixture.width *
-						fixture.height *
-						fixture.frameCount *
-						2 +
-						4096,
+					fixture.width * fixture.height * fixture.frameCount * 2 + 4096,
 				)
 			: [];
 	const writer = new Writer(output, fixture.width, fixture.height, {

@@ -1,168 +1,176 @@
 {
-  "name": "wtfgif",
-  "version": "2.2.4",
-  "main": "dist/index.cjs",
-  "module": "dist/index.mjs",
-  "types": "dist/index.d.ts",
-  "engines": {
-    "node": "^20.16.0 || >=22.3.0"
-  },
-  "files": [
-    "dist",
-    "BENCHMARKS.md",
-    "CHANGELOG.md",
-    "CONTRIBUTING.md"
-  ],
-  "sideEffects": [
-    "./dist/index.cjs",
-    "./dist/index.mjs"
-  ],
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.mjs",
-      "require": "./dist/index.cjs"
-    },
-    "./encode": {
-      "types": "./dist/encode.d.ts",
-      "import": "./dist/encode.mjs",
-      "require": "./dist/encode.cjs"
-    },
-    "./wasm-core": {
-      "types": "./dist/wasm-core/wtfgif_core.d.ts",
-      "browser": {
-        "types": "./dist/wasm-web/wtfgif_core.d.ts",
-        "import": "./dist/wasm-web/wtfgif_core.js",
-        "default": "./dist/wasm-web/wtfgif_core.js"
-      },
-      "node": {
-        "types": "./dist/wasm-core/wtfgif_core.d.ts",
-        "import": "./dist/wasm-core/wtfgif_core.js",
-        "require": "./dist/wasm-core/wtfgif_core.js"
-      },
-      "import": "./dist/wasm-web/wtfgif_core.js",
-      "require": "./dist/wasm-core/wtfgif_core.js",
-      "default": "./dist/wasm-web/wtfgif_core.js"
-    },
-    "./wasm-core/wasm": {
-      "browser": "./dist/wasm-web/wtfgif_core_bg.wasm",
-      "node": "./dist/wasm-core/wtfgif_core_bg.wasm",
-      "default": "./dist/wasm-web/wtfgif_core_bg.wasm"
-    },
-    "./wasm-encode": {
-      "types": "./dist/wasm-encode/wtfgif_core.d.ts",
-      "browser": {
-        "types": "./dist/wasm-encode-web/wtfgif_core.d.ts",
-        "import": "./dist/wasm-encode-web/wtfgif_core.js",
-        "default": "./dist/wasm-encode-web/wtfgif_core.js"
-      },
-      "node": {
-        "types": "./dist/wasm-encode/wtfgif_core.d.ts",
-        "import": "./dist/wasm-encode/wtfgif_core.js",
-        "require": "./dist/wasm-encode/wtfgif_core.js"
-      },
-      "import": "./dist/wasm-encode-web/wtfgif_core.js",
-      "require": "./dist/wasm-encode/wtfgif_core.js",
-      "default": "./dist/wasm-encode-web/wtfgif_core.js"
-    },
-    "./wasm-encode/wasm": {
-      "browser": "./dist/wasm-encode-web/wtfgif_core_bg.wasm",
-      "node": "./dist/wasm-encode/wtfgif_core_bg.wasm",
-      "default": "./dist/wasm-encode-web/wtfgif_core_bg.wasm"
-    },
-    "./wasm-web": {
-      "types": "./dist/wasm-web/wtfgif_core.d.ts",
-      "import": "./dist/wasm-web/wtfgif_core.js",
-      "default": "./dist/wasm-web/wtfgif_core.js"
-    },
-    "./wasm-web/wasm": "./dist/wasm-web/wtfgif_core_bg.wasm"
-  },
-  "scripts": {
-    "build": "tsup && tsc -p tsconfig.build.json --emitDeclarationOnly && node scripts/copy-wasm-core.mjs",
-    "build:site": "npm run build && node scripts/build-site.mjs",
-    "build:wasm": "npm run build:wasm:node && npm run build:wasm:web && npm run build:wasm:encode && npm run build:wasm:simd",
-    "build:wasm:node": "wasm-pack build crates/wtfgif-core --target nodejs --out-dir pkg --release",
-    "build:wasm:web": "wasm-pack build crates/wtfgif-core --target web --out-dir pkg-web --release",
-    "build:wasm:encode": "npm run build:wasm:node:encode && npm run build:wasm:web:encode",
-    "build:wasm:node:encode": "wasm-pack build crates/wtfgif-core --target nodejs --out-dir pkg-encode --release -- --features encode-only",
-    "build:wasm:web:encode": "wasm-pack build crates/wtfgif-core --target web --out-dir pkg-encode-web --release -- --features encode-only",
-    "build:wasm:simd": "npm run build:wasm:node:simd && npm run build:wasm:web:simd && npm run build:wasm:encode:simd",
-    "build:wasm:node:simd": "node scripts/build-wasm-variant.mjs nodejs pkg-simd simd",
-    "build:wasm:web:simd": "node scripts/build-wasm-variant.mjs web pkg-web-simd simd",
-    "build:wasm:encode:simd": "npm run build:wasm:node:encode:simd && npm run build:wasm:web:encode:simd",
-    "build:wasm:node:encode:simd": "node scripts/build-wasm-variant.mjs nodejs pkg-encode-simd encode-only simd",
-    "build:wasm:web:encode:simd": "node scripts/build-wasm-variant.mjs web pkg-encode-web-simd encode-only simd",
-    "typecheck": "tsc -p tsconfig.build.json --noEmit && tsc -p tsconfig.test.json --noEmit",
-    "test": "vitest run --coverage",
-    "test:wasm-core": "cargo test --manifest-path crates/wtfgif-core/Cargo.toml && npm run validate:wasm-core && vitest run test/wasm-core-backend.test.ts",
-    "test:package": "node scripts/validate-package.mjs",
-    "validate:edge": "node scripts/validate-edge-runtime.mjs",
-    "test:edge": "npm run build:wasm && npm run build && npm run validate:edge",
-    "audit": "npm audit --audit-level=moderate",
-    "lint": "biome lint .",
-    "validate:wasm-core": "npm run build:wasm && node scripts/validate-wasm-core.mjs",
-    "bench": "npm run bench:rgba",
-    "bench:cold": "npm run build && npm run build:native:prototype && node scripts/bench-cold.mjs",
-    "bench:decode": "npm run build && node scripts/bench-drop-in.mjs decode",
-    "bench:drop-in": "npm run build && node scripts/bench-drop-in.mjs",
-    "bench:encode": "npm run build && node scripts/bench-drop-in.mjs encode",
-    "bench:rgba": "npm run build && node scripts/bench-rgba.mjs",
-    "bench:rgba:stress": "BENCH_RGBA_INCLUDE_STRESS=1 npm run bench:rgba",
-    "bench:rgba:cold": "npm run build && node scripts/bench-cold-rgba.mjs",
-    "bench:rgba:cold:encode": "BENCH_WTFFIG_ENTRY=encode npm run bench:rgba:cold",
-    "bench:in-process": "npm run build && npm run build:native:prototype && node scripts/bench.mjs",
-    "bench:makeemoji-retime": "npm run build && node scripts/bench-makeemoji-retime.mjs",
-    "build:native:prototype": "node scripts/build-native-prototype.mjs",
-    "bench:native:prototype": "npm run build && npm run build:native:prototype && node scripts/bench-native-prototype.mjs",
-    "check": "npm run lint && npm run typecheck && npm run audit && npm run build:wasm && npm test && npm run build && npm run validate:edge && npm run test:package && npm pack --dry-run",
-    "prepublishOnly": "npm run check",
-    "prepack": "npm run build:wasm",
-    "prepare": "npm run build"
-  },
-  "publishConfig": {
-    "access": "public"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/mpopv/wtfgif.git"
-  },
-  "keywords": [
-    "gif",
-    "wtfgif",
-    "omggif",
-    "encoder",
-    "decoder",
-    "performance",
-    "compression",
-    "performant",
-    "fast",
-    "optimized",
-    "drop-in",
-    "replacement",
-    "typescript",
-    "javascript",
-    "node",
-    "browser"
-  ],
-  "author": "Matt Popovich",
-  "license": "MIT",
-  "bugs": {
-    "url": "https://github.com/mpopv/wtfgif/issues"
-  },
-  "homepage": "https://github.com/mpopv/wtfgif#readme",
-  "description": "A fast, TypeScript-ready drop-in replacement for omggif with portable JavaScript and WebAssembly backends.",
-  "devDependencies": {
-    "@biomejs/biome": "^2.5.4",
-    "@edge-runtime/vm": "^5.0.0",
-    "@types/node": "^24.13.3",
-    "@types/omggif": "^1.0.5",
-    "@vitest/coverage-v8": "^3.2.7",
-    "esbuild": "0.27.2",
-    "image-q": "2.1.2",
-    "omggif": "^1.0.10",
-    "tsup": "^8.5.1",
-    "typescript": "^5.9.3",
-    "vite": "^6.4.3",
-    "vitest": "^3.2.7"
-  }
+	"name": "wtfgif",
+	"version": "2.2.4",
+	"main": "dist/index.cjs",
+	"module": "dist/index.mjs",
+	"types": "dist/index.d.ts",
+	"engines": {
+		"node": "^20.16.0 || >=22.3.0"
+	},
+	"files": [
+		"dist",
+		"BENCHMARKS.md",
+		"CHANGELOG.md",
+		"CONTRIBUTING.md"
+	],
+	"sideEffects": [
+		"./dist/global.cjs",
+		"./dist/global.mjs"
+	],
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.mjs",
+			"require": "./dist/index.cjs"
+		},
+		"./encode": {
+			"types": "./dist/encode.d.ts",
+			"import": "./dist/encode.mjs",
+			"require": "./dist/encode.cjs"
+		},
+		"./global": {
+			"types": "./dist/global.d.ts",
+			"import": "./dist/global.mjs",
+			"require": "./dist/global.cjs"
+		},
+		"./wasm-core": {
+			"types": "./dist/wasm-core/wtfgif_core.d.ts",
+			"browser": {
+				"types": "./dist/wasm-web/wtfgif_core.d.ts",
+				"import": "./dist/wasm-web/wtfgif_core.js",
+				"default": "./dist/wasm-web/wtfgif_core.js"
+			},
+			"node": {
+				"types": "./dist/wasm-core/wtfgif_core.d.ts",
+				"import": "./dist/wasm-core/wtfgif_core.js",
+				"require": "./dist/wasm-core/wtfgif_core.js"
+			},
+			"import": "./dist/wasm-web/wtfgif_core.js",
+			"require": "./dist/wasm-core/wtfgif_core.js",
+			"default": "./dist/wasm-web/wtfgif_core.js"
+		},
+		"./wasm-core/wasm": {
+			"browser": "./dist/wasm-web/wtfgif_core_bg.wasm",
+			"node": "./dist/wasm-core/wtfgif_core_bg.wasm",
+			"default": "./dist/wasm-web/wtfgif_core_bg.wasm"
+		},
+		"./wasm-encode": {
+			"types": "./dist/wasm-encode/wtfgif_core.d.ts",
+			"browser": {
+				"types": "./dist/wasm-encode-web/wtfgif_core.d.ts",
+				"import": "./dist/wasm-encode-web/wtfgif_core.js",
+				"default": "./dist/wasm-encode-web/wtfgif_core.js"
+			},
+			"node": {
+				"types": "./dist/wasm-encode/wtfgif_core.d.ts",
+				"import": "./dist/wasm-encode/wtfgif_core.js",
+				"require": "./dist/wasm-encode/wtfgif_core.js"
+			},
+			"import": "./dist/wasm-encode-web/wtfgif_core.js",
+			"require": "./dist/wasm-encode/wtfgif_core.js",
+			"default": "./dist/wasm-encode-web/wtfgif_core.js"
+		},
+		"./wasm-encode/wasm": {
+			"browser": "./dist/wasm-encode-web/wtfgif_core_bg.wasm",
+			"node": "./dist/wasm-encode/wtfgif_core_bg.wasm",
+			"default": "./dist/wasm-encode-web/wtfgif_core_bg.wasm"
+		},
+		"./wasm-web": {
+			"types": "./dist/wasm-web/wtfgif_core.d.ts",
+			"import": "./dist/wasm-web/wtfgif_core.js",
+			"default": "./dist/wasm-web/wtfgif_core.js"
+		},
+		"./wasm-web/wasm": "./dist/wasm-web/wtfgif_core_bg.wasm"
+	},
+	"scripts": {
+		"build": "tsup && tsc -p tsconfig.build.json --emitDeclarationOnly && node scripts/copy-wasm-core.mjs",
+		"build:site": "node scripts/build-site.mjs",
+		"build:wasm": "npm run build:wasm:node && npm run build:wasm:web && npm run build:wasm:encode && npm run build:wasm:simd",
+		"build:wasm:node": "wasm-pack build crates/wtfgif-core --target nodejs --out-dir pkg --release",
+		"build:wasm:web": "wasm-pack build crates/wtfgif-core --target web --out-dir pkg-web --release",
+		"build:wasm:encode": "npm run build:wasm:node:encode && npm run build:wasm:web:encode",
+		"build:wasm:node:encode": "wasm-pack build crates/wtfgif-core --target nodejs --out-dir pkg-encode --release -- --features encode-only",
+		"build:wasm:web:encode": "wasm-pack build crates/wtfgif-core --target web --out-dir pkg-encode-web --release -- --features encode-only",
+		"build:wasm:simd": "npm run build:wasm:node:simd && npm run build:wasm:web:simd && npm run build:wasm:encode:simd",
+		"build:wasm:node:simd": "node scripts/build-wasm-variant.mjs nodejs pkg-simd simd",
+		"build:wasm:web:simd": "node scripts/build-wasm-variant.mjs web pkg-web-simd simd",
+		"build:wasm:encode:simd": "npm run build:wasm:node:encode:simd && npm run build:wasm:web:encode:simd",
+		"build:wasm:node:encode:simd": "node scripts/build-wasm-variant.mjs nodejs pkg-encode-simd encode-only simd",
+		"build:wasm:web:encode:simd": "node scripts/build-wasm-variant.mjs web pkg-encode-web-simd encode-only simd",
+		"typecheck": "tsc -p tsconfig.build.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+		"test": "vitest run --coverage",
+		"test:package": "node scripts/validate-package.mjs",
+		"validate:edge": "node scripts/validate-edge-runtime.mjs",
+		"test:edge": "npm run build:wasm && npm run build && npm run validate:edge",
+		"audit": "npm audit --audit-level=moderate",
+		"lint": "biome check . --diagnostic-level=error",
+		"rust:fmt": "cargo fmt --manifest-path crates/wtfgif-core/Cargo.toml -- --check",
+		"rust:clippy": "cargo clippy --manifest-path crates/wtfgif-core/Cargo.toml --all-targets -- -D warnings && cargo clippy --manifest-path crates/wtfgif-core/Cargo.toml --all-targets --features encode-only -- -D warnings",
+		"rust:test": "cargo test --manifest-path crates/wtfgif-core/Cargo.toml --release && cargo test --manifest-path crates/wtfgif-core/Cargo.toml --release --features encode-only",
+		"rust:check": "npm run rust:fmt && npm run rust:clippy && npm run rust:test",
+		"validate:wasm-core": "node scripts/validate-wasm-core.mjs",
+		"bench": "npm run bench:rgba",
+		"bench:cold": "npm run build && npm run build:native:prototype && node scripts/bench-cold.mjs",
+		"bench:decode": "npm run build && node scripts/bench-drop-in.mjs decode",
+		"bench:drop-in": "npm run build && node scripts/bench-drop-in.mjs",
+		"bench:encode": "npm run build && node scripts/bench-drop-in.mjs encode",
+		"bench:rgba": "npm run build && node scripts/bench-rgba.mjs",
+		"bench:rgba:stress": "BENCH_RGBA_INCLUDE_STRESS=1 npm run bench:rgba",
+		"bench:rgba:cold": "npm run build && node scripts/bench-cold-rgba.mjs",
+		"bench:rgba:cold:encode": "BENCH_WTFFIG_ENTRY=encode npm run bench:rgba:cold",
+		"bench:in-process": "npm run build && npm run build:native:prototype && node scripts/bench.mjs",
+		"bench:makeemoji-retime": "npm run build && node scripts/bench-makeemoji-retime.mjs",
+		"build:native:prototype": "node scripts/build-native-prototype.mjs",
+		"bench:native:prototype": "npm run build && npm run build:native:prototype && node scripts/bench-native-prototype.mjs",
+		"check": "npm run lint && npm run typecheck && npm run audit && npm run rust:check && npm run build:wasm && npm test && npm run build && npm run validate:wasm-core && npm run validate:edge && npm run test:package",
+		"prepublishOnly": "npm run check",
+		"prepack": "npm run build:wasm",
+		"prepare": "npm run build"
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/mpopv/wtfgif.git"
+	},
+	"keywords": [
+		"gif",
+		"wtfgif",
+		"omggif",
+		"encoder",
+		"decoder",
+		"performance",
+		"compression",
+		"performant",
+		"fast",
+		"optimized",
+		"drop-in",
+		"replacement",
+		"typescript",
+		"javascript",
+		"node",
+		"browser"
+	],
+	"author": "Matt Popovich",
+	"license": "MIT",
+	"bugs": {
+		"url": "https://github.com/mpopv/wtfgif/issues"
+	},
+	"homepage": "https://github.com/mpopv/wtfgif#readme",
+	"description": "A fast, TypeScript-ready drop-in replacement for omggif with portable JavaScript and WebAssembly backends.",
+	"devDependencies": {
+		"@biomejs/biome": "^2.5.4",
+		"@edge-runtime/vm": "^5.0.0",
+		"@types/node": "^24.13.3",
+		"@types/omggif": "^1.0.5",
+		"@vitest/coverage-v8": "^3.2.7",
+		"esbuild": "0.27.2",
+		"image-q": "2.1.2",
+		"omggif": "^1.0.10",
+		"tsup": "^8.5.1",
+		"typescript": "^5.9.3",
+		"vite": "^6.4.3",
+		"vitest": "^3.2.7"
+	}
 }

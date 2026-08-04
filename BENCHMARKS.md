@@ -54,7 +54,7 @@ The larger stress workload (ten synthetic 512×512 RGBA frames) measured
 with 2,973,381 output bytes and 26.12 dB PSNR versus 24.26 dB for the
 baseline. This is still arbitrary RGBA input: the palette is unknown, every
 pixel is scanned, and every indexed pixel is emitted into a valid GIF.
-The 1,250× ratio is a workload-size effect, not a cache shortcut: both sides
+The 1,196.59× ratio is a workload-size effect, not a cache shortcut: both sides
 read all 2,621,440 source pixels, while wtfgif keeps its histogram, parent-cell
 lookup, and literal writer linear in the input size.
 
@@ -68,8 +68,8 @@ That run starts a fresh Node process for every sample and includes fixture
 loading, dynamic imports, Wasm initialization, palette creation, pixel mapping,
 and GIF compression. The current ten-process median is 146.208 ms for the
 full entry versus 9.225 ms for wtfgif (**15.85×**). This includes process
-startup and Wasm initialization, including the bounded synthetic warmup, and
-is not the initialized hot-path contract; initialize Wasm during page or worker
+startup and Wasm initialization and is not the initialized hot-path contract;
+initialize Wasm during page or worker
 startup for the hot measurements. A ten-process encode-only run measured
 150.257 ms versus 7.814 ms (**19.23×**).
 
@@ -162,10 +162,3 @@ universal.
 
 The old process-startup diagnostic remains available as `npm run bench:cold`.
 It measures a different contract and is intentionally not the headline race.
-
-## Release notes
-
-Initialization performs a bounded synthetic encode/decode warmup to pay Wasm
-JIT and allocator setup before the first real operation. The timed hot-path
-benchmarks still begin after initialization; strict-cold commands include this
-setup by design and are reported separately.

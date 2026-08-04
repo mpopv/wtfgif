@@ -1,14 +1,13 @@
+import { execFileSync } from "node:child_process";
 import {
-	mkdtempSync,
 	mkdirSync,
+	mkdtempSync,
 	readFileSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { execFileSync } from "node:child_process";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -180,7 +179,7 @@ try {
 					height: 2,
 					frames: new Uint8Array([0, 1, 1, 0]),
 					palette: [0, 0xffffff],
-					backend: "rust",
+					backend: "wasm",
 				});
 				const retimed = wtfgif
 					.compileGif(gif)
@@ -328,18 +327,21 @@ try {
 			`
 				globalThis.window = {};
 				const wtfgif = await import("wtfgif");
+				const sideEffectFree = globalThis.window.wtfgif === undefined;
+				await import("wtfgif/global");
 				const status = wtfgif.installWasmCoreBackend();
 				const gif = wtfgif.encodeIndexedGifFrames({
 					width: 2,
 					height: 2,
 					frames: new Uint8Array([0, 1, 1, 0]),
 					palette: [0, 0xffffff],
-					backend: "native",
+					backend: "wasm",
 				});
 				const reader = new wtfgif.GifReader(gif);
 				const result = {
 					available: status.available,
 					frames: reader.numFrames(),
+					sideEffectFree,
 					browserGlobal:
 						globalThis.window.wtfgif?.GifReader === wtfgif.GifReader &&
 						globalThis.window.wtfgif?.compileGif === wtfgif.compileGif,
@@ -352,9 +354,12 @@ try {
 	if (
 		!esmResult.available ||
 		esmResult.frames !== 1 ||
+		!esmResult.sideEffectFree ||
 		!esmResult.browserGlobal
 	) {
-		throw new Error(`ESM package validation failed: ${JSON.stringify(esmResult)}`);
+		throw new Error(
+			`ESM package validation failed: ${JSON.stringify(esmResult)}`,
+		);
 	}
 
 	const browserWasmResult = JSON.parse(
@@ -380,7 +385,7 @@ try {
 					height: 2,
 					frames: new Uint8Array([0, 1, 1, 0]),
 					palette: [0, 0xffffff],
-					backend: "rust",
+					backend: "wasm",
 					compression: "fast",
 				});
 				const remuxed = wtfgif.remuxGifPixelPerfect(source);

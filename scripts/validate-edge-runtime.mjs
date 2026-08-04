@@ -30,7 +30,7 @@ const source = `
 				height: 2,
 				frames: new Uint8Array([0, 1, 1, 0]),
 				palette: [0, 0xffffff],
-				backend: "rust",
+				backend: "wasm",
 				compression: "fast",
 			});
 			const remuxed = remuxGifPixelPerfect(sourceGif);
@@ -102,14 +102,10 @@ const bundle = await build({
 					path: args.path,
 					namespace: "static-wasm",
 				}));
-				buildApi.onLoad(
-					{ filter: /.*/, namespace: "static-wasm" },
-					() => ({
-						contents:
-							"export default globalThis.__WTFGIF_STATIC_WASM_MODULE__;",
-						loader: "js",
-					}),
-				);
+				buildApi.onLoad({ filter: /.*/, namespace: "static-wasm" }, () => ({
+					contents: "export default globalThis.__WTFGIF_STATIC_WASM_MODULE__;",
+					loader: "js",
+				}));
 			},
 		},
 	],
@@ -136,7 +132,11 @@ if (
 	result.pixelPerfect !== true ||
 	result.arbitraryRgba !== true
 ) {
-	throw new Error(`Vercel Edge runtime validation failed: ${JSON.stringify(result)}`);
+	throw new Error(
+		`Vercel Edge runtime validation failed: ${JSON.stringify(result)}`,
+	);
 }
 
-console.log("Vercel Edge VM remux, retime, and arbitrary-RGBA validation passed.");
+console.log(
+	"Vercel Edge VM remux, retime, and arbitrary-RGBA validation passed.",
+);

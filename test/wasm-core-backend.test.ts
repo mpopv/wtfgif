@@ -75,14 +75,17 @@ describe("Rust/Wasm core decode backend", () => {
 		});
 	});
 
-	maybeTest("full-package initialization installs the prepared backend", async () => {
-		GifReader.setDecodeBackend(null);
-		await initializeWasmGlobally();
-		expect(GifReader.getDecodeBackendStatus()).toStrictEqual({
-			name: "wtfgif-rust-wasm",
-			available: true,
-		});
-	});
+	maybeTest(
+		"full-package initialization installs the prepared backend",
+		async () => {
+			GifReader.setDecodeBackend(null);
+			await initializeWasmGlobally();
+			expect(GifReader.getDecodeBackendStatus()).toStrictEqual({
+				name: "wtfgif-rust-wasm",
+				available: true,
+			});
+		},
+	);
 
 	maybeTest("prepares indexed frames that copy like omggif RGBA", () => {
 		GifReader.setDecodeBackend(backend);
@@ -90,7 +93,7 @@ describe("Rust/Wasm core decode backend", () => {
 		const omg = new OmgGifReader(gif);
 		const wtf = new GifReader(gif);
 		const prepared = wtf.prepareFrames({
-			backend: "native",
+			backend: "wasm",
 			cache: "indices",
 			frameIndices: [0, 1, 2],
 		});
@@ -108,7 +111,7 @@ describe("Rust/Wasm core decode backend", () => {
 		}
 
 		prepared.dispose();
-		wtf.returnToPool();
+		wtf.dispose();
 	});
 
 	maybeTest("prepares composited playback frames like the JS backend", () => {
@@ -122,7 +125,7 @@ describe("Rust/Wasm core decode backend", () => {
 		});
 		GifReader.setDecodeBackend(backend);
 		const actualPrepared = nativeReader.preparePlayback({
-			backend: "native",
+			backend: "wasm",
 			deltas: true,
 		});
 
@@ -162,20 +165,20 @@ describe("Rust/Wasm core decode backend", () => {
 
 		expectedPrepared.dispose();
 		actualPrepared.dispose();
-		jsReader.returnToPool();
-		nativeReader.returnToPool();
+		jsReader.dispose();
+		nativeReader.dispose();
 	});
 
 	maybeTest("deduplicates identical Wasm composited frames", () => {
 		GifReader.setDecodeBackend(backend);
 		const reader = new GifReader(makeDuplicateFrameGif());
-		const prepared = reader.preparePlayback({ backend: "native" });
+		const prepared = reader.preparePlayback({ backend: "wasm" });
 
 		expect(prepared.frames[0]?.pixels).toBe(prepared.frames[1]?.pixels);
 		expect(prepared.byteLength).toBe(16);
 
 		prepared.dispose();
-		reader.returnToPool();
+		reader.dispose();
 	});
 
 	maybeTest("respects maxBytes", () => {
@@ -185,14 +188,14 @@ describe("Rust/Wasm core decode backend", () => {
 
 		expect(() =>
 			reader.prepareFrames({
-				backend: "native",
+				backend: "wasm",
 				cache: "indices",
 				frameIndices: [0],
 				maxBytes: 1,
 			}),
 		).toThrow(/maxBytes/);
 
-		reader.returnToPool();
+		reader.dispose();
 	});
 
 	maybeTest("respects maxBytes for composited frames", () => {
@@ -201,12 +204,12 @@ describe("Rust/Wasm core decode backend", () => {
 
 		expect(() =>
 			reader.preparePlayback({
-				backend: "native",
+				backend: "wasm",
 				maxBytes: 1,
 			}),
 		).toThrow(/maxBytes/);
 
-		reader.returnToPool();
+		reader.dispose();
 	});
 
 	maybeTest("encodes indexed delta GIFs through the Wasm wrapper", () => {
@@ -227,7 +230,7 @@ describe("Rust/Wasm core decode backend", () => {
 			palette,
 			frames,
 			delay: 3,
-			backend: "native",
+			backend: "wasm",
 			delta: true,
 			compression: "fast",
 		});
@@ -247,7 +250,7 @@ describe("Rust/Wasm core decode backend", () => {
 			palette: [0x000000, 0xffffff],
 			frames: new Uint8Array([0, 1, 0]),
 			delay: new Uint16Array([2, 5, 13]),
-			backend: "native",
+			backend: "wasm",
 		});
 		const reader = new GifReader(encoded);
 
@@ -265,7 +268,7 @@ describe("Rust/Wasm core decode backend", () => {
 				palette: [0x000000, 0xffffff],
 				frames: new Uint8Array([0, 2]),
 				frameCount: 2,
-				backend: "native",
+				backend: "wasm",
 				delta: true,
 			}),
 		).toThrow(/Pixel index out of range/);
@@ -284,14 +287,14 @@ describe("Rust/Wasm core decode backend", () => {
 			height,
 			frames,
 			delay: 5,
-			backend: "native",
+			backend: "wasm",
 		});
 		const repeated = encodeRgbaGifFrames({
 			width,
 			height,
 			frames,
 			delay: 5,
-			backend: "native",
+			backend: "wasm",
 		});
 		const reader = new GifReader(encoded);
 		const first = new Uint8Array(width * height * 4);
@@ -306,38 +309,41 @@ describe("Rust/Wasm core decode backend", () => {
 		expect(second).toStrictEqual(frames.subarray(16));
 	});
 
-	maybeTest("reuses quality histograms across normal and large RGBA encodes", () => {
-		const smallFrame = makeQualityGradient(128, 128);
-		const smallFrames = new Uint8Array(smallFrame.length * 2);
-		smallFrames.set(smallFrame);
-		smallFrames.set(smallFrame, smallFrame.length);
-		const small = encodeRgbaGifFrames({
-			width: 128,
-			height: 128,
-			frameCount: 2,
-			frames: smallFrames,
-			backend: "native",
-			quantization: "quality",
-		});
-		const large = encodeRgbaGifFrames({
-			width: 1024,
-			height: 1024,
-			frames: makeQualityGradient(1024, 1024),
-			backend: "native",
-			quantization: "quality",
-		});
-		const repeated = encodeRgbaGifFrames({
-			width: 128,
-			height: 128,
-			frames: makeQualityGradient(128, 128),
-			backend: "native",
-			quantization: "quality",
-		});
+	maybeTest(
+		"reuses quality histograms across normal and large RGBA encodes",
+		() => {
+			const smallFrame = makeQualityGradient(128, 128);
+			const smallFrames = new Uint8Array(smallFrame.length * 2);
+			smallFrames.set(smallFrame);
+			smallFrames.set(smallFrame, smallFrame.length);
+			const small = encodeRgbaGifFrames({
+				width: 128,
+				height: 128,
+				frameCount: 2,
+				frames: smallFrames,
+				backend: "wasm",
+				quantization: "quality",
+			});
+			const large = encodeRgbaGifFrames({
+				width: 1024,
+				height: 1024,
+				frames: makeQualityGradient(1024, 1024),
+				backend: "wasm",
+				quantization: "quality",
+			});
+			const repeated = encodeRgbaGifFrames({
+				width: 128,
+				height: 128,
+				frames: makeQualityGradient(128, 128),
+				backend: "wasm",
+				quantization: "quality",
+			});
 
-		expect(new GifReader(small).numFrames()).toBe(2);
-		expect(new GifReader(large).numFrames()).toBe(1);
-		expect(new GifReader(repeated).numFrames()).toBe(1);
-	});
+			expect(new GifReader(small).numFrames()).toBe(2);
+			expect(new GifReader(large).numFrames()).toBe(1);
+			expect(new GifReader(repeated).numFrames()).toBe(1);
+		},
+	);
 
 	maybeTest("encodes pixel-perfect fast-mode indexed and RGBA GIFs", () => {
 		const indexedFrames = new Uint8Array([0, 1, 2, 3, 3, 2, 1, 0]);
@@ -349,7 +355,7 @@ describe("Rust/Wasm core decode backend", () => {
 			palette,
 			delay: [3, 7],
 			compression: "fast",
-			backend: "native",
+			backend: "wasm",
 		});
 		const rgbaFrames = new Uint8Array([
 			0, 0, 0, 255, 255, 255, 255, 255, 255, 0, 0, 255, 0, 255, 0, 255, 0, 255,
@@ -362,7 +368,7 @@ describe("Rust/Wasm core decode backend", () => {
 			palette,
 			delay: [3, 7],
 			compression: "fast",
-			backend: "native",
+			backend: "wasm",
 		});
 
 		for (const encoded of [indexedGif, rgbaGif]) {
@@ -403,7 +409,7 @@ describe("Rust/Wasm core decode backend", () => {
 				frames,
 				compression: "fast",
 				quantization: "fast",
-				backend: "native",
+				backend: "wasm",
 			});
 			const qualityGlobal = encodeRgbaGifFrames({
 				width,
@@ -411,7 +417,7 @@ describe("Rust/Wasm core decode backend", () => {
 				frames,
 				compression: "fast",
 				quantization: "quality",
-				backend: "native",
+				backend: "wasm",
 			});
 			const exactLocal = encodeRgbaGifFrames({
 				width,
@@ -420,7 +426,7 @@ describe("Rust/Wasm core decode backend", () => {
 				compression: "fast",
 				quantization: "exact",
 				paletteMode: "local",
-				backend: "native",
+				backend: "wasm",
 			});
 
 			expect(new GifReader(fastGlobal).numFrames()).toBe(2);
@@ -447,7 +453,8 @@ describe("Rust/Wasm core decode backend", () => {
 					height: 1,
 					frames: new Uint8Array([1, 2, 3, 128]),
 					compression: "fast",
-					backend: "native",
+					quantization: "exact",
+					backend: "wasm",
 				}),
 			).toThrow(/alpha values of exactly 0 or 255/);
 			expect(() =>
@@ -457,7 +464,8 @@ describe("Rust/Wasm core decode backend", () => {
 					palette: [0x000000, 0xffffff],
 					frames: new Uint8Array([1, 2, 3, 255]),
 					compression: "fast",
-					backend: "native",
+					quantization: "exact",
+					backend: "wasm",
 				}),
 			).toThrow(/outside the supplied palette/);
 		},
@@ -468,7 +476,7 @@ describe("Rust/Wasm core decode backend", () => {
 			width: 2,
 			height: 1,
 			frames: new Uint8Array([255, 0, 0, 255, 0, 0, 255, 0]),
-			backend: "native",
+			backend: "wasm",
 		});
 		const reader = new GifReader(encoded);
 		const prepared = reader.preparePlayback();
@@ -489,7 +497,7 @@ describe("Rust/Wasm core decode backend", () => {
 				palette: [0xff0000, 0x0000ff],
 				frames: new Uint8Array([255, 0, 0, 64, 0, 0, 255, 255]),
 				alphaThreshold: 32,
-				backend: "native",
+				backend: "wasm",
 			});
 			const reader = new GifReader(encoded);
 			const prepared = reader.preparePlayback();
@@ -520,7 +528,7 @@ describe("Rust/Wasm core decode backend", () => {
 			height,
 			frames,
 			palette: [0xff0000, 0x00ff00],
-			backend: "native",
+			backend: "wasm",
 			delta: true,
 			compression: "fast",
 		});

@@ -1,6 +1,6 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { execFileSync } from "node:child_process";
 
 const nodeRoot = dirname(dirname(process.execPath));
 const outputDir = join(import.meta.dirname, "..", "native", "build");

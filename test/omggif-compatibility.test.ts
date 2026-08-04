@@ -1,11 +1,11 @@
 import { describe, expect, test } from "vitest";
 import {
-	GifReader,
-	GifWriter,
 	type Frame,
 	type FrameOptions,
 	type GifBinary,
 	type GifOptions,
+	GifReader,
+	GifWriter,
 } from "../src/index";
 
 describe("omggif drop-in compatibility", () => {

@@ -1,10 +1,11 @@
-import { getWasmCoreModule } from "../wasm/runtime";
 import type { WasmCoreModule } from "../types";
+import { getWasmCoreModule } from "../wasm/runtime";
+import type { NativeAddonModule } from "./encodeRuntime";
 import {
 	getNativeAddonModule,
 	setNativeAddonModule as setEncodeNativeAddonModule,
 } from "./encodeRuntime";
-import type { NativeAddonModule } from "./encodeRuntime";
+
 export type { NativeAddonModule } from "./encodeRuntime";
 
 export interface NativeDecodedRgbaFrames {
@@ -14,9 +15,7 @@ export interface NativeDecodedRgbaFrames {
 	pixels: Uint8Array;
 }
 
-let preparedWasmRemux:
-	| ((gifData: Uint8Array) => Uint8Array)
-	| null = null;
+let preparedWasmRemux: ((gifData: Uint8Array) => Uint8Array) | null = null;
 
 const unavailable = (operation: string): never => {
 	throw new Error(
@@ -37,19 +36,12 @@ export function decodeGifFramesRgba(
 	}
 	const core = new wasm.WtfGifCore(gifData);
 	try {
-		const words = core.decode_all_rgba?.();
-		if (!words) {
-			return unavailable("decoding");
-		}
+		const words = core.decode_all_rgba();
 		return {
 			width: core.width(),
 			height: core.height(),
 			frameCount: core.frame_count(),
-			pixels: new Uint8Array(
-				words.buffer,
-				words.byteOffset,
-				words.byteLength,
-			),
+			pixels: new Uint8Array(words.buffer, words.byteOffset, words.byteLength),
 		};
 	} finally {
 		core.free();
@@ -65,23 +57,12 @@ export function reencodeGifPixelPerfect(gifData: Uint8Array): Uint8Array {
 	if (!wasm) {
 		return unavailable("reencoding");
 	}
-	if (wasm.reencode_gif_pixel_perfect) {
-		return wasm.reencode_gif_pixel_perfect(gifData);
-	}
-	const core = new wasm.WtfGifCore(gifData);
-	try {
-		return (
-			core.reencode_gif_pixel_perfect?.() ??
-			unavailable("reencoding")
-		);
-	} finally {
-		core.free();
-	}
+	return wasm.reencode_gif_pixel_perfect(gifData);
 }
 
 const remuxGifWithDiscoveredBackend = (gifData: Uint8Array): Uint8Array => {
 	const wasm = getWasmCoreModule();
-	if (!wasm?.remux_gif_pixel_perfect) {
+	if (!wasm) {
 		return unavailable("losslessly remuxing");
 	}
 	return wasm.remux_gif_pixel_perfect(gifData);
@@ -91,8 +72,7 @@ export let remuxGifPixelPerfect = remuxGifWithDiscoveredBackend;
 
 export function prepareWasmOneOffApi(module: WasmCoreModule | null): void {
 	preparedWasmRemux = module?.remux_gif_pixel_perfect ?? null;
-	remuxGifPixelPerfect =
-		preparedWasmRemux ?? remuxGifWithDiscoveredBackend;
+	remuxGifPixelPerfect = preparedWasmRemux ?? remuxGifWithDiscoveredBackend;
 }
 
 export function setNativeAddonModule(module: NativeAddonModule | null): void {

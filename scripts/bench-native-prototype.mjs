@@ -199,7 +199,11 @@ console.log("fixture\tomggif ms\tnative ms\tspeedup\tnative/source bytes");
 for (const { file, data, expected } of gifFixtures) {
 	const baseline = reencodeWithOmggif(data);
 	const actual = reencodeGifPixelPerfect(data);
-	assertEqual(decodeAllWithOmggif(baseline), expected, `${file}/omggif reencode`);
+	assertEqual(
+		decodeAllWithOmggif(baseline),
+		expected,
+		`${file}/omggif reencode`,
+	);
 	assertEqual(decodeAllWithOmggif(actual), expected, `${file}/native reencode`);
 	const omgMs = measure(() => reencodeWithOmggif(data));
 	const nativeMs = measure(() => reencodeGifPixelPerfect(data));
@@ -232,8 +236,7 @@ function makeRgbaFixture(colorCount) {
 			for (let x = 0; x < width; x++) {
 				const pixel = frame * pixelsPerFrame + y * width + x;
 				const index =
-					(x * 17 + y * 31 + frame * 13 + ((x * y) >> 3)) &
-					(colorCount - 1);
+					(x * 17 + y * 31 + frame * 13 + ((x * y) >> 3)) & (colorCount - 1);
 				const color = palette[index];
 				indexed[pixel] = index;
 				rgba[pixel * 4] = (color >> 16) & 255;
@@ -295,7 +298,7 @@ function encodeRgbaNative(fixture) {
 		palette: Array.from(fixture.palette),
 		delay: fixture.delays,
 		loop: 0,
-		backend: "native",
+		backend: "native-addon",
 		compression: "fast",
 	});
 }
