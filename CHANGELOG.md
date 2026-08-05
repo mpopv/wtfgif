@@ -2,6 +2,16 @@
 
 All notable changes to wtfgif are documented here.
 
+## 2.4.1 - 2026-08-05
+
+- Keep the reusable arbitrary-RGBA input scratch buffer four-byte aligned while
+  growing it without zero-initializing bytes that the caller immediately
+  overwrites. The encoder output, quality, and pixel-parity contracts are
+  unchanged.
+- Fresh receipts on the real eight-frame 128×128 fixture are 23.25× strict
+  cold, 32.70× for the first encode after initialization, and 196.80× hot;
+  output remains 149,601 bytes at 34.12 dB PSNR.
+
 ## 2.4.0 - 2026-08-04
 
 - Ship a quality-only Wasm artifact for `wtfgif/encode`, with scalar and SIMD

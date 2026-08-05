@@ -9475,10 +9475,12 @@ impl LzwEncodeTables {
 }
 
 struct LzwEncodeScratch {
-    // Packed loads require four-byte alignment. A fully initialized `u32`
-    // allocation provides that alignment while remaining safe to expose as
-    // writable bytes to JavaScript.
-    input: Vec<u32>,
+    // JavaScript overwrites the complete requested byte range before any
+    // encoder reads it. Keep the reusable input allocation uninitialized so
+    // growing it does not first zero bytes that the caller immediately
+    // replaces. `MaybeUninit<u32>` preserves four-byte alignment for packed
+    // RGBA loads.
+    input: Vec<std::mem::MaybeUninit<u32>>,
     output: Vec<u8>,
     // Literal LZW, including the default arbitrary-RGBA path, never needs
     // the 4 MiB dictionary. Allocate it only when a caller explicitly asks

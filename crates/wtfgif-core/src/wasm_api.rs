@@ -156,11 +156,15 @@ pub fn encode_indexed_literal_lzw_scratch(
 /// requested range before invoking an encoder that reads it.
 #[wasm_bindgen]
 pub fn indexed_lzw_input_scratch_reserve(length: usize) -> usize {
+    let units = length.div_ceil(std::mem::size_of::<u32>());
     REUSABLE_LZW_SCRATCH.with(|scratch| {
         let mut scratch = scratch.borrow_mut();
-        let units = length.div_ceil(std::mem::size_of::<u32>());
         if units > scratch.input.len() {
-            scratch.input.resize(units, 0);
+            let current_len = scratch.input.len();
+            scratch.input.reserve(units - current_len);
+            // Callers must overwrite every requested byte before invoking an
+            // encoder, so growing this range needs no initialization pass.
+            unsafe { scratch.input.set_len(units) };
         }
         scratch.input.as_mut_ptr().cast::<u8>() as usize
     })
