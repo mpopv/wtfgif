@@ -504,5 +504,4 @@ export type FrameInfo = Frame & {
 	bgraColors?: Uint32Array;
 	opaqueSpans?: Uint32Array;
 	opaquePositions?: Uint32Array;
-	decodeCount?: number;
 };

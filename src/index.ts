@@ -21,6 +21,7 @@ import {
 	remuxGifPixelPerfect,
 	setNativeAddonModule,
 } from "./native/runtime";
+import type { WasmCoreModule } from "./types";
 import { createWasmCoreDecodeBackend } from "./wasm/coreBackend";
 import { setWasmEncodeCoreModule } from "./wasm/encodeRuntime";
 import {
@@ -30,6 +31,7 @@ import {
 	initializeGlobalWasm,
 	initializeWasmModule as initializeStaticWasmModule,
 	setWasmCoreModule as setWasmCoreModuleRuntime,
+	type WasmWebModule,
 } from "./wasm/runtime";
 
 const bindPublicWasmApi = () => {
@@ -64,16 +66,14 @@ const initializeWasmGlobally = async (
 };
 
 const initializeWasmModule = async (
-	module: Parameters<typeof initializeStaticWasmModule>[0],
+	module: WasmWebModule,
 	moduleOrPath?: unknown,
 ): Promise<void> => {
 	await initializeStaticWasmModule(module, moduleOrPath);
 	bindPublicWasmApi();
 };
 
-const setWasmCoreModule = (
-	module: Parameters<typeof setWasmCoreModuleRuntime>[0],
-): void => {
+const setWasmCoreModule = (module: WasmCoreModule | null): void => {
 	setWasmCoreModuleRuntime(module);
 	bindPublicWasmApi();
 };

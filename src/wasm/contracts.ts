@@ -14,15 +14,12 @@ const QUALITY_EXPORTS = [
 	"gif_output_scratch_ptr",
 ] as const satisfies readonly (keyof WasmQualityCoreModule)[];
 
-const ENCODE_EXPORTS = [
-	"core_version",
+const ENCODE_ONLY_EXPORTS = [
 	"encode_indexed_lzw",
 	"encode_indexed_lzw_scratch",
 	"encode_indexed_literal_lzw_scratch",
-	"indexed_lzw_input_scratch_reserve",
 	"encode_indexed_lzw_scratch_from_input",
 	"indexed_lzw_scratch_ptr",
-	"wasm_memory",
 	"encode_indexed_gif",
 	"encode_indexed_gif_with_delays",
 	"encode_indexed_literal_gif",
@@ -41,10 +38,11 @@ const ENCODE_EXPORTS = [
 	"encode_rgba_gif_advanced",
 	"encode_rgba_gif_advanced_from_input",
 	"encode_rgba_gif_advanced_scratch_from_input",
-	"encode_rgba_quality_gif_from_input",
-	"encode_rgba_quality_gif_scratch_from_input",
-	"encode_rgba_quality_gif_constant_delay_scratch_from_input",
-	"gif_output_scratch_ptr",
+] as const satisfies readonly (keyof WasmEncodeCoreModule)[];
+
+const ENCODE_EXPORTS = [
+	...QUALITY_EXPORTS,
+	...ENCODE_ONLY_EXPORTS,
 ] as const satisfies readonly (keyof WasmEncodeCoreModule)[];
 
 const DECODE_EXPORTS = [

@@ -88,7 +88,7 @@ function measure(operation) {
 		samples.push((performance.now() - started) / batchSize);
 	}
 
-	return { batchSize, median: median(samples) };
+	return { median: median(samples) };
 }
 
 function clearFrameRect(canvas, canvasWidth, info) {

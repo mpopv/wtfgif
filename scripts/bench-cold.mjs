@@ -96,7 +96,6 @@ function measurePair(operation, fixture) {
 	return {
 		omggif: median(samples.omggif),
 		wtfgif: median(samples.wtfgif),
-		omggifP95: percentile(samples.omggif, 0.95),
 		wtfgifP95: percentile(samples.wtfgif, 0.95),
 		outputBytes,
 	};

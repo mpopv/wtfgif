@@ -31,13 +31,6 @@ function median(values) {
 	return values.toSorted((a, b) => a - b)[Math.floor(values.length / 2)];
 }
 
-function percentile(values, percentile) {
-	const sorted = values.toSorted((a, b) => a - b);
-	return sorted[
-		Math.min(sorted.length - 1, Math.ceil(sorted.length * percentile) - 1)
-	];
-}
-
 function consume(result) {
 	sink ^= result.checksum ?? result.bytes?.[result.bytes.length - 1] ?? 0;
 	result.dispose?.();
@@ -54,7 +47,7 @@ function measure(operation) {
 		samples.push(performance.now() - started);
 		consume(result);
 	}
-	return { median: median(samples), p95: percentile(samples, 0.95) };
+	return { median: median(samples) };
 }
 
 function clearFrameRect(canvas, canvasWidth, info) {

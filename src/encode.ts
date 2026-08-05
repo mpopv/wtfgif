@@ -1,10 +1,12 @@
 import { prepareWasmEncoderModule } from "./encoder/writer";
+import type { WasmQualityCoreModule } from "./types";
 import {
 	cleanupWasm as cleanupWasmRuntime,
 	getWasmQualityCoreModule,
 	initializeGlobalWasm as initializeGlobalWasmRuntime,
 	initializeWasmModule as initializeWasmModuleRuntime,
 	setWasmQualityCoreModule,
+	type WasmQualityWebModule,
 } from "./wasm/qualityRuntime";
 
 export type {
@@ -41,16 +43,14 @@ export async function initializeWasmGlobally(
 }
 
 export async function initializeWasmModule(
-	module: Parameters<typeof initializeWasmModuleRuntime>[0],
+	module: WasmQualityWebModule,
 	moduleOrPath?: unknown,
 ): Promise<void> {
 	await initializeWasmModuleRuntime(module, moduleOrPath);
 	prepareWasmEncoderModule(getWasmQualityCoreModule());
 }
 
-export function setWasmCoreModule(
-	module: Parameters<typeof setWasmQualityCoreModule>[0],
-): void {
+export function setWasmCoreModule(module: WasmQualityCoreModule | null): void {
 	setWasmQualityCoreModule(module);
 	prepareWasmEncoderModule(module);
 }

@@ -40,6 +40,39 @@ function getQualityEncoderWasmCoreModule(): WasmQualityCoreModule | null {
 	return getWasmQualityCoreModule() ?? getWasmEncodeCoreModule();
 }
 
+function copyRgbaFramesToWasmScratch(
+	wasmCore: WasmCoreModule | WasmEncodeCoreModule | WasmQualityCoreModule,
+	frames: RgbaGifFrames,
+	frameByteSize: number,
+	frameCount: number,
+): WebAssembly.Memory | null {
+	prepareWasmEncoderModule(wasmCore);
+	const inputLength = frameByteSize * frameCount;
+	const scratchMemory = lzwScratchMemory;
+	if (!scratchMemory) return null;
+	if (lzwInputScratchCapacity < inputLength) {
+		lzwInputScratchPointer =
+			wasmCore.indexed_lzw_input_scratch_reserve(inputLength);
+		lzwInputScratchCapacity = inputLength;
+	}
+	const input = new Uint8Array(
+		scratchMemory.buffer,
+		lzwInputScratchPointer,
+		inputLength,
+	);
+	if (isRgbaFrame(frames)) {
+		input.set(asUint8Array(frames));
+	} else {
+		for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+			input.set(
+				asUint8Array(frames[frameIndex]!).subarray(0, frameByteSize),
+				frameIndex * frameByteSize,
+			);
+		}
+	}
+	return scratchMemory;
+}
+
 /**
  * Bind the Wasm memory without allocating source or output scratch. The first
  * encode reserves exactly the input range it needs, keeping initialization
@@ -109,10 +142,8 @@ export interface EncodeRgbaGifFramesOptions {
 	paletteMode?: GifPaletteMode;
 }
 
-type IndexedPixels = IndexedGifFrame;
-
 type IndexedSourceRect = {
-	data: IndexedPixels;
+	data: IndexedGifFrame;
 	offset: number;
 	width: number;
 	height: number;
@@ -120,7 +151,7 @@ type IndexedSourceRect = {
 	length: number;
 };
 
-type LzwIndexStream = IndexedPixels | IndexedSourceRect;
+type LzwIndexStream = IndexedGifFrame | IndexedSourceRect;
 
 function resolveEncoderBackends(backend: EncodeIndexedGifFramesBackend) {
 	const nativeAddon =
@@ -309,30 +340,14 @@ function encodeRgbaQualityWasm(
 		options.loop === undefined || options.loop === null
 			? null
 			: checkedU16(options.loop, "Loop count invalid.");
-	prepareWasmEncoderModule(wasmCore);
 	const inputLength = frameByteSize * frameCount;
-	const scratchMemory = lzwScratchMemory;
-	if (!scratchMemory) return null;
-	if (lzwInputScratchCapacity < inputLength) {
-		lzwInputScratchPointer =
-			wasmCore.indexed_lzw_input_scratch_reserve(inputLength);
-		lzwInputScratchCapacity = inputLength;
-	}
-	const input = new Uint8Array(
-		scratchMemory.buffer,
-		lzwInputScratchPointer,
-		inputLength,
+	const scratchMemory = copyRgbaFramesToWasmScratch(
+		wasmCore,
+		frames,
+		frameByteSize,
+		frameCount,
 	);
-	if (isRgbaFrame(frames)) {
-		input.set(asUint8Array(frames));
-	} else {
-		for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
-			input.set(
-				asUint8Array(frames[frameIndex]!).subarray(0, frameByteSize),
-				frameIndex * frameByteSize,
-			);
-		}
-	}
+	if (!scratchMemory) return null;
 	const outputLength =
 		typeof delays === "number"
 			? wasmCore.encode_rgba_quality_gif_constant_delay_scratch_from_input(
@@ -660,7 +675,7 @@ export class GifWriter {
 		y: number,
 		w: number,
 		h: number,
-		indexedPixels: IndexedPixels,
+		indexedPixels: IndexedGifFrame,
 		opts?: FrameOptions,
 	): number {
 		x |= 0;
@@ -686,7 +701,7 @@ export class GifWriter {
 		);
 	}
 
-	addFrameDelta(indexedPixels: IndexedPixels, opts?: FrameOptions): number {
+	addFrameDelta(indexedPixels: IndexedGifFrame, opts?: FrameOptions): number {
 		if (indexedPixels.length < this.width * this.height) {
 			throw new Error("Not enough pixels for the frame size.");
 		}
@@ -1810,7 +1825,7 @@ type IndexedRect = {
 
 function findChangedIndexedRect(
 	previous: Uint8Array,
-	current: IndexedPixels,
+	current: IndexedGifFrame,
 	width: number,
 	height: number,
 ): IndexedRect | null {
@@ -1868,7 +1883,7 @@ function findChangedIndexedRect(
 }
 
 function createIndexedSourceRect(
-	data: IndexedPixels,
+	data: IndexedGifFrame,
 	offset: number,
 	width: number,
 	height: number,
@@ -2017,7 +2032,7 @@ function GifWriterOutputLZWCodeStream_fast(
 	const n = indexedSourceLength(indexStream);
 	if (n <= 0) throw new Error("Not enough pixels for the frame size.");
 
-	let stridedData: IndexedPixels | null = null;
+	let stridedData: IndexedGifFrame | null = null;
 	let stridedIndex = 0;
 	let stridedRowRemaining = 0;
 	let stridedRowWidth = 0;
@@ -2031,7 +2046,7 @@ function GifWriterOutputLZWCodeStream_fast(
 		stridedRowSkip = indexStream.stride - indexStream.width;
 		ib = (stridedData[indexStream.offset] as number) | 0;
 	} else {
-		ib = ((indexStream as IndexedPixels)[0] as number) | 0;
+		ib = ((indexStream as IndexedGifFrame)[0] as number) | 0;
 	}
 	if (ib >>> 0 >= colorCount) throw new Error("Pixel index out of range.");
 
@@ -2045,7 +2060,7 @@ function GifWriterOutputLZWCodeStream_fast(
 			k = (stridedData[stridedIndex++] as number) | 0;
 			stridedRowRemaining--;
 		} else {
-			k = ((indexStream as IndexedPixels)[i] as number) | 0;
+			k = ((indexStream as IndexedGifFrame)[i] as number) | 0;
 		}
 		if (k >>> 0 >= colorCount) throw new Error("Pixel index out of range.");
 		const key = (ib << 8) | k;
@@ -2151,32 +2166,19 @@ function encodeRgbaAdvancedWithWasmScratch(
 	quantization: number,
 	paletteMode: number,
 ): Uint8Array {
-	prepareWasmEncoderModule(wasmCore);
+	const wasmMemory = copyRgbaFramesToWasmScratch(
+		wasmCore,
+		frames,
+		frameByteSize,
+		frameCount,
+	);
+	if (!wasmMemory) {
+		throw new Error("WebAssembly encoder memory is unavailable.");
+	}
 	const getDelayArray = () => delayArray(delays, frameCount);
 	const inputLength = frameByteSize * frameCount;
-	if (lzwInputScratchCapacity < inputLength) {
-		lzwInputScratchPointer =
-			wasmCore.indexed_lzw_input_scratch_reserve(inputLength);
-		lzwInputScratchCapacity = inputLength;
-	}
-	const wasmMemory = lzwScratchMemory!;
-	const input = new Uint8Array(
-		wasmMemory.buffer,
-		lzwInputScratchPointer,
-		inputLength,
-	);
-	if (isRgbaFrame(frames)) {
-		input.set(asUint8Array(frames));
-	} else {
-		for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
-			input.set(
-				asUint8Array(frames[frameIndex]!).subarray(0, frameByteSize),
-				frameIndex * frameByteSize,
-			);
-		}
-	}
 	const outputLength = wasmCore.encode_rgba_gif_advanced_scratch_from_input(
-		frameByteSize * frameCount,
+		inputLength,
 		width,
 		height,
 		frameCount,
@@ -2219,12 +2221,9 @@ function tryEncodeLzwWithWasm(
 		? wasmCore.encode_indexed_literal_lzw_scratch
 		: wasmCore.encode_indexed_lzw_scratch;
 	const canUseDirectInput = minCodeSize > 4;
-	if (lzwScratchMemoryModule !== wasmCore || !lzwScratchMemory) {
-		lzwScratchMemoryModule = wasmCore;
-		lzwScratchMemory = wasmCore.wasm_memory();
-		lzwInputScratchPointer = 0;
-		lzwInputScratchCapacity = 0;
-	}
+	prepareWasmEncoderModule(wasmCore);
+	const scratchMemory = lzwScratchMemory;
+	if (!scratchMemory) return null;
 	let length: number;
 	if (canUseDirectInput) {
 		if (lzwInputScratchCapacity < indexStream.length) {
@@ -2234,7 +2233,7 @@ function tryEncodeLzwWithWasm(
 			lzwInputScratchCapacity = indexStream.length;
 		}
 		new Uint8Array(
-			lzwScratchMemory.buffer,
+			scratchMemory.buffer,
 			lzwInputScratchPointer,
 			indexStream.length,
 		).set(indexStream);
@@ -2248,7 +2247,7 @@ function tryEncodeLzwWithWasm(
 		length = encodeIntoScratch(indexStream, wasmMinCodeSize, colorCount);
 	}
 	return new Uint8Array(
-		lzwScratchMemory.buffer,
+		scratchMemory.buffer,
 		wasmCore.indexed_lzw_scratch_ptr(),
 		length,
 	);
@@ -2264,11 +2263,10 @@ function encodeIndexedGifWithWasmScratch(
 	delay: number,
 	loopCount: number,
 ): Uint8Array {
-	if (lzwScratchMemoryModule !== wasmCore || !lzwScratchMemory) {
-		lzwScratchMemoryModule = wasmCore;
-		lzwScratchMemory = wasmCore.wasm_memory();
-		lzwInputScratchPointer = 0;
-		lzwInputScratchCapacity = 0;
+	prepareWasmEncoderModule(wasmCore);
+	const scratchMemory = lzwScratchMemory;
+	if (!scratchMemory) {
+		throw new Error("WebAssembly encoder memory is unavailable.");
 	}
 	if (lzwInputScratchCapacity < indexStream.length) {
 		lzwInputScratchPointer = wasmCore.indexed_lzw_input_scratch_reserve(
@@ -2277,7 +2275,7 @@ function encodeIndexedGifWithWasmScratch(
 		lzwInputScratchCapacity = indexStream.length;
 	}
 	new Uint8Array(
-		lzwScratchMemory.buffer,
+		scratchMemory.buffer,
 		lzwInputScratchPointer,
 		indexStream.length,
 	).set(indexStream);
@@ -2291,7 +2289,7 @@ function encodeIndexedGifWithWasmScratch(
 		loopCount,
 	);
 	return new Uint8Array(
-		lzwScratchMemory.buffer,
+		scratchMemory.buffer,
 		wasmCore.gif_output_scratch_ptr(),
 		outputLength,
 	).slice();

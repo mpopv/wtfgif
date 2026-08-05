@@ -110,12 +110,16 @@ describe("GifReader frame decoding", () => {
 	test("decodeAndBlitCompositedFrameRGBA uses the prepared playback cache", () => {
 		const reader = new GifReader(makeDisposalGif());
 		const pixels = new Uint8Array(16);
+		const activePreparedFrames = (
+			reader as unknown as { activePreparedFrames: Set<unknown> }
+		).activePreparedFrames;
 
 		reader.decodeAndBlitCompositedFrameRGBA(1, pixels);
 
 		expect(Array.from(pixels)).toStrictEqual([
 			0, 255, 0, 255, 255, 0, 0, 255, 0, 255, 0, 255, 255, 0, 0, 255,
 		]);
+		expect(activePreparedFrames.size).toBe(0);
 	});
 
 	test("preparePlayback handles restore-to-previous disposal", () => {

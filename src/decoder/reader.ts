@@ -416,7 +416,7 @@ export class GifReader {
 	}
 
 	preparePlayback(
-		options: Omit<PrepareFramesOptions, "composited"> = {},
+		options: Omit<PrepareFramesOptions, "cache" | "composited"> = {},
 	): PreparedGifFrames {
 		return this.prepareFrames({
 			...options,
@@ -449,18 +449,25 @@ export class GifReader {
 		}
 	}
 
-	async prepareFramesAsync(
-		options: PrepareFramesOptions = {},
-	): Promise<PreparedGifFrames> {
-		return this.prepareFrames(options);
-	}
-
 	decodeAndBlitCompositedFrameRGBA(frameNum: number, pixels: Uint8Array): void {
-		this.preparePlayback({ format: "rgba" }).copyFrame(frameNum, pixels);
+		this.copyCompositedFrame(frameNum, pixels, "rgba");
 	}
 
 	decodeAndBlitCompositedFrameBGRA(frameNum: number, pixels: Uint8Array): void {
-		this.preparePlayback({ format: "bgra" }).copyFrame(frameNum, pixels);
+		this.copyCompositedFrame(frameNum, pixels, "bgra");
+	}
+
+	private copyCompositedFrame(
+		frameNum: number,
+		pixels: Uint8Array,
+		format: PreparedFrameFormat,
+	): void {
+		const prepared = this.preparePlayback({ format });
+		try {
+			prepared.copyFrame(frameNum, pixels);
+		} finally {
+			prepared.dispose();
+		}
 	}
 
 	private normalizePrepareFramesOptions(
@@ -551,13 +558,12 @@ export class GifReader {
 			options.dedupe === "all" ? new Map<number, Uint32Array[]>() : null;
 		let byteLength = 0;
 		let previousPixels: Uint32Array | null = null;
-		let previousPreparedPixels: Uint32Array | null = null;
 
 		for (let frameIndex = 0; frameIndex <= maxFrame; frameIndex++) {
 			const frame = this.frames[frameIndex]!;
 			const restore = frame.disposal === 3 ? new Uint32Array(canvas) : null;
 
-			this.blitFrameIndicesToCanvas(frame, canvas, this.width_, options.format);
+			this.blitFrameIndicesToCanvas(frame, canvas, options.format);
 
 			if (requested.has(frameIndex)) {
 				let pixels: Uint32Array | null = null;
@@ -569,10 +575,10 @@ export class GifReader {
 					pixels = GifReader.findMatchingPixels(canvas, bucket);
 				} else if (
 					options.dedupe === "adjacent" &&
-					previousPreparedPixels &&
-					GifReader.pixelsEqual(previousPreparedPixels, canvas)
+					previousPixels &&
+					GifReader.pixelsEqual(previousPixels, canvas)
 				) {
-					pixels = previousPreparedPixels;
+					pixels = previousPixels;
 				}
 				const changedRect =
 					options.deltas && previousPixels
@@ -635,7 +641,6 @@ export class GifReader {
 					pixels,
 				});
 				previousPixels = pixels;
-				previousPreparedPixels = pixels;
 			}
 
 			this.applyFrameDisposal(frame, canvas, restore);
@@ -678,7 +683,7 @@ export class GifReader {
 					palette,
 				};
 			} else {
-				const colors = this.getFrameColors(frame, options.format, this.width_);
+				const colors = this.getFrameColors(frame, options.format);
 				const spans = frame.opaqueSpans;
 				const positions = spans ? undefined : frame.opaquePositions;
 				prepared = {
@@ -1167,7 +1172,6 @@ export class GifReader {
 			delete frame.bgraColors;
 			delete frame.opaqueSpans;
 			delete frame.opaquePositions;
-			delete frame.decodeCount;
 		}
 		this.globalPal32rgba = undefined;
 		this.globalPal32bgra = undefined;
@@ -1528,15 +1532,7 @@ export class GifReader {
 		this.ensureDecoderTables();
 		const pal32 = this.getFramePalette(frame, order);
 		const trans = frame.transparent_index ?? 256;
-		this.lzwDecodeToPixels(
-			this.buf,
-			frame.data_offset,
-			out32,
-			this.width_,
-			frame,
-			pal32,
-			trans,
-		);
+		this.lzwDecodeToPixels(out32, this.width_, frame, pal32, trans);
 		this.lastDecodedFrame = frameNum;
 	}
 
@@ -1569,13 +1565,13 @@ export class GifReader {
 		const clearCode = 1 << minCodeSize;
 		const tableCapacity = Math.min(GIF.MAX_CODE, framePixels + clearCode + 2);
 		let indices = this.directIndices;
-		if (!indices || indices.length < framePixels) {
+		if (indices.length < framePixels) {
 			indices = new Uint8Array(framePixels);
 			this.directIndices = indices;
 		}
 
 		let table = this.directCodeTable;
-		if (!table || table.length < tableCapacity) {
+		if (table.length < tableCapacity) {
 			table = new Int32Array(tableCapacity);
 			this.directCodeTable = table;
 		}
@@ -1851,12 +1847,12 @@ export class GifReader {
 		const clearCode = 1 << minCodeSize;
 		const tableCapacity = Math.min(GIF.MAX_CODE, framePixels + clearCode + 2);
 		let table = this.directCodeTable;
-		if (!table || table.length < tableCapacity) {
+		if (table.length < tableCapacity) {
 			table = new Int32Array(tableCapacity);
 			this.directCodeTable = table;
 		}
 		let stack = this.directStack;
-		if (!stack || stack.length < framePixels) {
+		if (stack.length < framePixels) {
 			stack = new Uint8Array(framePixels);
 			this.directStack = stack;
 		}
@@ -2021,7 +2017,6 @@ export class GifReader {
 	private getFrameColors(
 		frame: FrameInfo,
 		order: "rgba" | "bgra",
-		canvasWidth: number,
 	): Uint32Array {
 		const existing = order === "rgba" ? frame.rgbaColors : frame.bgraColors;
 		if (existing) {
@@ -2032,6 +2027,7 @@ export class GifReader {
 		const pal32 = this.getFramePalette(frame, order);
 		const fw = frame.width | 0;
 		const fh = frame.height | 0;
+		const canvasWidth = this.width_;
 		const trans = frame.transparent_index ?? 256;
 		const total = fw * fh;
 		let colors: Uint32Array;
@@ -2138,13 +2134,13 @@ export class GifReader {
 	private blitFrameIndicesToCanvas(
 		frame: FrameInfo,
 		out32: Uint32Array,
-		canvasWidth: number,
 		order: "rgba" | "bgra",
 	): void {
 		const indices = this.getFrameIndices(frame);
 		const pal32 = this.getFramePalette(frame, order);
 		const fw = frame.width | 0;
 		const fh = frame.height | 0;
+		const canvasWidth = this.width_;
 		const trans = frame.transparent_index ?? 256;
 		const rowStride = canvasWidth - fw;
 		let src = 0;
@@ -2174,8 +2170,6 @@ export class GifReader {
 
 	/* Optimized LZW decoder that streams symbols directly to destination pixels. */
 	private lzwDecodeToPixels(
-		_codeStream: Uint8Array,
-		_dataOffset: number,
 		out32: Uint32Array,
 		canvasWidth: number,
 		frame: FrameInfo,

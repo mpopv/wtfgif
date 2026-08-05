@@ -15,8 +15,6 @@ export interface NativeDecodedRgbaFrames {
 	pixels: Uint8Array;
 }
 
-let preparedWasmRemux: ((gifData: Uint8Array) => Uint8Array) | null = null;
-
 const unavailable = (operation: string): never => {
 	throw new Error(
 		`Fast Rust backend unavailable. Initialize WebAssembly or install the native addon before ${operation}.`,
@@ -78,8 +76,8 @@ const remuxGifWithDiscoveredBackend = (gifData: Uint8Array): Uint8Array => {
 export let remuxGifPixelPerfect = remuxGifWithDiscoveredBackend;
 
 export function prepareWasmOneOffApi(module: WasmCoreModule | null): void {
-	preparedWasmRemux = module?.remux_gif_pixel_perfect ?? null;
-	remuxGifPixelPerfect = preparedWasmRemux ?? remuxGifWithDiscoveredBackend;
+	remuxGifPixelPerfect =
+		module?.remux_gif_pixel_perfect ?? remuxGifWithDiscoveredBackend;
 }
 
 export function setNativeAddonModule(module: NativeAddonModule | null): void {

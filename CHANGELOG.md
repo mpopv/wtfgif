@@ -2,6 +2,17 @@
 
 All notable changes to wtfgif are documented here.
 
+## 2.4.2 - 2026-08-05
+
+- Reuse one prepared Wasm encoder-memory binding across RGBA and indexed encode
+  paths, so ordinary calls do not repeatedly rediscover the same scratch
+  memory or reset its capacity.
+- Dispose one-off composited-frame playback state after copying a frame, while
+  keeping the prepared playback API reusable for callers that need it.
+- Share Wasm feature/status detection across the full, encode-only, and
+  quality-only runtimes. Encoding, decoding, output bytes, and pixel-parity
+  contracts are unchanged.
+
 ## 2.4.1 - 2026-08-05
 
 - Keep the reusable arbitrary-RGBA input scratch buffer four-byte aligned while

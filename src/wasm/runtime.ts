@@ -1,7 +1,11 @@
 import type { WasmCoreModule } from "../types";
 import { isWasmCoreModule } from "./contracts";
-import { createWasmModuleRuntime, type WasmWebBinding } from "./moduleRuntime";
-import { supportsWasmSimd } from "./simd";
+import {
+	createWasmModuleRuntime,
+	getWasmFeatures as getSharedWasmFeatures,
+	getWasmStatus as getSharedWasmStatus,
+	type WasmWebBinding,
+} from "./moduleRuntime";
 
 const runtime = createWasmModuleRuntime<WasmCoreModule>({
 	name: "wtfgif full-core",
@@ -40,32 +44,12 @@ export function initializeWasmModule(
 	return runtime.initializeModule(module, moduleOrPath);
 }
 
-export function getWasmFeatures(): {
-	supported: boolean;
-	simd: boolean;
-	threads: boolean;
-} {
-	return {
-		supported: typeof WebAssembly !== "undefined",
-		simd: supportsWasmSimd(),
-		threads:
-			typeof SharedArrayBuffer !== "undefined" &&
-			(typeof crossOriginIsolated === "undefined" || crossOriginIsolated),
-	};
+export function getWasmFeatures() {
+	return getSharedWasmFeatures();
 }
 
-export function getWasmStatus(): {
-	supported: boolean;
-	simd: boolean;
-	threads: boolean;
-	initialized: boolean;
-	workerPoolAvailable: boolean;
-} {
-	return {
-		...getWasmFeatures(),
-		initialized: getWasmCoreModule() !== null,
-		workerPoolAvailable: false,
-	};
+export function getWasmStatus() {
+	return getSharedWasmStatus(getWasmCoreModule() !== null);
 }
 
 export function isWasmReady(): boolean {
