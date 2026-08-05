@@ -6969,35 +6969,49 @@ fn build_quality_index_plan_from_colors(
         }
         let mut initial_tree = PaletteKdTree::new(&palette);
         let mut histogram_to_palette = take_quality_histogram_to_palette(mapping_len);
-        let duplicate_palette = palette
-            .iter()
-            .enumerate()
-            .any(|(index, &color)| palette[..index].contains(&color));
+        // Build the exact-color lookup while checking for duplicate palette
+        // representatives. The hash table avoids the quadratic prefix scan;
+        // keep it alive as reusable scratch even when the compact direct-cell
+        // table wins for this palette.
+        let mut palette_lookup = take_quality_color_index_table(COLOR_INDEX_CAP);
+        let mut duplicate_palette = false;
+        for (index, &color) in palette.iter().enumerate() {
+            if palette_lookup.get(color).is_some() {
+                duplicate_palette = true;
+            } else {
+                palette_lookup.insert_if_absent(color, index as u8);
+            }
+        }
         // A histogram cell has exactly one representative color, so a cell
         // occupied by a selected palette entry is an exact lookup. Keep the
         // compact direct table for the transparent/255-color case; a full
         // 256-color table would collide with the `u8::MAX` miss sentinel and
         // costs more to fill than the hash table it replaces.
         let use_direct_palette_cells = mapping_bits == 4 && palette_len < 256 && !duplicate_palette;
-        let mut palette_lookup = if use_direct_palette_cells {
+        let palette_lookup = if use_direct_palette_cells {
+            recycle_quality_color_index_table(palette_lookup);
             ColorIndexTable::empty()
         } else {
-            take_quality_color_index_table(COLOR_INDEX_CAP)
+            palette_lookup
         };
         if use_direct_palette_cells {
-            histogram_to_palette.fill(u8::MAX);
+            // Only occupied cells are read below; clear those cells instead
+            // of touching the entire 4,096-entry mapping on every encode.
+            for color in &colors {
+                histogram_to_palette[usize::from(color.histogram_index)] = u8::MAX;
+            }
             for (index, color) in colors.iter().take(palette_len).enumerate() {
                 histogram_to_palette[usize::from(color.histogram_index)] = index as u8;
-            }
-        } else {
-            for (index, &color) in palette.iter().enumerate() {
-                palette_lookup.insert_if_absent(color, index as u8);
             }
         }
         // Map histogram cells in spatial order so the previous cell's exact
         // winner is a useful seed for the next KD search. Palette membership
         // was recorded above, before this reorder, so palette order is fixed.
-        colors.sort_unstable_by_key(|color| color.histogram_index);
+        if histogram_bits == 4 {
+            reorder_quality_colors_by_histogram_index_4(&mut colors);
+        } else {
+            colors.sort_unstable_by_key(|color| color.histogram_index);
+        }
         let mut palette_changed = false;
         let mut previous_hint = None;
         // Every caller that reaches the u32 histogram has already bounded the
@@ -7195,7 +7209,9 @@ fn build_quality_index_plan_from_colors(
                     );
             }
         }
-        recycle_quality_color_index_table(palette_lookup);
+        if !use_direct_palette_cells {
+            recycle_quality_color_index_table(palette_lookup);
+        }
         recycle_quality_colors(colors);
         (palette, histogram_to_palette)
     } else {
@@ -7294,6 +7310,42 @@ fn build_quality_index_plan_from_colors(
         transparent_index,
         histogram_bits,
         mapping_bits,
+    }
+}
+
+/// Reorder the unique occupied cells of a 4-bit histogram without doing a
+/// comparison sort. There is one `QuantizedColor` per occupied cell, and the
+/// cell index is bounded to 12 bits, so a small position permutation can place
+/// every color in exact histogram-index order in linear time.
+#[inline(never)]
+fn reorder_quality_colors_by_histogram_index_4(colors: &mut [QuantizedColor]) {
+    if colors.is_empty() {
+        return;
+    }
+    let mut positions = [std::mem::MaybeUninit::<u16>::uninit(); 1 << 12];
+    let mut seen = [0u64; 1 << 6];
+    let mut minimum = usize::MAX;
+    let mut maximum = 0usize;
+    for (position, color) in colors.iter().enumerate() {
+        let histogram_index = usize::from(color.histogram_index);
+        positions[histogram_index].write(position as u16);
+        seen[histogram_index >> 6] |= 1u64 << (histogram_index & 63);
+        minimum = minimum.min(histogram_index);
+        maximum = maximum.max(histogram_index);
+    }
+    let mut target = 0usize;
+    for histogram_index in minimum..=maximum {
+        if seen[histogram_index >> 6] & (1u64 << (histogram_index & 63)) == 0 {
+            continue;
+        }
+        let position = usize::from(unsafe { positions[histogram_index].assume_init() });
+        if position != target {
+            let moved_index = usize::from(colors[target].histogram_index);
+            colors.swap(target, position);
+            positions[histogram_index].write(target as u16);
+            positions[moved_index].write(position as u16);
+        }
+        target += 1;
     }
 }
 

@@ -2,6 +2,20 @@
 
 All notable changes to wtfgif are documented here.
 
+## 2.4.5 - 2026-08-05
+
+- Speed up the arbitrary-RGBA quality planner by reusing one exact palette
+  lookup, clearing only occupied 4-bit histogram cells, and replacing the
+  4-bit histogram comparison sort with an allocation-free linear permutation.
+  Palette selection, transparency, indexed pixels, GIF bytes, and quality are
+  unchanged.
+- Fresh receipts on the real eight-frame 128×128 fixture are 198.18×
+  initialized, 33.79× for the first real encode after initialization, and
+  24.16× across 20 strict-cold encode processes. Opaque input measured
+  191.26× initialized; the 512×512×10 stress fixture measured 1,123.59×.
+  The real output remains 149,601 bytes at 34.12 dB PSNR; stress remains
+  2,973,381 bytes at 26.12 dB.
+
 ## 2.4.4 - 2026-08-05
 
 - Simplify the mixed-alpha histogram dispatch in the arbitrary-RGBA quality
