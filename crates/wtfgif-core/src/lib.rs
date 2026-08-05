@@ -6301,20 +6301,17 @@ fn add_quality_histogram_u32_pair_with_alpha<const BITS: usize>(
 ) -> bool {
     let first_transparent = ((packed0 >> 24) as u8) < alpha_threshold;
     let second_transparent = ((packed1 >> 24) as u8) < alpha_threshold;
-    match (first_transparent, second_transparent) {
-        (false, false) => {
-            add_quality_histogram_u32_pair::<BITS>(histogram, packed0, packed1);
-            false
-        }
-        (false, true) => {
-            add_quality_histogram_u32_bits_const::<BITS>(histogram, packed0);
-            true
-        }
-        (true, false) => {
+    if first_transparent {
+        if !second_transparent {
             add_quality_histogram_u32_bits_const::<BITS>(histogram, packed1);
-            true
         }
-        (true, true) => true,
+        true
+    } else if second_transparent {
+        add_quality_histogram_u32_bits_const::<BITS>(histogram, packed0);
+        true
+    } else {
+        add_quality_histogram_u32_pair::<BITS>(histogram, packed0, packed1);
+        false
     }
 }
 

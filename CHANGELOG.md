@@ -2,6 +2,17 @@
 
 All notable changes to wtfgif are documented here.
 
+## 2.4.4 - 2026-08-05
+
+- Simplify the mixed-alpha histogram dispatch in the arbitrary-RGBA quality
+  encoder without changing palette selection, transparency, indexed pixels, or
+  GIF bytes.
+- Fresh receipts on the real eight-frame 128×128 fixture are 208.80×
+  initialized, 32.26× for the first real encode after initialization, and
+  23.47× across ten strict-cold encode processes. The 512×512×10 stress
+  fixture measured 1,095.80× initialized; output bytes and PSNR remain
+  149,601 / 34.12 dB on the real fixture and 2,973,381 / 26.12 dB on stress.
+
 ## 2.4.2 - 2026-08-05
 
 - Reuse one prepared Wasm encoder-memory binding across RGBA and indexed encode
