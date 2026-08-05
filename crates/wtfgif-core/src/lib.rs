@@ -5817,7 +5817,10 @@ fn index_rgba_frames_quality(
 fn index_rgba_frames_quality_result(rgba_stream: &[u8], alpha_threshold: u8) -> QualityIndexResult {
     let pixel_count = rgba_stream.len() / 4;
     if pixel_count <= QUALITY_LOW_RES_PIXEL_LIMIT {
-        return if alpha_threshold == 0 {
+        let all_opaque = alpha_threshold == 0
+            || (rgba_stream_samples_opaque(rgba_stream, alpha_threshold)
+                && !rgba_stream_has_transparent_pixels(rgba_stream, alpha_threshold));
+        return if all_opaque {
             index_rgba_frames_quality_low_res::<false>(rgba_stream, alpha_threshold)
         } else {
             index_rgba_frames_quality_low_res::<true>(rgba_stream, alpha_threshold)
@@ -7016,24 +7019,52 @@ fn build_quality_index_plan_from_colors(
                     if candidate != u8::MAX {
                         usize::from(candidate)
                     } else {
-                        usize::from(initial_tree.nearest_with_hint_split(
-                            color.red,
-                            color.green,
-                            color.blue,
-                            previous_hint,
-                        ))
+                        usize::from(match previous_hint {
+                            Some((hint_index, hint_color)) => initial_tree.nearest_with_seed_split(
+                                color.red,
+                                color.green,
+                                color.blue,
+                                hint_index,
+                                palette_color_distance(
+                                    hint_color,
+                                    color.red,
+                                    color.green,
+                                    color.blue,
+                                ),
+                            ),
+                            None => initial_tree.nearest_with_hint_split(
+                                color.red,
+                                color.green,
+                                color.blue,
+                                None,
+                            ),
+                        })
                     }
                 } else {
                     let rgb = rgb_key(color.red, color.green, color.blue);
                     if let Some(index) = palette_lookup.get(rgb) {
                         usize::from(index)
                     } else {
-                        usize::from(initial_tree.nearest_with_hint_split(
-                            color.red,
-                            color.green,
-                            color.blue,
-                            previous_hint,
-                        ))
+                        usize::from(match previous_hint {
+                            Some((hint_index, hint_color)) => initial_tree.nearest_with_seed_split(
+                                color.red,
+                                color.green,
+                                color.blue,
+                                hint_index,
+                                palette_color_distance(
+                                    hint_color,
+                                    color.red,
+                                    color.green,
+                                    color.blue,
+                                ),
+                            ),
+                            None => initial_tree.nearest_with_hint_split(
+                                color.red,
+                                color.green,
+                                color.blue,
+                                None,
+                            ),
+                        })
                     }
                 };
                 previous_hint = Some((index as u8, palette[index]));
@@ -7070,24 +7101,52 @@ fn build_quality_index_plan_from_colors(
                     if candidate != u8::MAX {
                         usize::from(candidate)
                     } else {
-                        usize::from(initial_tree.nearest_with_hint_split(
-                            color.red,
-                            color.green,
-                            color.blue,
-                            previous_hint,
-                        ))
+                        usize::from(match previous_hint {
+                            Some((hint_index, hint_color)) => initial_tree.nearest_with_seed_split(
+                                color.red,
+                                color.green,
+                                color.blue,
+                                hint_index,
+                                palette_color_distance(
+                                    hint_color,
+                                    color.red,
+                                    color.green,
+                                    color.blue,
+                                ),
+                            ),
+                            None => initial_tree.nearest_with_hint_split(
+                                color.red,
+                                color.green,
+                                color.blue,
+                                None,
+                            ),
+                        })
                     }
                 } else {
                     let rgb = rgb_key(color.red, color.green, color.blue);
                     if let Some(index) = palette_lookup.get(rgb) {
                         usize::from(index)
                     } else {
-                        usize::from(initial_tree.nearest_with_hint_split(
-                            color.red,
-                            color.green,
-                            color.blue,
-                            previous_hint,
-                        ))
+                        usize::from(match previous_hint {
+                            Some((hint_index, hint_color)) => initial_tree.nearest_with_seed_split(
+                                color.red,
+                                color.green,
+                                color.blue,
+                                hint_index,
+                                palette_color_distance(
+                                    hint_color,
+                                    color.red,
+                                    color.green,
+                                    color.blue,
+                                ),
+                            ),
+                            None => initial_tree.nearest_with_hint_split(
+                                color.red,
+                                color.green,
+                                color.blue,
+                                None,
+                            ),
+                        })
                     }
                 };
                 previous_hint = Some((index as u8, palette[index]));
@@ -7115,9 +7174,9 @@ fn build_quality_index_plan_from_colors(
         if palette_changed {
             // Representative updates do not change the palette indices or
             // the tree's membership. Recolor the existing topology instead
-            // of selecting every median a second time. This refinement uses
-            // split-plane search, so subtree bounds are not needed here.
-            initial_tree.recolor_without_bounds(&palette);
+            // of selecting every median a second time. Recompute exact
+            // subtree bounds so refinement can prune on all three channels.
+            initial_tree.recolor(&palette);
             for color in &colors {
                 // The first-pass assignment is a much tighter exact seed
                 // than a coarse cell-center lookup after representatives move
@@ -7125,11 +7184,17 @@ fn build_quality_index_plan_from_colors(
                 // final nearest color, so this changes no output or tie rule.
                 let hint_index = histogram_to_palette[usize::from(color.histogram_index)];
                 histogram_to_palette[usize::from(color.histogram_index)] = initial_tree
-                    .nearest_with_hint_split(
+                    .nearest_with_seed_bounds(
                         color.red,
                         color.green,
                         color.blue,
-                        Some((hint_index, palette[usize::from(hint_index)])),
+                        hint_index,
+                        palette_color_distance(
+                            palette[usize::from(hint_index)],
+                            color.red,
+                            color.green,
+                            color.blue,
+                        ),
                     );
             }
         }
@@ -7625,6 +7690,32 @@ fn rgba_stream_has_transparent_pixels(rgba_stream: &[u8], alpha_threshold: u8) -
     }
 }
 
+#[inline(always)]
+fn rgba_stream_samples_opaque(rgba_stream: &[u8], alpha_threshold: u8) -> bool {
+    if alpha_threshold == 0 {
+        return true;
+    }
+    let pixel_count = rgba_stream.len() / 4;
+    if pixel_count == 0 {
+        return true;
+    }
+    const MAX_SAMPLE_COUNT: usize = 32;
+    let sample_count = pixel_count.min(MAX_SAMPLE_COUNT);
+    let last_pixel = pixel_count - 1;
+    let pointer = rgba_stream.as_ptr();
+    for sample in 0..sample_count {
+        let pixel_index = if sample_count == 1 {
+            0
+        } else {
+            sample * last_pixel / (sample_count - 1)
+        };
+        if unsafe { *pointer.add(pixel_index * 4 + 3) } < alpha_threshold {
+            return false;
+        }
+    }
+    true
+}
+
 fn index_rgba_frames_332(
     rgba_stream: &[u8],
     alpha_threshold: u8,
@@ -7860,7 +7951,6 @@ impl PaletteKdTree {
     /// The retained topology supplies traversal order; bounds are recomputed
     /// from the current colors so pruning remains exact even when a
     /// representative crosses an old split plane.
-    #[cfg(all(test, not(feature = "encode-only")))]
     fn recolor(&mut self, palette_rgb: &[u32]) {
         fn visit(
             nodes: &mut [PaletteKdNode],
@@ -7906,21 +7996,6 @@ impl PaletteKdTree {
 
         if self.root != PALETTE_KD_EMPTY {
             visit(&mut self.nodes, self.root, palette_rgb);
-        }
-    }
-
-    #[inline]
-    fn recolor_without_bounds(&mut self, palette_rgb: &[u32]) {
-        for node in &mut self.nodes {
-            let color = palette_rgb[usize::from(node.palette_index)];
-            node.red = (color >> 16) as u8;
-            node.green = (color >> 8) as u8;
-            node.blue = color as u8;
-            node.split = match node.axis {
-                0 => node.red,
-                1 => node.green,
-                _ => node.blue,
-            };
         }
     }
 
@@ -8062,6 +8137,30 @@ impl PaletteKdTree {
     #[inline(always)]
     fn nearest_with_hint_split(&self, r: u8, g: u8, b: u8, hint: Option<(u8, u32)>) -> u8 {
         self.nearest_with_hint_impl::<false>(r, g, b, hint)
+    }
+
+    #[inline(always)]
+    fn nearest_with_seed_split(
+        &self,
+        r: u8,
+        g: u8,
+        b: u8,
+        best_index: u8,
+        best_distance: u32,
+    ) -> u8 {
+        self.nearest_with_seed::<false>(r, g, b, best_index, best_distance)
+    }
+
+    #[inline(always)]
+    fn nearest_with_seed_bounds(
+        &self,
+        r: u8,
+        g: u8,
+        b: u8,
+        best_index: u8,
+        best_distance: u32,
+    ) -> u8 {
+        self.nearest_with_seed::<true>(r, g, b, best_index, best_distance)
     }
 
     #[inline(always)]
@@ -9980,6 +10079,22 @@ impl DirectGifSubblockWriter<'_> {
                 self.write_byte(value as u8);
                 value >>= 8;
             }
+            return;
+        }
+        if length == 8 {
+            // The common literal packer writes complete eight-byte chunks.
+            // Store them directly when the chunk stays inside the current
+            // GIF sub-block; crossing a boundary still uses the byte-wise
+            // fallback above so the length marker cannot be overwritten.
+            unsafe {
+                std::ptr::write_unaligned(
+                    self.output.as_mut_ptr().add(self.position).cast::<u64>(),
+                    value.to_le(),
+                );
+            }
+            self.position += 8;
+            self.block_remaining -= 8;
+            self.raw_position += 8;
             return;
         }
         let bytes = value.to_le_bytes();

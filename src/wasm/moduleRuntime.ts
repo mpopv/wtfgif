@@ -73,16 +73,21 @@ function isModuleMissing(error: unknown): boolean {
 
 function requireCandidate(request: string): unknown | null {
 	if (!synchronousRequire) return null;
-	let resolved: string;
 	try {
-		resolved = synchronousRequire.resolve(request);
+		return synchronousRequire(request);
 	} catch (error) {
-		if (isModuleMissing(error)) return null;
+		if (!isModuleMissing(error)) throw error;
+		// A missing candidate and a candidate whose dependency failed both
+		// surface as MODULE_NOT_FOUND from require(). Resolve only on that
+		// slow/error path so an existing Wasm binding avoids two loader calls.
+		try {
+			synchronousRequire.resolve(request);
+		} catch (resolveError) {
+			if (isModuleMissing(resolveError)) return null;
+			throw resolveError;
+		}
 		throw error;
 	}
-	// Resolve first so a missing candidate can be distinguished from a
-	// candidate that exists but throws while loading one of its dependencies.
-	return synchronousRequire(resolved);
 }
 
 export interface WasmModuleRuntime<T> {
