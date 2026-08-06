@@ -7291,29 +7291,67 @@ fn build_quality_index_plan_from_colors(
             *slot = position as u16;
         }
         let palette_positions = &mut palette_positions[..colors.len()];
-        if colors
-            .iter()
-            .all(|color| quantized_color_count_u64(color.count) < QUANTIZED_SORT_COUNT_LIMIT)
+        #[cfg(target_arch = "wasm32")]
         {
-            let order = |position: &u16| {
-                let color = &colors[usize::from(*position)];
-                ((QUANTIZED_SORT_COUNT_LIMIT - 1 - quantized_color_count_u64(color.count)) << 16)
-                    | u64::from(color.histogram_index)
-            };
-            if colors.len() > palette_len {
-                palette_positions.select_nth_unstable_by_key(palette_len - 1, order);
-                palette_positions[..palette_len].sort_unstable_by_key(order);
-            } else {
-                palette_positions.sort_unstable_by_key(order);
+            let maximum_count = colors.iter().map(|color| color.count).max().unwrap_or(0);
+            let passes = (u32::BITS - maximum_count.leading_zeros()).div_ceil(8);
+            let mut scratch = [0u16; QUALITY_DOMINANT_COLOR_LIMIT];
+            for pass in 0..passes {
+                let shift = pass * 8;
+                let (source, destination): (&[u16], &mut [u16]) = if pass & 1 == 0 {
+                    (&*palette_positions, &mut scratch[..colors.len()])
+                } else {
+                    (&scratch[..colors.len()], &mut *palette_positions)
+                };
+                let mut frequencies = [0u16; 256];
+                for &position in source {
+                    let digit = (colors[usize::from(position)].count >> shift) as u8;
+                    frequencies[usize::from(digit)] += 1;
+                }
+                let mut offsets = [0u16; 256];
+                let mut offset = 0u16;
+                for digit in (0..256).rev() {
+                    offsets[digit] = offset;
+                    offset += frequencies[digit];
+                }
+                for &position in source {
+                    let digit = (colors[usize::from(position)].count >> shift) as u8;
+                    let target = &mut offsets[usize::from(digit)];
+                    destination[usize::from(*target)] = position;
+                    *target += 1;
+                }
             }
-        } else {
-            palette_positions.sort_unstable_by_key(|position| {
-                let color = &colors[usize::from(*position)];
-                (
-                    std::cmp::Reverse(quantized_color_count_u64(color.count)),
-                    color.histogram_index,
-                )
-            });
+            if passes & 1 != 0 {
+                palette_positions.copy_from_slice(&scratch[..palette_positions.len()]);
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if colors
+                .iter()
+                .all(|color| quantized_color_count_u64(color.count) < QUANTIZED_SORT_COUNT_LIMIT)
+            {
+                let order = |position: &u16| {
+                    let color = &colors[usize::from(*position)];
+                    ((QUANTIZED_SORT_COUNT_LIMIT - 1 - quantized_color_count_u64(color.count))
+                        << 16)
+                        | u64::from(color.histogram_index)
+                };
+                if colors.len() > palette_len {
+                    palette_positions.select_nth_unstable_by_key(palette_len - 1, order);
+                    palette_positions[..palette_len].sort_unstable_by_key(order);
+                } else {
+                    palette_positions.sort_unstable_by_key(order);
+                }
+            } else {
+                palette_positions.sort_unstable_by_key(|position| {
+                    let color = &colors[usize::from(*position)];
+                    (
+                        std::cmp::Reverse(quantized_color_count_u64(color.count)),
+                        color.histogram_index,
+                    )
+                });
+            }
         }
         let mut palette = Vec::with_capacity(palette_len + usize::from(has_transparent_pixels));
         for &position in &palette_positions[..palette_len] {
