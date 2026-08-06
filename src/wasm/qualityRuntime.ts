@@ -6,10 +6,12 @@ import {
 	getWasmStatus as getSharedWasmStatus,
 	type WasmWebBinding,
 } from "./moduleRuntime";
+import { loadRawQualityNode } from "./rawQuality";
 
 const runtime = createWasmModuleRuntime<WasmQualityCoreModule>({
 	name: "wtfgif quality encode-core",
 	isModule: isWasmQualityCoreModule,
+	loadNode: loadRawQualityNode,
 	paths: {
 		nodeScalar: [
 			"./wasm-quality/wtfgif_core.js",

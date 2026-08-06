@@ -44,6 +44,7 @@ interface WasmRuntimeOptions<T> {
 	name: string;
 	paths: WasmRuntimePaths;
 	isModule: (value: unknown) => value is T;
+	loadNode?: () => T | undefined;
 }
 
 type NodeModuleBuiltin = {
@@ -117,6 +118,8 @@ export function createWasmModuleRuntime<T>(
 	};
 
 	const loadNode = (): T | null => {
+		const custom = options.loadNode?.();
+		if (custom !== undefined) return validate(custom);
 		const groups = supportsWasmSimd()
 			? [options.paths.nodeSimd, options.paths.nodeScalar]
 			: [options.paths.nodeScalar];

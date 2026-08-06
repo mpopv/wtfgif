@@ -2,6 +2,15 @@
 
 All notable changes to wtfgif are documented here.
 
+## 2.4.16 - 2026-08-06
+
+- Load the quality encoder's Wasm binary directly on Node instead of paying for
+  generated binding bootstrap code. Browser loading, public APIs, GIF bytes,
+  decoded pixels, and quality remain unchanged.
+- Fresh receipts: **24.30x strict-cold** (136.301 ms image-q + omggif vs
+  5.610 ms wtfgif) and **32.94x on the first real encode after initialization**
+  (123.523 ms vs 3.750 ms) on the eight-frame 128x128 MakeEmoji fixture.
+
 ## 2.4.15 - 2026-08-05
 
 - Reduce Wasm quality-quantization working memory and avoid clearing reusable

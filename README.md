@@ -87,7 +87,7 @@ image loading are not.
 
 | Real-image quality encode | Baseline | wtfgif | Speedup | wtfgif output |
 | --- | ---: | ---: | ---: | ---: |
-| Adaptive global palette | 99.338 ms | 0.419 ms | **237.18×** | 149,601 bytes / 34.12 dB |
+| Adaptive global palette | 93.867 ms | 0.396 ms | **237.11×** | 149,601 bytes / 34.12 dB |
 
 The baseline is `image-q` plus omggif with balanced LZW. Both implementations
 create an adaptive global palette and map every RGBA pixel. WebAssembly is
@@ -98,7 +98,7 @@ quality-first RGBA pipeline; there is no fixed-palette or skipped-pixel
 shortcut in the race.
 
 The strict first-real-encode boundary is separate: twenty fresh processes measured
-138.182 ms for image-q + omggif versus 4.083 ms for wtfgif (**33.84×**). There
+123.523 ms for image-q + omggif versus 3.750 ms for wtfgif (**32.94×**). There
 are no timed warmup encodes in this receipt. The remaining gap is portable
 Wasm's first-call lazy compilation, not a retained result cache.
 Reproduce it with:
@@ -126,8 +126,8 @@ The same run with every source pixel treated as opaque
 
 For a true no-cache measurement, run `BENCH_WTFFIG_ENTRY=encode BENCH_ITERATIONS=20 node scripts/bench-cold-rgba.mjs`; it starts a new
 Node process for every sample and includes imports, Wasm initialization, and
-the complete encode. The current twenty-process median is 153.365 ms for the
-baseline versus 6.763 ms for wtfgif's encode entry (**22.68×**). Cold process startup is
+the complete encode. The current twenty-process median is 136.301 ms for the
+baseline versus 5.610 ms for wtfgif's encode entry (**24.30×**). Cold process startup is
 a separate boundary; initialize Wasm during page or worker startup for the hot
 numbers above:
 
