@@ -5834,7 +5834,6 @@ fn index_rgba_frames_quality_result(rgba_stream: &[u8], alpha_threshold: u8) -> 
     index_rgba_frames_quality_high_res(rgba_stream, alpha_threshold, all_opaque)
 }
 
-#[inline(never)]
 fn index_rgba_frames_quality_low_res<const HAS_TRANSPARENT: bool>(
     rgba_stream: &[u8],
     alpha_threshold: u8,

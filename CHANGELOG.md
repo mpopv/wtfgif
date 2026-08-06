@@ -2,6 +2,12 @@
 
 All notable changes to wtfgif are documented here.
 
+## 2.4.8 - 2026-08-05
+
+- Remove an unnecessary non-inlining barrier from the low-resolution
+  arbitrary-RGBA quality planner, leaving palette selection, transparency,
+  indexed pixels, GIF bytes, and decoded quality unchanged.
+
 ## 2.4.7 - 2026-08-05
 
 - Speed up the high-resolution arbitrary-RGBA quality histogram by updating
