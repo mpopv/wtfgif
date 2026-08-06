@@ -6521,6 +6521,75 @@ fn add_quality_histogram_u32_pair_record_opaque<const BITS: usize>(
     );
 }
 
+#[inline(always)]
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+unsafe fn add_quality_histogram_u32_four_with_alpha_simd<const BITS: usize>(
+    histogram: &mut [RgbHistogramBin32],
+    rgba_pointer: *const u8,
+    alpha_threshold: u8,
+) -> bool {
+    use core::arch::wasm32::{
+        i32x4_extract_lane, u32x4_lt, u32x4_shl, u32x4_shr, u32x4_splat, v128_and, v128_load,
+        v128_or,
+    };
+
+    let pixels = v128_load(rgba_pointer.cast());
+    let indices = if BITS == 5 {
+        v128_or(
+            v128_or(
+                v128_and(u32x4_shl(pixels, 7), u32x4_splat(0x7c00)),
+                v128_and(u32x4_shr(pixels, 6), u32x4_splat(0x03e0)),
+            ),
+            v128_and(u32x4_shr(pixels, 19), u32x4_splat(0x001f)),
+        )
+    } else {
+        v128_or(
+            v128_or(
+                v128_and(u32x4_shl(pixels, 4), u32x4_splat(0x0f00)),
+                v128_and(u32x4_shr(pixels, 8), u32x4_splat(0x00f0)),
+            ),
+            v128_and(u32x4_shr(pixels, 20), u32x4_splat(0x000f)),
+        )
+    };
+    let transparent = u32x4_lt(
+        u32x4_shr(pixels, 24),
+        u32x4_splat(u32::from(alpha_threshold)),
+    );
+    let packed0 = i32x4_extract_lane::<0>(pixels) as u32;
+    let packed1 = i32x4_extract_lane::<1>(pixels) as u32;
+    let packed2 = i32x4_extract_lane::<2>(pixels) as u32;
+    let packed3 = i32x4_extract_lane::<3>(pixels) as u32;
+    let index0 = i32x4_extract_lane::<0>(indices) as usize;
+    let index1 = i32x4_extract_lane::<1>(indices) as usize;
+    let index2 = i32x4_extract_lane::<2>(indices) as usize;
+    let index3 = i32x4_extract_lane::<3>(indices) as usize;
+    let transparent0 = i32x4_extract_lane::<0>(transparent) != 0;
+    let transparent1 = i32x4_extract_lane::<1>(transparent) != 0;
+    let transparent2 = i32x4_extract_lane::<2>(transparent) != 0;
+    let transparent3 = i32x4_extract_lane::<3>(transparent) != 0;
+    if !transparent0 && !transparent1 {
+        add_quality_histogram_u32_pair_preindexed(histogram, packed0, packed1, index0, index1);
+    } else {
+        if !transparent0 {
+            add_quality_histogram_u32_bits_indexed(histogram, packed0, index0);
+        }
+        if !transparent1 {
+            add_quality_histogram_u32_bits_indexed(histogram, packed1, index1);
+        }
+    }
+    if !transparent2 && !transparent3 {
+        add_quality_histogram_u32_pair_preindexed(histogram, packed2, packed3, index2, index3);
+    } else {
+        if !transparent2 {
+            add_quality_histogram_u32_bits_indexed(histogram, packed2, index2);
+        }
+        if !transparent3 {
+            add_quality_histogram_u32_bits_indexed(histogram, packed3, index3);
+        }
+    }
+    transparent0 || transparent1 || transparent2 || transparent3
+}
+
 #[inline(never)]
 fn accumulate_quality_histogram_u32_bits_remaining_mixed<const BITS: usize>(
     histogram: &mut [RgbHistogramBin32],
@@ -6531,6 +6600,25 @@ fn accumulate_quality_histogram_u32_bits_remaining_mixed<const BITS: usize>(
     let rgba_pointer = rgba_stream.as_ptr();
     let mut has_transparent_pixels = false;
     let mut offset = start_offset;
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    while offset + 32 <= rgba_stream.len() {
+        has_transparent_pixels |= unsafe {
+            add_quality_histogram_u32_four_with_alpha_simd::<BITS>(
+                histogram,
+                rgba_pointer.add(offset),
+                alpha_threshold,
+            )
+        };
+        has_transparent_pixels |= unsafe {
+            add_quality_histogram_u32_four_with_alpha_simd::<BITS>(
+                histogram,
+                rgba_pointer.add(offset + 16),
+                alpha_threshold,
+            )
+        };
+        offset += 32;
+    }
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
     while offset + 32 <= rgba_stream.len() {
         let (packed0, packed1) = unsafe { read_rgba_pair(rgba_pointer, offset) };
         let (packed2, packed3) = unsafe { read_rgba_pair(rgba_pointer, offset + 8) };
@@ -6594,7 +6682,7 @@ fn accumulate_quality_histogram_u32_bits_remaining<
         );
         return false;
     }
-    if BITS == 5 && !RECORD_INDICES {
+    if !RECORD_INDICES {
         return accumulate_quality_histogram_u32_bits_remaining_mixed::<BITS>(
             histogram,
             rgba_stream,
@@ -8146,16 +8234,14 @@ struct PaletteKdNode {
     green: u8,
     blue: u8,
     palette_index: u8,
-    axis: u8,
-    split: u8,
     min_red: u8,
     min_green: u8,
     min_blue: u8,
     max_red: u8,
     max_green: u8,
     max_blue: u8,
-    left: u16,
     right: u16,
+    escape: u16,
 }
 
 const PALETTE_KD_EMPTY: u16 = u16::MAX;
@@ -8237,8 +8323,6 @@ impl PaletteKdTree {
                 component(palette_rgb[*left], axis).cmp(&component(palette_rgb[*right], axis))
             });
             let palette_index = *pivot;
-            let left = build(&mut indices[..midpoint], palette_rgb, nodes);
-            let right = build(&mut indices[midpoint + 1..], palette_rgb, nodes);
             let node_index = nodes.len() as u16;
             let color = palette_rgb[palette_index];
             nodes.push(PaletteKdNode {
@@ -8246,17 +8330,22 @@ impl PaletteKdTree {
                 green: (color >> 8) as u8,
                 blue: color as u8,
                 palette_index: palette_index as u8,
-                axis,
-                split: component(color, axis),
                 min_red,
                 min_green,
                 min_blue,
                 max_red,
                 max_green,
                 max_blue,
-                left,
-                right,
+                right: PALETTE_KD_EMPTY,
+                escape: PALETTE_KD_EMPTY,
             });
+            let left = build(&mut indices[..midpoint], palette_rgb, nodes);
+            debug_assert!(left == PALETTE_KD_EMPTY || left == node_index + 1);
+            let right = build(&mut indices[midpoint + 1..], palette_rgb, nodes);
+            let escape = nodes.len() as u16;
+            let node = &mut nodes[usize::from(node_index)];
+            node.right = right;
+            node.escape = escape;
             node_index
         }
 
@@ -8290,9 +8379,20 @@ impl PaletteKdTree {
             palette_rgb: &[u32],
         ) -> ([u8; 3], [u8; 3]) {
             let index = usize::from(node_index);
-            let (left, right, palette_index, axis) = {
+            let (right, escape, palette_index) = {
                 let node = &nodes[index];
-                (node.left, node.right, node.palette_index, node.axis)
+                (node.right, node.escape, node.palette_index)
+            };
+            let left_candidate = node_index + 1;
+            let left_limit = if right == PALETTE_KD_EMPTY {
+                escape
+            } else {
+                right
+            };
+            let left = if left_candidate < left_limit {
+                left_candidate
+            } else {
+                PALETTE_KD_EMPTY
             };
             let color = palette_rgb[usize::from(palette_index)];
             let current = [(color >> 16) as u8, (color >> 8) as u8, color as u8];
@@ -8316,7 +8416,6 @@ impl PaletteKdTree {
             node.red = current[0];
             node.green = current[1];
             node.blue = current[2];
-            node.split = current[usize::from(axis)];
             node.min_red = min[0];
             node.min_green = min[1];
             node.min_blue = min[2];
@@ -8535,18 +8634,47 @@ impl PaletteKdTree {
         let r = i32::from(r);
         let g = i32::from(g);
         let b = i32::from(b);
-        // A balanced 256-entry tree has depth at most eight; one slot per
-        // level is enough for pending far branches without zeroing a larger
-        // stack for every histogram color lookup.
-        // The stack entries are written before they are read.  Avoiding a
-        // per-lookup zeroing pass matters here because the median-cut mapper
-        // performs one nearest-color search for every occupied histogram bin.
-        let mut stack = [std::mem::MaybeUninit::<(u16, u32)>::uninit(); 8];
-        let mut stack_len = 0usize;
-        let mut next = self.root;
-        while next != PALETTE_KD_EMPTY {
-            let node_index = usize::from(next);
+        // Nodes are in preorder and every node records the first index after
+        // its subtree. Exact RGB bounds can therefore skip an entire branch
+        // without writing a pending-branch stack for every histogram cell.
+        let mut next = usize::from(self.root);
+        while next < self.nodes.len() {
+            let node_index = next;
             let node = unsafe { *self.nodes.get_unchecked(node_index) };
+            let min_red = i32::from(node.min_red);
+            let min_green = i32::from(node.min_green);
+            let min_blue = i32::from(node.min_blue);
+            let max_red = i32::from(node.max_red);
+            let max_green = i32::from(node.max_green);
+            let max_blue = i32::from(node.max_blue);
+            let red_bound = if r < min_red {
+                min_red - r
+            } else if r > max_red {
+                r - max_red
+            } else {
+                0
+            };
+            let green_bound = if g < min_green {
+                min_green - g
+            } else if g > max_green {
+                g - max_green
+            } else {
+                0
+            };
+            let blue_bound = if b < min_blue {
+                min_blue - b
+            } else if b > max_blue {
+                b - max_blue
+            } else {
+                0
+            };
+            let subtree_distance = (red_bound * red_bound
+                + green_bound * green_bound
+                + blue_bound * blue_bound) as u32;
+            if subtree_distance > best_distance {
+                next = usize::from(node.escape);
+                continue;
+            }
             let dr = r - i32::from(node.red);
             let dg = g - i32::from(node.green);
             let db = b - i32::from(node.blue);
@@ -8557,75 +8685,7 @@ impl PaletteKdTree {
                 best_distance = node_distance;
                 best_index = node.palette_index;
             }
-            let value = match node.axis {
-                0 => r,
-                1 => g,
-                _ => b,
-            };
-            let split = i32::from(node.split);
-            let (near, far) = if value < split {
-                (node.left, node.right)
-            } else {
-                (node.right, node.left)
-            };
-            if far != PALETTE_KD_EMPTY {
-                let far_distance = if USE_BOUNDS {
-                    // Each node carries the exact RGB bounds of its subtree.
-                    // The box distance is a stronger lower bound than the
-                    // split plane when a far subtree is separated on another
-                    // channel.
-                    let far_node = unsafe { *self.nodes.get_unchecked(usize::from(far)) };
-                    let min_red = i32::from(far_node.min_red);
-                    let min_green = i32::from(far_node.min_green);
-                    let min_blue = i32::from(far_node.min_blue);
-                    let max_red = i32::from(far_node.max_red);
-                    let max_green = i32::from(far_node.max_green);
-                    let max_blue = i32::from(far_node.max_blue);
-                    let red_distance = if r < min_red {
-                        min_red - r
-                    } else if r > max_red {
-                        r - max_red
-                    } else {
-                        0
-                    };
-                    let green_distance = if g < min_green {
-                        min_green - g
-                    } else if g > max_green {
-                        g - max_green
-                    } else {
-                        0
-                    };
-                    let blue_distance = if b < min_blue {
-                        min_blue - b
-                    } else if b > max_blue {
-                        b - max_blue
-                    } else {
-                        0
-                    };
-                    (red_distance * red_distance
-                        + green_distance * green_distance
-                        + blue_distance * blue_distance) as u32
-                } else {
-                    let delta = (value - split).unsigned_abs();
-                    delta * delta
-                };
-                if far_distance <= best_distance {
-                    debug_assert!(stack_len < stack.len());
-                    stack[stack_len].write((far, far_distance));
-                    stack_len += 1;
-                }
-            }
-            next = near;
-            if next == PALETTE_KD_EMPTY {
-                while stack_len > 0 {
-                    stack_len -= 1;
-                    let (far_index, far_distance) = unsafe { stack[stack_len].assume_init() };
-                    if far_distance <= best_distance {
-                        next = far_index;
-                        break;
-                    }
-                }
-            }
+            next += 1;
         }
         best_index
     }
@@ -10838,6 +10898,64 @@ fn exact_palette_index_packed_cached(
 }
 
 #[inline(always)]
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+unsafe fn mapped_quality_four_pixels_simd<const BITS: usize, const HAS_TRANSPARENT: bool>(
+    rgba_pointer: *const u8,
+    alpha_threshold: u8,
+    transparent_index: u8,
+    histogram_to_palette_pointer: *const u8,
+) -> u32 {
+    use core::arch::wasm32::{
+        i32x4_extract_lane, u32x4_lt, u32x4_shl, u32x4_shr, u32x4_splat, v128_and, v128_load,
+        v128_or,
+    };
+
+    let pixels = v128_load(rgba_pointer.cast());
+    let indices = if BITS == 5 {
+        v128_or(
+            v128_or(
+                v128_and(u32x4_shl(pixels, 7), u32x4_splat(0x7c00)),
+                v128_and(u32x4_shr(pixels, 6), u32x4_splat(0x03e0)),
+            ),
+            v128_and(u32x4_shr(pixels, 19), u32x4_splat(0x001f)),
+        )
+    } else {
+        v128_or(
+            v128_or(
+                v128_and(u32x4_shl(pixels, 4), u32x4_splat(0x0f00)),
+                v128_and(u32x4_shr(pixels, 8), u32x4_splat(0x00f0)),
+            ),
+            v128_and(u32x4_shr(pixels, 20), u32x4_splat(0x000f)),
+        )
+    };
+    let transparent = u32x4_lt(
+        u32x4_shr(pixels, 24),
+        u32x4_splat(u32::from(alpha_threshold)),
+    );
+    let code0 = if HAS_TRANSPARENT && i32x4_extract_lane::<0>(transparent) != 0 {
+        transparent_index
+    } else {
+        *histogram_to_palette_pointer.add(i32x4_extract_lane::<0>(indices) as usize)
+    };
+    let code1 = if HAS_TRANSPARENT && i32x4_extract_lane::<1>(transparent) != 0 {
+        transparent_index
+    } else {
+        *histogram_to_palette_pointer.add(i32x4_extract_lane::<1>(indices) as usize)
+    };
+    let code2 = if HAS_TRANSPARENT && i32x4_extract_lane::<2>(transparent) != 0 {
+        transparent_index
+    } else {
+        *histogram_to_palette_pointer.add(i32x4_extract_lane::<2>(indices) as usize)
+    };
+    let code3 = if HAS_TRANSPARENT && i32x4_extract_lane::<3>(transparent) != 0 {
+        transparent_index
+    } else {
+        *histogram_to_palette_pointer.add(i32x4_extract_lane::<3>(indices) as usize)
+    };
+    u32::from_le_bytes([code0, code1, code2, code3])
+}
+
+#[inline(always)]
 #[allow(clippy::too_many_arguments)]
 fn append_nine_bit_mapped_quality_group<const BITS: usize, const HAS_TRANSPARENT: bool>(
     writer: &mut DirectGifSubblockWriter,
@@ -10850,30 +10968,53 @@ fn append_nine_bit_mapped_quality_group<const BITS: usize, const HAS_TRANSPARENT
     histogram_to_palette_pointer: *const u8,
 ) {
     let rgba_offset = pixel_index * 4;
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
     let (packed0, packed1) = unsafe { read_rgba_pair(rgba_pointer, rgba_offset) };
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
     let (packed2, packed3) = unsafe { read_rgba_pair(rgba_pointer, rgba_offset + 8) };
     let (packed4, packed5) = unsafe { read_rgba_pair(rgba_pointer, rgba_offset + 16) };
     let packed6 = u32::from_le(unsafe {
         std::ptr::read_unaligned(rgba_pointer.add(rgba_offset + 24).cast())
     });
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    let packed_codes03 = unsafe {
+        mapped_quality_four_pixels_simd::<BITS, HAS_TRANSPARENT>(
+            rgba_pointer.add(rgba_offset),
+            alpha_threshold,
+            transparent_index,
+            histogram_to_palette_pointer,
+        )
+    };
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    let code0 = packed_codes03 as u8;
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    let code1 = (packed_codes03 >> 8) as u8;
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    let code2 = (packed_codes03 >> 16) as u8;
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    let code3 = (packed_codes03 >> 24) as u8;
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
     let code0 = mapped_quality_pixel::<BITS, HAS_TRANSPARENT>(
         packed0,
         alpha_threshold,
         transparent_index,
         histogram_to_palette_pointer,
     );
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
     let code1 = mapped_quality_pixel::<BITS, HAS_TRANSPARENT>(
         packed1,
         alpha_threshold,
         transparent_index,
         histogram_to_palette_pointer,
     );
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
     let code2 = mapped_quality_pixel::<BITS, HAS_TRANSPARENT>(
         packed2,
         alpha_threshold,
         transparent_index,
         histogram_to_palette_pointer,
     );
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
     let code3 = mapped_quality_pixel::<BITS, HAS_TRANSPARENT>(
         packed3,
         alpha_threshold,

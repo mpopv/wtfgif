@@ -2,6 +2,18 @@
 
 All notable changes to wtfgif are documented here.
 
+## 3.0.2 - 2026-08-06
+
+- Vectorize mixed-alpha histogram indexing and the first four palette mappings
+  in each literal-output group on SIMD-capable Wasm runtimes.
+- Replace the per-color nearest-palette traversal stack with an exact preorder
+  tree whose subtree bounds support direct branch skipping. Palette selection,
+  GIF bytes, decoded pixels, transparency, and quality remain unchanged.
+- Fresh real-image receipts: **251.68x initialized** (94.632 ms vs 0.376 ms),
+  **57.36x first real encode after initialization** (121.707 ms vs 2.122 ms),
+  **39.20x fresh-worker operation** (135.744 ms vs 3.463 ms), and **5.42x
+  complete process wall clock** (164.648 ms vs 30.355 ms).
+
 ## 3.0.1 - 2026-08-06
 
 - Correct the cold benchmark to measure and report complete spawned-process

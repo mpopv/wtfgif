@@ -19,17 +19,17 @@ decoding, resizing, WebAssembly initialization, warmup, validation, and quality
 measurement are outside timed samples.
 
 Results below are medians from 300 samples after 40 timed-loop warmups on an
-Apple M3 Pro with Node.js 22.23.2, measured on the 3.0.1 release candidate.
+Apple M3 Pro with Node.js 22.23.2, measured on the 3.0.2 release candidate.
 
 | Implementation | Median | Speedup | Bytes | PSNR |
 | --- | ---: | ---: | ---: | ---: |
-| image-q rgbquant + omggif balanced LZW | 94.693 ms | 1.00× | 39,350 | 31.84 dB |
-| wtfgif quality/global + literal LZW | 0.422 ms | **224.39×** | 149,601 | 34.12 dB |
+| image-q rgbquant + omggif balanced LZW | 94.632 ms | 1.00× | 39,350 | 31.84 dB |
+| wtfgif quality/global + literal LZW | 0.376 ms | **251.68×** | 149,601 | 34.12 dB |
 
 This is one practical adaptive global-palette pipeline. The implementations do
 not choose identical pixels, so the table reports source-relative PSNR and
 output bytes alongside speed. The wtfgif palette is higher quality on this
-fixture while remaining 224.39× faster. Literal LZW is lossless for the
+fixture while remaining 251.68× faster. Literal LZW is lossless for the
 indexed pixels, so the speedup does not come from lowering GIF pixel quality.
 
 The quality path uses a weighted 4-bit-per-channel histogram for ordinary
@@ -67,16 +67,16 @@ BENCH_WTFFIG_ENTRY=encode BENCH_ITERATIONS=50 node scripts/bench-cold-rgba.mjs
 That run starts a fresh Node process for every sample and reports two clocks.
 The in-worker clock begins after Node boots and includes fixture loading,
 dynamic imports, Wasm initialization, palette creation, pixel mapping, and GIF
-compression. Across 120 processes its median was 134.554 ms for the baseline
-versus 3.467 ms for wtfgif (**38.81×**). The parent-observed wall clock also
-includes launching and shutting down Node: 163.195 ms versus 29.845 ms
-(**5.47×**). Node launch dominates the small wtfgif job; it is not part of a
+compression. Across 50 processes its median was 135.744 ms for the baseline
+versus 3.463 ms for wtfgif (**39.20×**). The parent-observed wall clock also
+includes launching and shutting down Node: 164.648 ms versus 30.355 ms
+(**5.42×**). Node launch dominates the small wtfgif job; it is not part of a
 browser encode after page-load initialization, but it is reported rather than
 hidden.
 
 The no-warmup, initialized-first receipt is separate: 60 fresh processes each
-initialized Wasm and then timed one real encode. The median was 121.353 ms for
-image-q + omggif versus 2.172 ms for wtfgif (**55.88×**). There is no synthetic encode, retained source pixel,
+initialized Wasm and then timed one real encode. The median was 121.707 ms for
+image-q + omggif versus 2.122 ms for wtfgif (**57.36×**). There is no synthetic encode, retained source pixel,
 palette, or output result in initialization; the remaining cost is portable
 Wasm's first-call lazy compilation.
 

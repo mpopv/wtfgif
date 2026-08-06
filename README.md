@@ -57,10 +57,10 @@ sides create a palette, map every RGBA pixel, and write a valid GIF.
 
 | Boundary | image-q + omggif | wtfgif | Speedup |
 | --- | ---: | ---: | ---: |
-| Initialized encode | 94.693 ms | 0.422 ms | **224.39×** |
-| First real encode after initialization | 121.353 ms | 2.172 ms | **55.88×** |
-| Fresh worker operation | 134.554 ms | 3.467 ms | **38.81×** |
-| Complete process wall clock | 163.195 ms | 29.845 ms | **5.47×** |
+| Initialized encode | 94.632 ms | 0.376 ms | **251.68×** |
+| First real encode after initialization | 121.707 ms | 2.122 ms | **57.36×** |
+| Fresh worker operation | 135.744 ms | 3.463 ms | **39.20×** |
+| Complete process wall clock | 164.648 ms | 30.355 ms | **5.42×** |
 | Fresh worker, 10 × 512×512 stress encode | 6,171.189 ms | 28.650 ms | **215.40×** |
 | Complete stress-process wall clock | 6,211.252 ms | 58.928 ms | **105.40×** |
 
