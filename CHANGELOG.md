@@ -2,6 +2,18 @@
 
 All notable changes to wtfgif are documented here.
 
+## 2.4.7 - 2026-08-05
+
+- Speed up the high-resolution arbitrary-RGBA quality histogram by updating
+  each packed color bin with one aligned SIMD/native operation. Palette
+  selection, transparency, indexed pixels, GIF bytes, and decoded quality are
+  unchanged.
+- Fresh receipts on the real eight-frame 128x128 fixture are 224.42x
+  initialized, 34.17x for the first real encode after initialization, and
+  24.20x across 20 strict-cold encode processes. The 512x512x10 stress
+  fixture measured 1,124.24x initialized. The real output remains 149,601
+  bytes at 34.12 dB PSNR; stress remains 2,973,381 bytes at 26.12 dB.
+
 ## 2.4.6 - 2026-08-05
 
 - Tighten exact nearest-color lookup in the arbitrary-RGBA quality planner by

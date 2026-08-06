@@ -5013,7 +5013,7 @@ struct RgbHistogramBin {
     blue: u64,
 }
 
-#[repr(C)]
+#[repr(C, align(8))]
 #[derive(Clone, Copy, Default)]
 struct RgbHistogramBin32 {
     count: u32,
@@ -6183,11 +6183,55 @@ unsafe fn read_rgba_pair(pointer: *const u8, offset: usize) -> (u32, u32) {
     (packed as u32, (packed >> 32) as u32)
 }
 
-// Histogram updates hit a pseudo-random bin for each pixel. On the ARM64
-// Wasm runtime, a SIMD load/modify/store for that scattered bin costs more
-// than four scalar field updates; keep the hot update scalar even in the
-// SIMD artifact. SIMD remains enabled for contiguous alpha preflight and
-// other linear scans.
+// Histogram updates hit a pseudo-random bin for each pixel. Keep each update
+// as two adjacent packed-field operations; a SIMD load/modify/store for a
+// scattered bin is still slower on the ARM64 Wasm runtime for the common
+// split-bin case.
+#[inline(always)]
+unsafe fn add_quality_histogram_bin32(
+    bin: *mut RgbHistogramBin32,
+    count: u32,
+    red: u32,
+    green: u32,
+    blue: u32,
+) {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        use core::arch::wasm32::{u32x4, u32x4_add, v128_load, v128_store};
+
+        let current = v128_load(bin.cast());
+        let increment = u32x4(count, red, green, blue);
+        v128_store(bin.cast(), u32x4_add(current, increment));
+        return;
+    }
+    #[cfg(all(
+        not(all(target_arch = "wasm32", target_feature = "simd128")),
+        target_endian = "little"
+    ))]
+    {
+        let packed = bin.cast::<u64>();
+        // The u32 pixel limit keeps every field below 2^32, so adding the
+        // packed halves cannot carry from one field into the next.
+        let count_red =
+            std::ptr::read(packed).wrapping_add(u64::from(count) | (u64::from(red) << 32));
+        let green_blue =
+            std::ptr::read(packed.add(1)).wrapping_add(u64::from(green) | (u64::from(blue) << 32));
+        std::ptr::write(packed, count_red);
+        std::ptr::write(packed.add(1), green_blue);
+    }
+    #[cfg(all(
+        not(all(target_arch = "wasm32", target_feature = "simd128")),
+        not(target_endian = "little")
+    ))]
+    {
+        let bin = &mut *bin;
+        bin.count = bin.count.wrapping_add(count);
+        bin.red = bin.red.wrapping_add(red);
+        bin.green = bin.green.wrapping_add(green);
+        bin.blue = bin.blue.wrapping_add(blue);
+    }
+}
+
 #[inline(always)]
 fn add_quality_histogram_u32_bits_const<const BITS: usize>(
     histogram: &mut [RgbHistogramBin32],
@@ -6197,11 +6241,15 @@ fn add_quality_histogram_u32_bits_const<const BITS: usize>(
     let green = (packed >> 8) as u8;
     let blue = (packed >> 16) as u8;
     let histogram_index = quality_histogram_index_packed::<BITS>(packed);
-    let bin = unsafe { histogram.get_unchecked_mut(histogram_index) };
-    bin.count += 1;
-    bin.red += u32::from(red);
-    bin.green += u32::from(green);
-    bin.blue += u32::from(blue);
+    unsafe {
+        add_quality_histogram_bin32(
+            histogram.as_mut_ptr().add(histogram_index),
+            1,
+            u32::from(red),
+            u32::from(green),
+            u32::from(blue),
+        );
+    }
 }
 
 #[inline(always)]
@@ -6213,11 +6261,15 @@ fn add_quality_histogram_u32_bits_indexed(
     let red = u32::from(packed as u8);
     let green = u32::from((packed >> 8) as u8);
     let blue = u32::from((packed >> 16) as u8);
-    let bin = unsafe { histogram.get_unchecked_mut(histogram_index) };
-    bin.count += 1;
-    bin.red += red;
-    bin.green += green;
-    bin.blue += blue;
+    unsafe {
+        add_quality_histogram_bin32(
+            histogram.as_mut_ptr().add(histogram_index),
+            1,
+            red,
+            green,
+            blue,
+        );
+    }
 }
 
 #[inline(always)]
@@ -6236,11 +6288,9 @@ fn add_quality_histogram_u32_pair_preindexed(
     let red = u32::from(packed0 as u8) + u32::from(packed1 as u8);
     let green = u32::from((packed0 >> 8) as u8) + u32::from((packed1 >> 8) as u8);
     let blue = u32::from((packed0 >> 16) as u8) + u32::from((packed1 >> 16) as u8);
-    let bin = unsafe { histogram.get_unchecked_mut(index0) };
-    bin.count += 2;
-    bin.red += red;
-    bin.green += green;
-    bin.blue += blue;
+    unsafe {
+        add_quality_histogram_bin32(histogram.as_mut_ptr().add(index0), 2, red, green, blue);
+    }
 }
 
 #[inline(always)]
@@ -6284,11 +6334,9 @@ fn add_quality_histogram_u32_pair_indexed<const BITS: usize>(
     }
     #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
     {
-        let bin = unsafe { histogram.get_unchecked_mut(index0) };
-        bin.count += 2;
-        bin.red += red;
-        bin.green += green;
-        bin.blue += blue;
+        unsafe {
+            add_quality_histogram_bin32(histogram.as_mut_ptr().add(index0), 2, red, green, blue);
+        }
     }
 }
 
