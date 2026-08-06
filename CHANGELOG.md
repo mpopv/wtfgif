@@ -2,6 +2,12 @@
 
 All notable changes to wtfgif are documented here.
 
+## 2.4.14 - 2026-08-05
+
+- Publish the current optimized arbitrary-RGBA quality encoder build to npm.
+  API behavior, palette quality, transparency, GIF bytes, and decoded pixels
+  are unchanged from 2.4.13.
+
 ## 2.4.13 - 2026-08-05
 
 - Fold the opaque-alpha check into the high-resolution quality histogram pass,
