@@ -17,6 +17,9 @@ quality-only = ["encode-only"]
 [dependencies]
 wasm-bindgen = "0.2"
 
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-O", "--inline-max-combined-binary-size=5000"]
+
 [profile.release]
 opt-level = 3
 lto = "fat"

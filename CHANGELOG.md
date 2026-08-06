@@ -2,6 +2,19 @@
 
 All notable changes to wtfgif are documented here.
 
+## 2.4.18 - 2026-08-06
+
+- Reduce portable Wasm first-call compilation by keeping the unselected
+  median-cut palette branch out of the normal quality encoder body and tuning
+  the release optimizer's inlining budget. GIF bytes, decoded pixels,
+  transparency, and quality are unchanged.
+- Fresh receipts on the arbitrary-image contract: **28.40x strict-cold** on
+  eight real 128x128 frames (136.904 ms baseline vs 4.821 ms wtfgif),
+  **41.86x** for the first real encode after initialization (123.732 ms vs
+  2.956 ms), **217.18x initialized** (95.115 ms vs 0.438 ms), and **201.62x
+  strict-cold** on the 512x512x10 stress fixture (6,220.683 ms vs 30.853 ms).
+  Outputs remain byte-for-byte expected at 149,601 and 2,973,381 bytes.
+
 ## 2.4.17 - 2026-08-06
 
 - Reduce Wasm quality-encoder call overhead in the adaptive palette lookup

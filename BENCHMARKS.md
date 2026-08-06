@@ -23,13 +23,13 @@ Apple M3 Pro with Node.js 22.23.2, measured on the current optimized tree.
 
 | Implementation | Median | Speedup | Bytes | PSNR |
 | --- | ---: | ---: | ---: | ---: |
-| image-q rgbquant + omggif balanced LZW | 99.338 ms | 1.00× | 39,350 | 31.84 dB |
-| wtfgif quality/global + literal LZW (default) | 0.419 ms | **237.18×** | 149,601 | 34.12 dB |
+| image-q rgbquant + omggif balanced LZW | 95.115 ms | 1.00× | 39,350 | 31.84 dB |
+| wtfgif quality/global + literal LZW (default) | 0.438 ms | **217.18×** | 149,601 | 34.12 dB |
 
 This is one practical adaptive global-palette pipeline. The implementations do
 not choose identical pixels, so the table reports source-relative PSNR and
 output bytes alongside speed. The wtfgif palette is higher quality on this
-fixture while remaining 237.18× faster. Literal LZW is lossless for the
+fixture while remaining 217.18× faster. Literal LZW is lossless for the
 indexed pixels, so the speedup does not come from lowering GIF pixel quality.
 
 The quality path uses a weighted 4-bit-per-channel histogram for ordinary
@@ -50,37 +50,37 @@ took 106.376 ms for image-q + omggif and 0.539 ms for wtfgif: **197.48×**,
 with 33.91 dB PSNR. This is the normal full-color, no-transparent-pixels case.
 
 The larger stress workload (ten synthetic 512×512 RGBA frames) measured
-6,223.341 ms for image-q + omggif and 31.136 ms for wtfgif: **199.88×**,
+6,220.683 ms for image-q + omggif and 30.853 ms for wtfgif: **201.62×**,
 with 2,973,381 output bytes and 26.12 dB PSNR versus 24.26 dB for the
 baseline. This is still arbitrary RGBA input: the palette is unknown, every
 pixel is scanned, and every indexed pixel is emitted into a valid GIF.
-The 199.88× ratio is a workload-size effect, not a cache shortcut: both sides
+The 201.62× ratio is a workload-size effect, not a cache shortcut: both sides
 read all 2,621,440 source pixels, while wtfgif keeps its histogram, parent-cell
 lookup, and literal writer linear in the input size.
 
 For the no-cache contract:
 
 ```bash
-BENCH_WTFFIG_ENTRY=encode BENCH_ITERATIONS=20 node scripts/bench-cold-rgba.mjs
+BENCH_WTFFIG_ENTRY=encode BENCH_ITERATIONS=30 node scripts/bench-cold-rgba.mjs
 ```
 
 That run starts a fresh Node process for every sample and includes fixture
 loading, dynamic imports, Wasm initialization, palette creation, pixel mapping,
-and GIF compression. The current twenty-process median is 137.319 ms for the
-baseline versus 5.516 ms for wtfgif's encode entry (**24.89×**). This includes process
+and GIF compression. The current 30-process median is 136.904 ms for the
+baseline versus 4.821 ms for wtfgif's encode entry (**28.40×**). This includes process
 startup and Wasm initialization and is not the initialized hot-path contract;
 initialize Wasm during page or worker startup for the hot measurements.
 
-The no-warmup, initialized-first receipt is separate: twenty fresh processes each
-initialized Wasm and then timed one real encode. The median was 123.409 ms for
-image-q + omggif versus 3.610 ms for wtfgif (**34.19×**). There is no synthetic encode, retained source pixel,
+The no-warmup, initialized-first receipt is separate: 30 fresh processes each
+initialized Wasm and then timed one real encode. The median was 123.732 ms for
+image-q + omggif versus 2.956 ms for wtfgif (**41.86×**). There is no synthetic encode, retained source pixel,
 palette, or output result in initialization; the remaining cost is portable
 Wasm's first-call lazy compilation.
 
 Reproduce that boundary with:
 
 ```bash
-BENCH_INITIALIZED_FIRST=1 BENCH_WTFFIG_ENTRY=encode BENCH_ITERATIONS=20 node scripts/bench-cold-rgba.mjs
+BENCH_INITIALIZED_FIRST=1 BENCH_WTFFIG_ENTRY=encode BENCH_ITERATIONS=30 node scripts/bench-cold-rgba.mjs
 ```
 
 Run the optional larger synthetic stress workload with:
@@ -90,8 +90,8 @@ npm run bench:rgba:stress
 ```
 
 For a stress-only receipt, use `BENCH_COLD_RGBA_FIXTURE=stress`. The latest
-strict-cold receipt took 6,223.341 ms with image-q + omggif and
-31.136 ms with wtfgif: **199.88×**, with 26.12 dB PSNR and 2,973,381 output
+strict-cold receipt took 6,220.683 ms with image-q + omggif and
+30.853 ms with wtfgif: **201.62×**, with 26.12 dB PSNR and 2,973,381 output
 bytes. The large image-q allocation makes this workload noisy, so use several
 samples and report the median.
 

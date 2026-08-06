@@ -7219,7 +7219,35 @@ fn build_quality_index_plan_from_colors(
     let mapping_len = 1usize << (mapping_bits * 3);
     let opaque_color_limit = if has_transparent_pixels { 255 } else { 256 };
 
-    let (mut palette, histogram_to_palette) = if colors.len() <= QUALITY_DOMINANT_COLOR_LIMIT {
+    if colors.len() > QUALITY_DOMINANT_COLOR_LIMIT {
+        let (mut palette, histogram_to_palette) = build_quality_median_cut_palette(
+            has_transparent_pixels,
+            colors,
+            histogram_bits,
+            mapping_len,
+            opaque_color_limit,
+        );
+        let transparent_index = if has_transparent_pixels {
+            let index = palette.len() as u8;
+            palette.push(0);
+            Some(index)
+        } else {
+            None
+        };
+        if palette.is_empty() {
+            palette.push(0);
+        }
+        return QualityIndexPlan {
+            palette,
+            histogram_to_palette,
+            histogram_indices,
+            transparent_index,
+            histogram_bits,
+            mapping_bits,
+        };
+    }
+
+    let (mut palette, histogram_to_palette) = {
         let palette_len = colors.len().min(opaque_color_limit);
         // The normal arbitrary-image path has only a few thousand occupied
         // histogram bins. Select only the palette prefix, then sort that
@@ -7505,82 +7533,6 @@ fn build_quality_index_plan_from_colors(
         }
         recycle_quality_colors(colors);
         (palette, histogram_to_palette)
-    } else {
-        let mut colors = colors;
-        let mut boxes = REUSABLE_QUANTIZED_COLOR_BOXES.with(|scratch| {
-            let mut boxes = std::mem::take(&mut *scratch.borrow_mut());
-            boxes.clear();
-            boxes.push(QuantizedColorArenaBox::new(0, colors.len(), &colors));
-            boxes
-        });
-        while boxes.len() < opaque_color_limit {
-            let Some((split_index, _)) = boxes
-                .iter()
-                .enumerate()
-                .filter(|(_, color_box)| color_box.len() > 1)
-                .max_by_key(|(_, color_box)| color_box.score)
-            else {
-                break;
-            };
-            let mut color_box = boxes.swap_remove(split_index);
-            if let Some(right) = color_box.split(&mut colors) {
-                boxes.push(color_box);
-                boxes.push(right);
-            } else {
-                boxes.push(color_box);
-                break;
-            }
-        }
-        for color_box in &mut boxes {
-            color_box.calculate_representative(&colors);
-        }
-        boxes.sort_unstable_by_key(|color_box| color_box.representative);
-
-        let mut palette = Vec::with_capacity(boxes.len() + usize::from(has_transparent_pixels));
-        for color_box in &boxes {
-            palette.push(color_box.representative);
-        }
-        let mut histogram_to_palette = take_quality_histogram_to_palette(mapping_len);
-        let mut requested_cells = [false; 1 << 12];
-        for color in &colors {
-            let coarse_index = (usize::from(color.red >> 4) << 8)
-                | (usize::from(color.green >> 4) << 4)
-                | usize::from(color.blue >> 4);
-            requested_cells[coarse_index] = true;
-        }
-        let palette_tree = PaletteKdTree::new(&palette);
-        let coarse_nearest =
-            palette_tree.coarse_nearest_table_for_cells(&palette, &requested_cells);
-        if histogram_bits == 4 {
-            for color_box in &boxes {
-                for color in &colors[color_box.start..color_box.end] {
-                    let index = (usize::from(color.red >> 4) << 8)
-                        | (usize::from(color.green >> 4) << 4)
-                        | usize::from(color.blue >> 4);
-                    histogram_to_palette[usize::from(color.histogram_index)] =
-                        coarse_nearest[index];
-                }
-            }
-        } else {
-            for color_box in &boxes {
-                for color in &colors[color_box.start..color_box.end] {
-                    let coarse_index = (usize::from(color.red >> 4) << 8)
-                        | (usize::from(color.green >> 4) << 4)
-                        | usize::from(color.blue >> 4);
-                    let mapping_index = if histogram_bits == 5 {
-                        coarse_index
-                    } else {
-                        usize::from(color.histogram_index)
-                    };
-                    histogram_to_palette[mapping_index] = coarse_nearest[coarse_index];
-                }
-            }
-        }
-        REUSABLE_QUANTIZED_COLOR_BOXES.with(|scratch| {
-            *scratch.borrow_mut() = boxes;
-        });
-        recycle_quality_colors(colors);
-        (palette, histogram_to_palette)
     };
     let transparent_index = if has_transparent_pixels {
         let index = palette.len() as u8;
@@ -7601,6 +7553,88 @@ fn build_quality_index_plan_from_colors(
         histogram_bits,
         mapping_bits,
     }
+}
+
+#[inline(never)]
+fn build_quality_median_cut_palette(
+    has_transparent_pixels: bool,
+    mut colors: Vec<QuantizedColor>,
+    histogram_bits: usize,
+    mapping_len: usize,
+    opaque_color_limit: usize,
+) -> (Vec<u32>, Vec<u8>) {
+    let mut boxes = REUSABLE_QUANTIZED_COLOR_BOXES.with(|scratch| {
+        let mut boxes = std::mem::take(&mut *scratch.borrow_mut());
+        boxes.clear();
+        boxes.push(QuantizedColorArenaBox::new(0, colors.len(), &colors));
+        boxes
+    });
+    while boxes.len() < opaque_color_limit {
+        let Some((split_index, _)) = boxes
+            .iter()
+            .enumerate()
+            .filter(|(_, color_box)| color_box.len() > 1)
+            .max_by_key(|(_, color_box)| color_box.score)
+        else {
+            break;
+        };
+        let mut color_box = boxes.swap_remove(split_index);
+        if let Some(right) = color_box.split(&mut colors) {
+            boxes.push(color_box);
+            boxes.push(right);
+        } else {
+            boxes.push(color_box);
+            break;
+        }
+    }
+    for color_box in &mut boxes {
+        color_box.calculate_representative(&colors);
+    }
+    boxes.sort_unstable_by_key(|color_box| color_box.representative);
+
+    let mut palette = Vec::with_capacity(boxes.len() + usize::from(has_transparent_pixels));
+    for color_box in &boxes {
+        palette.push(color_box.representative);
+    }
+    let mut histogram_to_palette = take_quality_histogram_to_palette(mapping_len);
+    let mut requested_cells = [false; 1 << 12];
+    for color in &colors {
+        let coarse_index = (usize::from(color.red >> 4) << 8)
+            | (usize::from(color.green >> 4) << 4)
+            | usize::from(color.blue >> 4);
+        requested_cells[coarse_index] = true;
+    }
+    let palette_tree = PaletteKdTree::new(&palette);
+    let coarse_nearest = palette_tree.coarse_nearest_table_for_cells(&palette, &requested_cells);
+    if histogram_bits == 4 {
+        for color_box in &boxes {
+            for color in &colors[color_box.start..color_box.end] {
+                let index = (usize::from(color.red >> 4) << 8)
+                    | (usize::from(color.green >> 4) << 4)
+                    | usize::from(color.blue >> 4);
+                histogram_to_palette[usize::from(color.histogram_index)] = coarse_nearest[index];
+            }
+        }
+    } else {
+        for color_box in &boxes {
+            for color in &colors[color_box.start..color_box.end] {
+                let coarse_index = (usize::from(color.red >> 4) << 8)
+                    | (usize::from(color.green >> 4) << 4)
+                    | usize::from(color.blue >> 4);
+                let mapping_index = if histogram_bits == 5 {
+                    coarse_index
+                } else {
+                    usize::from(color.histogram_index)
+                };
+                histogram_to_palette[mapping_index] = coarse_nearest[coarse_index];
+            }
+        }
+    }
+    REUSABLE_QUANTIZED_COLOR_BOXES.with(|scratch| {
+        *scratch.borrow_mut() = boxes;
+    });
+    recycle_quality_colors(colors);
+    (palette, histogram_to_palette)
 }
 
 /// Reorder the unique occupied cells of a 4-bit histogram without doing a
