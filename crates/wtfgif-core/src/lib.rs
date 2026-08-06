@@ -5446,11 +5446,6 @@ fn weighted_axis_split_index_with_stats_const<const AXIS: usize>(
     let target_in_equal = target - below_weight;
     let mut split = less_end;
     let mut equal_weight = 0u64;
-    while split < greater_start && equal_weight < target_in_equal {
-        equal_weight += colors[split].count;
-        split += 1;
-    }
-    let split = split.clamp(1, total_len - 1);
     let mut left_equal_weight = 0u64;
     let mut left_equal_min_red = u8::MAX;
     let mut left_equal_min_green = u8::MAX;
@@ -5465,24 +5460,30 @@ fn weighted_axis_split_index_with_stats_const<const AXIS: usize>(
     let mut right_equal_max_red = 0u8;
     let mut right_equal_max_green = 0u8;
     let mut right_equal_max_blue = 0u8;
-    for (index, color) in colors[less_end..greater_start].iter().enumerate() {
-        if less_end + index < split {
-            left_equal_weight += color.count;
-            left_equal_min_red = left_equal_min_red.min(color.red);
-            left_equal_min_green = left_equal_min_green.min(color.green);
-            left_equal_min_blue = left_equal_min_blue.min(color.blue);
-            left_equal_max_red = left_equal_max_red.max(color.red);
-            left_equal_max_green = left_equal_max_green.max(color.green);
-            left_equal_max_blue = left_equal_max_blue.max(color.blue);
-        } else {
-            right_equal_weight += color.count;
-            right_equal_min_red = right_equal_min_red.min(color.red);
-            right_equal_min_green = right_equal_min_green.min(color.green);
-            right_equal_min_blue = right_equal_min_blue.min(color.blue);
-            right_equal_max_red = right_equal_max_red.max(color.red);
-            right_equal_max_green = right_equal_max_green.max(color.green);
-            right_equal_max_blue = right_equal_max_blue.max(color.blue);
-        }
+    // Accumulate the equal-axis statistics while finding the weighted split.
+    // The previous two-pass form walked this potentially large middle region
+    // once to find the boundary and again to rebuild both child bounds.
+    let split_limit = greater_start.min(total_len - 1);
+    while split < split_limit && equal_weight < target_in_equal {
+        let color = colors[split];
+        equal_weight += color.count;
+        left_equal_weight += color.count;
+        left_equal_min_red = left_equal_min_red.min(color.red);
+        left_equal_min_green = left_equal_min_green.min(color.green);
+        left_equal_min_blue = left_equal_min_blue.min(color.blue);
+        left_equal_max_red = left_equal_max_red.max(color.red);
+        left_equal_max_green = left_equal_max_green.max(color.green);
+        left_equal_max_blue = left_equal_max_blue.max(color.blue);
+        split += 1;
+    }
+    for color in &colors[split..greater_start] {
+        right_equal_weight += color.count;
+        right_equal_min_red = right_equal_min_red.min(color.red);
+        right_equal_min_green = right_equal_min_green.min(color.green);
+        right_equal_min_blue = right_equal_min_blue.min(color.blue);
+        right_equal_max_red = right_equal_max_red.max(color.red);
+        right_equal_max_green = right_equal_max_green.max(color.green);
+        right_equal_max_blue = right_equal_max_blue.max(color.blue);
     }
     let left_min_red = less_min_red.min(left_equal_min_red);
     let left_min_green = less_min_green.min(left_equal_min_green);
@@ -6649,7 +6650,7 @@ fn accumulate_quality_histogram_u32_bits_remaining_opaque<
     let rgba_pointer = rgba_stream.as_ptr();
     let histogram_indices_pointer = histogram_indices.as_mut_ptr();
     let mut offset = start_offset;
-    while offset + 32 <= rgba_stream.len() {
+    while offset + 64 <= rgba_stream.len() {
         let packed01 =
             u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset).cast()) });
         let packed23 =
@@ -6690,7 +6691,47 @@ fn accumulate_quality_histogram_u32_bits_remaining_opaque<
             add_quality_histogram_u32_pair_packed::<BITS>(histogram, packed45);
             add_quality_histogram_u32_pair_packed::<BITS>(histogram, packed67);
         }
-        offset += 32;
+        let packed89 =
+            u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 32).cast()) });
+        let packed1011 =
+            u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 40).cast()) });
+        let packed1213 =
+            u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 48).cast()) });
+        let packed1415 =
+            u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 56).cast()) });
+        if RECORD_INDICES {
+            let pixel_index = offset / 4 + 8;
+            add_quality_histogram_u32_pair_record_opaque::<BITS>(
+                histogram,
+                histogram_indices_pointer,
+                pixel_index,
+                packed89,
+            );
+            add_quality_histogram_u32_pair_record_opaque::<BITS>(
+                histogram,
+                histogram_indices_pointer,
+                pixel_index + 2,
+                packed1011,
+            );
+            add_quality_histogram_u32_pair_record_opaque::<BITS>(
+                histogram,
+                histogram_indices_pointer,
+                pixel_index + 4,
+                packed1213,
+            );
+            add_quality_histogram_u32_pair_record_opaque::<BITS>(
+                histogram,
+                histogram_indices_pointer,
+                pixel_index + 6,
+                packed1415,
+            );
+        } else {
+            add_quality_histogram_u32_pair_packed::<BITS>(histogram, packed89);
+            add_quality_histogram_u32_pair_packed::<BITS>(histogram, packed1011);
+            add_quality_histogram_u32_pair_packed::<BITS>(histogram, packed1213);
+            add_quality_histogram_u32_pair_packed::<BITS>(histogram, packed1415);
+        }
+        offset += 64;
     }
     while offset < rgba_stream.len() {
         let packed =
@@ -6771,14 +6812,32 @@ fn accumulate_quality_histogram_u64_remaining_opaque(
 ) {
     let rgba_pointer = rgba_stream.as_ptr();
     let mut offset = start_offset;
-    while offset + 16 <= rgba_stream.len() {
+    while offset + 64 <= rgba_stream.len() {
         let packed01 =
             u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset).cast()) });
         let packed23 =
             u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 8).cast()) });
         add_quality_histogram_u64_pair_packed(histogram, packed01);
         add_quality_histogram_u64_pair_packed(histogram, packed23);
-        offset += 16;
+        let packed45 =
+            u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 16).cast()) });
+        let packed67 =
+            u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 24).cast()) });
+        let packed89 =
+            u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 32).cast()) });
+        let packed1011 =
+            u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 40).cast()) });
+        let packed1213 =
+            u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 48).cast()) });
+        let packed1415 =
+            u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 56).cast()) });
+        add_quality_histogram_u64_pair_packed(histogram, packed45);
+        add_quality_histogram_u64_pair_packed(histogram, packed67);
+        add_quality_histogram_u64_pair_packed(histogram, packed89);
+        add_quality_histogram_u64_pair_packed(histogram, packed1011);
+        add_quality_histogram_u64_pair_packed(histogram, packed1213);
+        add_quality_histogram_u64_pair_packed(histogram, packed1415);
+        offset += 64;
     }
     while offset < rgba_stream.len() {
         let packed =
