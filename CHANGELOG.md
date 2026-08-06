@@ -2,6 +2,17 @@
 
 All notable changes to wtfgif are documented here.
 
+## 2.4.9 - 2026-08-05
+
+- Pair packed RGBA histogram reads in the arbitrary-RGBA quality encoder and
+  keep seven-byte literal groups on the direct unaligned-store path. Palette
+  selection, transparency, indexed pixels, GIF bytes, and decoded quality are
+  unchanged.
+- Fresh receipts on the real eight-frame 128x128 fixture are 236.93x
+  initialized. The 512x512x10 stress fixture measured 1,196.76x initialized;
+  opaque stress measured 1,313.05x. The real output remains 149,601 bytes at
+  34.12 dB PSNR; stress remains 2,973,381 bytes at 26.12 dB.
+
 ## 2.4.8 - 2026-08-05
 
 - Remove an unnecessary non-inlining barrier from the low-resolution

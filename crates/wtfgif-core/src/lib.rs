@@ -6177,6 +6177,28 @@ fn quality_histogram_index_packed<const BITS: usize>(packed: u32) -> usize {
 }
 
 #[inline(always)]
+fn quality_histogram_index_pair_packed<const BITS: usize>(packed: u64) -> (usize, usize) {
+    if BITS == 5 {
+        let indices = ((packed << 7) & 0x0000_7c00_0000_7c00)
+            | ((packed >> 6) & 0x0000_03e0_0000_03e0)
+            | ((packed >> 19) & 0x0000_001f_0000_001f);
+        (indices as u32 as usize, (indices >> 32) as u32 as usize)
+    } else if BITS == 4 {
+        let indices = ((packed << 4) & 0x0000_0f00_0000_0f00)
+            | ((packed >> 8) & 0x0000_00f0_0000_00f0)
+            | ((packed >> 20) & 0x0000_000f_0000_000f);
+        (indices as u32 as usize, (indices >> 32) as u32 as usize)
+    } else {
+        let packed0 = packed as u32;
+        let packed1 = (packed >> 32) as u32;
+        (
+            quality_histogram_index_packed::<BITS>(packed0),
+            quality_histogram_index_packed::<BITS>(packed1),
+        )
+    }
+}
+
+#[inline(always)]
 unsafe fn read_rgba_pair(pointer: *const u8, offset: usize) -> (u32, u32) {
     let packed = u64::from_le(std::ptr::read_unaligned(pointer.add(offset).cast::<u64>()));
     (packed as u32, (packed >> 32) as u32)
@@ -6304,6 +6326,17 @@ fn add_quality_histogram_u32_pair<const BITS: usize>(
 }
 
 #[inline(always)]
+fn add_quality_histogram_u32_pair_packed<const BITS: usize>(
+    histogram: &mut [RgbHistogramBin32],
+    packed: u64,
+) {
+    let packed0 = packed as u32;
+    let packed1 = (packed >> 32) as u32;
+    let (index0, index1) = quality_histogram_index_pair_packed::<BITS>(packed);
+    add_quality_histogram_u32_pair_indexed::<BITS>(histogram, packed0, packed1, index0, index1);
+}
+
+#[inline(always)]
 fn add_quality_histogram_u32_pair_indexed<const BITS: usize>(
     histogram: &mut [RgbHistogramBin32],
     packed0: u32,
@@ -6416,11 +6449,13 @@ fn add_quality_histogram_u32_pair_record_opaque<const BITS: usize>(
     histogram: &mut [RgbHistogramBin32],
     histogram_indices: *mut u16,
     pixel_index: usize,
-    packed0: u32,
-    packed1: u32,
+    packed: u64,
 ) {
-    let index0 = quality_histogram_index_packed::<BITS>(packed0) as u16;
-    let index1 = quality_histogram_index_packed::<BITS>(packed1) as u16;
+    let packed0 = packed as u32;
+    let packed1 = (packed >> 32) as u32;
+    let (index0, index1) = quality_histogram_index_pair_packed::<BITS>(packed);
+    let index0 = index0 as u16;
+    let index1 = index1 as u16;
     let packed_indices = u32::from_ne_bytes([
         index0 as u8,
         (index0 >> 8) as u8,
@@ -6450,6 +6485,36 @@ fn add_quality_histogram_u64(histogram: &mut [RgbHistogramBin], packed: u32) {
     bin.red += u64::from(red);
     bin.green += u64::from(green);
     bin.blue += u64::from(blue);
+}
+
+#[inline(always)]
+fn add_quality_histogram_u64_indexed(
+    histogram: &mut [RgbHistogramBin],
+    packed: u32,
+    histogram_index: usize,
+) {
+    let bin = unsafe { histogram.get_unchecked_mut(histogram_index) };
+    bin.count += 1;
+    bin.red += u64::from(packed as u8);
+    bin.green += u64::from((packed >> 8) as u8);
+    bin.blue += u64::from((packed >> 16) as u8);
+}
+
+#[inline(always)]
+fn add_quality_histogram_u64_pair_packed(histogram: &mut [RgbHistogramBin], packed: u64) {
+    let packed0 = packed as u32;
+    let packed1 = (packed >> 32) as u32;
+    let (index0, index1) = quality_histogram_index_pair_packed::<QUALITY_HISTOGRAM_BITS>(packed);
+    if index0 != index1 {
+        add_quality_histogram_u64_indexed(histogram, packed0, index0);
+        add_quality_histogram_u64_indexed(histogram, packed1, index1);
+        return;
+    }
+    let bin = unsafe { histogram.get_unchecked_mut(index0) };
+    bin.count += 2;
+    bin.red += u64::from(packed0 as u8) + u64::from(packed1 as u8);
+    bin.green += u64::from((packed0 >> 8) as u8) + u64::from((packed1 >> 8) as u8);
+    bin.blue += u64::from((packed0 >> 16) as u8) + u64::from((packed1 >> 16) as u8);
 }
 
 fn accumulate_quality_histogram_u32_bits_remaining<
@@ -6585,45 +6650,45 @@ fn accumulate_quality_histogram_u32_bits_remaining_opaque<
     let histogram_indices_pointer = histogram_indices.as_mut_ptr();
     let mut offset = start_offset;
     while offset + 32 <= rgba_stream.len() {
-        let (packed0, packed1) = unsafe { read_rgba_pair(rgba_pointer, offset) };
-        let (packed2, packed3) = unsafe { read_rgba_pair(rgba_pointer, offset + 8) };
-        let (packed4, packed5) = unsafe { read_rgba_pair(rgba_pointer, offset + 16) };
-        let (packed6, packed7) = unsafe { read_rgba_pair(rgba_pointer, offset + 24) };
+        let packed01 =
+            u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset).cast()) });
+        let packed23 =
+            u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 8).cast()) });
+        let packed45 =
+            u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 16).cast()) });
+        let packed67 =
+            u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 24).cast()) });
         if RECORD_INDICES {
             let pixel_index = offset / 4;
             add_quality_histogram_u32_pair_record_opaque::<BITS>(
                 histogram,
                 histogram_indices_pointer,
                 pixel_index,
-                packed0,
-                packed1,
+                packed01,
             );
             add_quality_histogram_u32_pair_record_opaque::<BITS>(
                 histogram,
                 histogram_indices_pointer,
                 pixel_index + 2,
-                packed2,
-                packed3,
+                packed23,
             );
             add_quality_histogram_u32_pair_record_opaque::<BITS>(
                 histogram,
                 histogram_indices_pointer,
                 pixel_index + 4,
-                packed4,
-                packed5,
+                packed45,
             );
             add_quality_histogram_u32_pair_record_opaque::<BITS>(
                 histogram,
                 histogram_indices_pointer,
                 pixel_index + 6,
-                packed6,
-                packed7,
+                packed67,
             );
         } else {
-            add_quality_histogram_u32_pair::<BITS>(histogram, packed0, packed1);
-            add_quality_histogram_u32_pair::<BITS>(histogram, packed2, packed3);
-            add_quality_histogram_u32_pair::<BITS>(histogram, packed4, packed5);
-            add_quality_histogram_u32_pair::<BITS>(histogram, packed6, packed7);
+            add_quality_histogram_u32_pair_packed::<BITS>(histogram, packed01);
+            add_quality_histogram_u32_pair_packed::<BITS>(histogram, packed23);
+            add_quality_histogram_u32_pair_packed::<BITS>(histogram, packed45);
+            add_quality_histogram_u32_pair_packed::<BITS>(histogram, packed67);
         }
         offset += 32;
     }
@@ -6707,18 +6772,12 @@ fn accumulate_quality_histogram_u64_remaining_opaque(
     let rgba_pointer = rgba_stream.as_ptr();
     let mut offset = start_offset;
     while offset + 16 <= rgba_stream.len() {
-        let packed0 =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset).cast()) });
-        let packed1 =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 4).cast()) });
-        let packed2 =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 8).cast()) });
-        let packed3 =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 12).cast()) });
-        add_quality_histogram_u64(histogram, packed0);
-        add_quality_histogram_u64(histogram, packed1);
-        add_quality_histogram_u64(histogram, packed2);
-        add_quality_histogram_u64(histogram, packed3);
+        let packed01 =
+            u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset).cast()) });
+        let packed23 =
+            u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 8).cast()) });
+        add_quality_histogram_u64_pair_packed(histogram, packed01);
+        add_quality_histogram_u64_pair_packed(histogram, packed23);
         offset += 16;
     }
     while offset < rgba_stream.len() {
@@ -10184,6 +10243,23 @@ impl DirectGifSubblockWriter<'_> {
             self.position += 8;
             self.block_remaining -= 8;
             self.raw_position += 8;
+            return;
+        }
+        if length == 7 && self.block_remaining >= 8 {
+            // A seven-byte literal group has one more raw byte available in
+            // this sub-block. Store the whole u64 and advance only seven
+            // bytes; the next write overwrites the eighth byte. This keeps
+            // the common non-boundary path on the same unaligned-store fast
+            // path as eight-byte groups.
+            unsafe {
+                std::ptr::write_unaligned(
+                    self.output.as_mut_ptr().add(self.position).cast::<u64>(),
+                    value.to_le(),
+                );
+            }
+            self.position += 7;
+            self.block_remaining -= 7;
+            self.raw_position += 7;
             return;
         }
         let bytes = value.to_le_bytes();
