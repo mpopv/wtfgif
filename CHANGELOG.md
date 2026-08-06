@@ -2,6 +2,17 @@
 
 All notable changes to wtfgif are documented here.
 
+## 2.4.13 - 2026-08-05
+
+- Fold the opaque-alpha check into the high-resolution quality histogram pass,
+  removing a separate full scan for the common opaque-image case. Transparency
+  handling, palette selection, GIF bytes, decoded pixels, and quality remain
+  unchanged.
+- Fresh initialized receipt: 229.89x on the real eight-frame 128x128 fixture
+  (96.102 ms image-q + omggif vs 0.418 ms wtfgif), with 157 JavaScript tests,
+  45 Rust tests, all Wasm variants, edge validation, and package validation
+  passing.
+
 ## 2.4.12 - 2026-08-05
 
 - Speed up arbitrary-RGBA quality encoding with chunked wide histograms,

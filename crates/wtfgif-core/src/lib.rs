@@ -5827,11 +5827,13 @@ fn index_rgba_frames_quality_result(rgba_stream: &[u8], alpha_threshold: u8) -> 
             index_rgba_frames_quality_low_res::<true>(rgba_stream, alpha_threshold)
         };
     }
-    // Keep the full alpha preflight for multi-megapixel inputs: on those
-    // workloads its tight linear scan is cheaper than adding a transparency
-    // branch to every scattered histogram update.
-    let all_opaque =
-        alpha_threshold == 0 || !rgba_stream_has_transparent_pixels(rgba_stream, alpha_threshold);
+    // Inputs that fit the u32 histogram use an adaptive opaque probe inside
+    // the histogram pass, avoiding a separate full alpha scan for the common
+    // all-255 case. The wide u64 path retains the cheap SIMD preflight because
+    // it already processes the stream in separate bounded chunks.
+    let all_opaque = alpha_threshold == 0
+        || (pixel_count > QUALITY_U32_PIXEL_LIMIT
+            && !rgba_stream_has_transparent_pixels(rgba_stream, alpha_threshold));
     index_rgba_frames_quality_high_res(rgba_stream, alpha_threshold, all_opaque)
 }
 
@@ -5920,7 +5922,7 @@ fn index_rgba_frames_quality_low_res<const HAS_TRANSPARENT: bool>(
                     &mut [],
                 );
         } else {
-            accumulate_quality_histogram_u32_bits_remaining_opaque::<HISTOGRAM_BITS, false>(
+            accumulate_quality_histogram_u32_bits_remaining_opaque::<HISTOGRAM_BITS, false, false>(
                 &mut histogram,
                 rgba_stream,
                 start_offset,
@@ -6540,7 +6542,7 @@ fn accumulate_quality_histogram_u32_bits_remaining<
     histogram_indices: &mut [u16],
 ) -> bool {
     if alpha_threshold == 0 {
-        accumulate_quality_histogram_u32_bits_remaining_opaque::<BITS, RECORD_INDICES>(
+        accumulate_quality_histogram_u32_bits_remaining_opaque::<BITS, RECORD_INDICES, false>(
             histogram,
             rgba_stream,
             start_offset,
@@ -6724,14 +6726,17 @@ fn accumulate_quality_histogram_u32_bits_remaining<
 fn accumulate_quality_histogram_u32_bits_remaining_opaque<
     const BITS: usize,
     const RECORD_INDICES: bool,
+    const PROBE_ALPHA: bool,
 >(
     histogram: &mut [RgbHistogramBin32],
     rgba_stream: &[u8],
     start_offset: usize,
     histogram_indices: &mut [u16],
-) {
+) -> bool {
     let rgba_pointer = rgba_stream.as_ptr();
     let histogram_indices_pointer = histogram_indices.as_mut_ptr();
+    const ALPHA_MASK: u64 = 0xff00_0000_ff00_0000;
+    let mut all_alpha_255 = true;
     let mut offset = start_offset;
     while offset + 64 <= rgba_stream.len() {
         let packed01 =
@@ -6782,6 +6787,16 @@ fn accumulate_quality_histogram_u32_bits_remaining_opaque<
             u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 48).cast()) });
         let packed1415 =
             u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 56).cast()) });
+        if PROBE_ALPHA {
+            all_alpha_255 &= packed01 & ALPHA_MASK == ALPHA_MASK;
+            all_alpha_255 &= packed23 & ALPHA_MASK == ALPHA_MASK;
+            all_alpha_255 &= packed45 & ALPHA_MASK == ALPHA_MASK;
+            all_alpha_255 &= packed67 & ALPHA_MASK == ALPHA_MASK;
+            all_alpha_255 &= packed89 & ALPHA_MASK == ALPHA_MASK;
+            all_alpha_255 &= packed1011 & ALPHA_MASK == ALPHA_MASK;
+            all_alpha_255 &= packed1213 & ALPHA_MASK == ALPHA_MASK;
+            all_alpha_255 &= packed1415 & ALPHA_MASK == ALPHA_MASK;
+        }
         if RECORD_INDICES {
             let pixel_index = offset / 4 + 8;
             add_quality_histogram_u32_pair_record_opaque::<BITS>(
@@ -6819,6 +6834,9 @@ fn accumulate_quality_histogram_u32_bits_remaining_opaque<
     while offset < rgba_stream.len() {
         let packed =
             u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset).cast()) });
+        if PROBE_ALPHA && (packed >> 24) as u8 != u8::MAX {
+            all_alpha_255 = false;
+        }
         if RECORD_INDICES {
             let index = quality_histogram_index_packed::<BITS>(packed) as u16;
             unsafe { histogram_indices_pointer.add(offset / 4).write(index) };
@@ -6828,6 +6846,7 @@ fn accumulate_quality_histogram_u32_bits_remaining_opaque<
         }
         offset += 4;
     }
+    all_alpha_255
 }
 
 fn index_rgba_frames_quality_u32<const BITS: usize>(
@@ -6889,51 +6908,91 @@ fn index_rgba_frames_quality_u32<const BITS: usize>(
         // Mixed-alpha inputs pay less by mapping directly from RGBA while
         // the histogram is already being built, so retain cells only for the
         // branch that can consume them most cheaply.
-        let record_histogram_indices = all_opaque && BITS == 4;
+        let probe_opaque =
+            !all_opaque && alpha_threshold != 0 && rgba_stream_samples_alpha_255(rgba_stream);
+        let mut record_histogram_indices = all_opaque && BITS == 4;
         let mut histogram_indices = if record_histogram_indices {
             take_quality_histogram_indices(pixel_count)
         } else {
             Vec::new()
         };
-        let mut prefix_offset = 0usize;
-        let rgba_pointer = rgba_stream.as_ptr();
-        while prefix_offset < start_offset {
-            let packed = u32::from_le(unsafe {
-                std::ptr::read_unaligned(rgba_pointer.add(prefix_offset).cast())
-            });
-            if ((packed >> 24) as u8) >= alpha_threshold {
-                add_quality_histogram_u32_bits_const::<BITS>(&mut histogram, packed);
-            }
-            if record_histogram_indices {
-                histogram_indices[prefix_offset / 4] =
-                    quality_histogram_index_packed::<BITS>(packed) as u16;
-            }
-            prefix_offset += 4;
-        }
-        if all_opaque {
-            if record_histogram_indices {
-                accumulate_quality_histogram_u32_bits_remaining_opaque::<BITS, true>(
-                    &mut histogram,
-                    rgba_stream,
-                    start_offset,
-                    &mut histogram_indices,
+        if probe_opaque {
+            let all_alpha_255 = if BITS == 4 {
+                histogram_indices = take_quality_histogram_indices(pixel_count);
+                let all_alpha_255 = accumulate_quality_histogram_u32_bits_remaining_opaque::<
+                    BITS,
+                    true,
+                    true,
+                >(
+                    &mut histogram, rgba_stream, 0, &mut histogram_indices
                 );
+                if all_alpha_255 {
+                    record_histogram_indices = true;
+                }
+                all_alpha_255
             } else {
-                accumulate_quality_histogram_u32_bits_remaining_opaque::<BITS, false>(
+                accumulate_quality_histogram_u32_bits_remaining_opaque::<BITS, false, true>(
                     &mut histogram,
                     rgba_stream,
-                    start_offset,
+                    0,
                     &mut [],
+                )
+            };
+            if !all_alpha_255 {
+                if !histogram_indices.is_empty() {
+                    recycle_quality_histogram_indices(histogram_indices);
+                    histogram_indices = Vec::new();
+                }
+                histogram.fill(RgbHistogramBin32::default());
+                has_transparent_pixels = accumulate_quality_histogram_u32_bits_remaining::<
+                    BITS,
+                    false,
+                >(
+                    &mut histogram, rgba_stream, 0, alpha_threshold, &mut []
                 );
             }
         } else {
-            has_transparent_pixels |= accumulate_quality_histogram_u32_bits_remaining::<BITS, false>(
-                &mut histogram,
-                rgba_stream,
-                start_offset,
-                alpha_threshold,
-                &mut [],
-            );
+            let mut prefix_offset = 0usize;
+            let rgba_pointer = rgba_stream.as_ptr();
+            while prefix_offset < start_offset {
+                let packed = u32::from_le(unsafe {
+                    std::ptr::read_unaligned(rgba_pointer.add(prefix_offset).cast())
+                });
+                if ((packed >> 24) as u8) >= alpha_threshold {
+                    add_quality_histogram_u32_bits_const::<BITS>(&mut histogram, packed);
+                }
+                if record_histogram_indices {
+                    histogram_indices[prefix_offset / 4] =
+                        quality_histogram_index_packed::<BITS>(packed) as u16;
+                }
+                prefix_offset += 4;
+            }
+            if all_opaque {
+                if record_histogram_indices {
+                    accumulate_quality_histogram_u32_bits_remaining_opaque::<BITS, true, false>(
+                        &mut histogram,
+                        rgba_stream,
+                        start_offset,
+                        &mut histogram_indices,
+                    );
+                } else {
+                    accumulate_quality_histogram_u32_bits_remaining_opaque::<BITS, false, false>(
+                        &mut histogram,
+                        rgba_stream,
+                        start_offset,
+                        &mut [],
+                    );
+                }
+            } else {
+                has_transparent_pixels |=
+                    accumulate_quality_histogram_u32_bits_remaining::<BITS, false>(
+                        &mut histogram,
+                        rgba_stream,
+                        start_offset,
+                        alpha_threshold,
+                        &mut [],
+                    );
+            }
         }
         recycle_quantized_indexed(indexed);
 
@@ -7066,7 +7125,7 @@ fn accumulate_quality_histogram_u64_via_u32(
         let chunk = &rgba_stream[byte_start..byte_end];
         let mut chunk_histogram = take_quality_histogram_u32(QUALITY_HISTOGRAM_LEN);
         if all_opaque {
-            accumulate_quality_histogram_u32_bits_remaining_opaque::<5, false>(
+            accumulate_quality_histogram_u32_bits_remaining_opaque::<5, false, false>(
                 &mut chunk_histogram,
                 chunk,
                 0,
@@ -7941,6 +8000,29 @@ fn rgba_stream_samples_opaque(rgba_stream: &[u8], alpha_threshold: u8) -> bool {
             sample * last_pixel / (sample_count - 1)
         };
         if unsafe { *pointer.add(pixel_index * 4 + 3) } < alpha_threshold {
+            return false;
+        }
+    }
+    true
+}
+
+#[inline(always)]
+fn rgba_stream_samples_alpha_255(rgba_stream: &[u8]) -> bool {
+    let pixel_count = rgba_stream.len() / 4;
+    if pixel_count == 0 {
+        return true;
+    }
+    const MAX_SAMPLE_COUNT: usize = 256;
+    let sample_count = pixel_count.min(MAX_SAMPLE_COUNT);
+    let last_pixel = pixel_count - 1;
+    let pointer = rgba_stream.as_ptr();
+    for sample in 0..sample_count {
+        let pixel_index = if sample_count == 1 {
+            0
+        } else {
+            sample * last_pixel / (sample_count - 1)
+        };
+        if unsafe { *pointer.add(pixel_index * 4 + 3) } != u8::MAX {
             return false;
         }
     }
