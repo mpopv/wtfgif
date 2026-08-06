@@ -1,81 +1,121 @@
 # wtfgif
 
-Fast GIF encode and decode for Node.js, browsers, Workers, and edge runtimes.
+`wtfgif` is a JavaScript/TypeScript library for making and reading GIF files.
+It works in Node.js, browsers, Workers, and edge runtimes.
+
+- To make a GIF, give it one or more images as RGBA pixel arrays.
+- To read a GIF, give it the file bytes and get RGBA pixel arrays back.
 
 ```bash
 npm install wtfgif
 ```
 
-## Encode
+## Make a GIF
 
-Initialize WebAssembly once when your app starts. Then give wtfgif ordinary
-RGBA images—no palette or preprocessing required.
+This example creates a two-frame GIF and saves it in Node.js:
 
 ```ts
+import { writeFile } from "node:fs/promises";
 import { encodeRgbaGifFrames, initializeWasmGlobally } from "wtfgif/encode";
 
-await initializeWasmGlobally();
+await initializeWasmGlobally(); // Do this once when your app starts.
+
+const width = 128;
+const height = 128;
+
+function solidFrame(red: number, green: number, blue: number) {
+	const frame = new Uint8Array(width * height * 4);
+	for (let i = 0; i < frame.length; i += 4) {
+		frame.set([red, green, blue, 255], i);
+	}
+	return frame;
+}
 
 const gif = encodeRgbaGifFrames({
-	width: 128,
-	height: 128,
-	frames: rgbaFrames, // one flat RGBA buffer containing every frame
-	frameCount: 8,
-	delay: 10, // hundredths of a second; may also be one value per frame
-	loop: 0,
+	width,
+	height,
+	frames: [solidFrame(255, 0, 0), solidFrame(0, 0, 255)],
+	delay: 50, // 50 hundredths of a second = 500 ms per frame
+	loop: 0, // Repeat forever
 });
+
+await writeFile("output.gif", gif);
 ```
 
-`wtfgif/encode` has one path: adaptive global palette creation in Wasm followed
-by lossless literal LZW. It does not require a known palette, skip pixels, reuse
-an earlier result, or lower its palette quality to win the benchmark.
+Each frame must contain `width * height * 4` bytes: red, green, blue, and
+alpha for every pixel. In a browser, `canvas.getContext("2d").getImageData()`
+provides pixels in this format.
 
-GIF supports at most 256 colors in a palette and only binary transparency, so
-no GIF encoder can preserve every full-color RGBA source pixel exactly. Literal
-LZW is lossless after palette mapping; the speed tradeoff is a larger file, not
-lower visual quality.
+## Read or process a GIF
 
-## Decode
-
-`GifReader` is an omggif-compatible decoder:
+`preparePlayback()` gives you complete frames with GIF transparency and frame
+placement already handled:
 
 ```ts
+import { readFile } from "node:fs/promises";
 import { GifReader } from "wtfgif";
 
-const reader = new GifReader(gifBytes);
-const rgba = new Uint8ClampedArray(reader.width * reader.height * 4);
+const file = await readFile("input.gif");
+const reader = new GifReader(file);
+const decoded = reader.preparePlayback();
 
-for (let frame = 0; frame < reader.numFrames(); frame += 1) {
-	reader.decodeAndBlitFrameRGBA(frame, rgba);
+console.log(reader.width, reader.height, reader.numFrames());
+
+for (let i = 0; i < reader.numFrames(); i += 1) {
+	const rgba = new Uint8Array(reader.width * reader.height * 4);
+	decoded.copyFrame(i, rgba);
+
+	// Read, edit, resize, analyze, or draw this frame here.
+	console.log(`frame ${i}: ${decoded.frames[i]!.delay * 10} ms`, rgba);
 }
+
+decoded.dispose();
+reader.dispose();
 ```
+
+To save edited frames as a new GIF, collect the changed RGBA arrays and pass
+them to `encodeRgbaGifFrames()`. Use the decoded frame delays and
+`reader.loopCount()` if you want to preserve the original timing.
+
+In a browser, get GIF bytes with
+`new Uint8Array(await file.arrayBuffer())`. To turn encoded bytes into a file
+or URL, use `new Blob([gif], { type: "image/gif" })`.
 
 ## Speed
 
-The normal encode benchmark uses eight real MakeEmoji images at 128×128. Both
-sides create a palette, map every RGBA pixel, and write a valid GIF.
+The benchmark starts with arbitrary RGBA images. Neither encoder is given a
+palette: both must choose colors, map every pixel, and write a valid GIF.
+The baseline is `image-q` plus `omggif`.
 
-| Boundary | image-q + omggif | wtfgif | Speedup |
+| Boundary | Baseline | wtfgif | Faster |
 | --- | ---: | ---: | ---: |
-| Initialized encode | 94.632 ms | 0.376 ms | **251.68×** |
-| First real encode after initialization | 121.707 ms | 2.122 ms | **57.36×** |
-| Fresh worker operation | 135.744 ms | 3.463 ms | **39.20×** |
-| Complete process wall clock | 164.648 ms | 30.355 ms | **5.42×** |
-| Fresh worker, 10 × 512×512 stress encode | 6,171.189 ms | 28.650 ms | **215.40×** |
-| Complete stress-process wall clock | 6,211.252 ms | 58.928 ms | **105.40×** |
+| First normal encode after Wasm initialization, zero warmups | 130.470 ms | 2.333 ms | **55.92×** |
+| Normal encode in a fresh worker | 145.221 ms | 3.780 ms | **38.42×** |
+| Complete fresh normal process | 175.615 ms | 33.077 ms | **5.31×** |
+| Initialized normal throughput | 100.554 ms | 0.430 ms | **233.64×** |
+| First 10 × 512×512 stress encode, zero warmups | 6,516.296 ms | 11.184 ms | **582.66×** |
+| Complete fresh stress process | 7,285.050 ms | 71.463 ms | **101.94×** |
 
-The normal wtfgif output is 149,601 bytes at 34.12 dB PSNR. The baseline is
-39,350 bytes at 31.84 dB. In other words, the initialized path is over 200×
-faster and produces the higher-quality pixels, but the file is larger. The
-fresh-worker clock includes fixture loading, package import, Wasm initialization,
-and encoding after Node starts. The process-wall clock also includes launching
-Node itself; that fixed startup dominates the small real-image job.
+The normal wtfgif output is 149,601 bytes at 34.12 dB PSNR. The stress output
+is 2,973,381 bytes at 26.19 dB. Literal LZW preserves the selected pixels
+exactly; wtfgif trades a larger file for speed, not lower pixel quality.
 
 ```bash
 npm run bench
-BENCH_WTFFIG_ENTRY=encode BENCH_ITERATIONS=50 node scripts/bench-cold-rgba.mjs
+BENCH_INITIALIZED_FIRST=1 BENCH_WTFFIG_ENTRY=encode BENCH_ITERATIONS=60 node scripts/bench-cold-rgba.mjs
 ```
 
-See [BENCHMARKS.md](BENCHMARKS.md) for exact conditions and more results.
+Full conditions and additional results are in [BENCHMARKS.md](BENCHMARKS.md).
 
-[Browser demo](https://mpopv.github.io/wtfgif/) · [MIT](LICENSE)
+## Good to know
+
+- GIF delays use hundredths of a second, so `delay: 10` means 100 ms.
+- GIF supports at most 256 colors and only fully transparent or fully opaque
+  pixels. Converting from full-color RGBA always involves some color reduction.
+- `wtfgif` favors very fast encoding and high visual quality over the smallest
+  possible file size.
+- `GifReader` and `GifWriter` are compatible with the equivalent `omggif` APIs
+  if you need lower-level palette and frame control.
+
+[Try the browser demo](https://mpopv.github.io/wtfgif/) ·
+[Benchmarks](BENCHMARKS.md) · [MIT license](LICENSE)

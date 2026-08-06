@@ -932,7 +932,7 @@ fn coarse_nearest_table_matches_exact_search() {
                 }
             }
         }
-        let sparse_table = tree.coarse_nearest_table_for_cells(&palette, &requested);
+        let sparse_table = tree.coarse_nearest_table_for_cells(&palette, &requested, &[0; 1 << 12]);
         for red in 0..16u8 {
             for green in 0..16u8 {
                 for blue in 0..16u8 {
@@ -1000,6 +1000,57 @@ fn quality_quantization_improves_rgb_error_over_fast_quantization() {
     };
 
     assert!(error(&quality_palette, &quality_indices) < error(&fast_palette, &fast_indices));
+}
+
+#[test]
+fn wu_dense_palette_improves_weighted_error_without_approximate_mapping() {
+    let mut colors = Vec::with_capacity(1 << 12);
+    for red in 0..16u16 {
+        for green in 0..16u16 {
+            for blue in 0..16u16 {
+                let histogram_index = (red << 8) | (green << 4) | blue;
+                let count = 1 + ((red * 73 + green * 151 + blue * 199) ^ (red * green * 17)) % 257;
+                colors.push(QuantizedColor {
+                    count: QuantizedColorCount::from(count),
+                    histogram_index,
+                    red: ((red << 4) | 8) as u8,
+                    green: ((green << 4) | 8) as u8,
+                    blue: ((blue << 4) | 8) as u8,
+                });
+            }
+        }
+    }
+    let weighted_error = |palette: &[u32], mapping: &[u8], colors: &[QuantizedColor]| -> u64 {
+        colors
+            .iter()
+            .map(|color| {
+                let representative =
+                    palette[usize::from(mapping[usize::from(color.histogram_index)])];
+                let red = ((representative >> 16) & 255) as i32;
+                let green = ((representative >> 8) & 255) as i32;
+                let blue = (representative & 255) as i32;
+                let dr = i32::from(color.red) - red;
+                let dg = i32::from(color.green) - green;
+                let db = i32::from(color.blue) - blue;
+                (dr * dr + dg * dg + db * db) as u64 * quantized_color_count_u64(color.count)
+            })
+            .sum()
+    };
+
+    let (wu_palette, wu_mapping) = build_quality_wu_palette(false, colors.clone(), 1 << 12, 256);
+    let wu_error = weighted_error(&wu_palette, &wu_mapping, &colors);
+    recycle_quality_histogram_to_palette(wu_mapping);
+    recycle_quality_palette(wu_palette);
+
+    let (median_palette, median_mapping) =
+        build_quality_median_cut_palette(false, colors.clone(), 4, 1 << 12, 256);
+    let median_error = weighted_error(&median_palette, &median_mapping, &colors);
+    recycle_quality_histogram_to_palette(median_mapping);
+
+    assert!(
+        wu_error < median_error,
+        "{wu_error} should beat {median_error}"
+    );
 }
 
 #[test]
