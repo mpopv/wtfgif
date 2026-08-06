@@ -54,7 +54,9 @@ function makeStressFixture(width, height, frameCount) {
 }
 
 const initializedFirst = process.env.BENCH_INITIALIZED_FIRST === "1";
+const recordPhases = process.env.BENCH_PHASES === "1";
 let started = performance.now();
+const coldStarted = started;
 const fixture =
 	fixtureName === "stress"
 		? makeStressFixture(512, 512, 10)
@@ -69,6 +71,7 @@ const fixture =
 				),
 			};
 const { width, height, frameCount, rgba } = fixture;
+const fixtureReady = recordPhases ? performance.now() : 0;
 
 function pointColor(point) {
 	return (point.r << 16) | (point.g << 8) | point.b;
@@ -161,6 +164,8 @@ function encodeBaselineGif(GifWriter, quantized) {
 }
 
 let output;
+let imported = 0;
+let initialized = 0;
 if (implementation === "baseline") {
 	const [{ GifWriter }, { default: ImageQ }] = await Promise.all([
 		import("omggif"),
@@ -174,7 +179,9 @@ if (implementation === "baseline") {
 			? "../dist/encode.mjs"
 			: "../dist/index.mjs";
 	const { encodeRgbaGifFrames, initializeWasmGlobally } = await import(entry);
+	if (recordPhases) imported = performance.now();
 	await initializeWasmGlobally();
+	if (recordPhases) initialized = performance.now();
 	if (initializedFirst) started = performance.now();
 	output = encodeRgbaGifFrames({
 		alphaThreshold,
@@ -189,9 +196,22 @@ if (implementation === "baseline") {
 	throw new Error(`Unknown implementation: ${implementation}`);
 }
 
+const completed = performance.now();
+
 process.stdout.write(
 	JSON.stringify({
-		elapsedMs: performance.now() - started,
+		elapsedMs: completed - started,
 		outputBytes: output.length,
+		...(recordPhases && implementation === "wtfgif"
+			? {
+					phases: {
+						fixtureMs: fixtureReady - coldStarted,
+						importMs: imported - fixtureReady,
+						initializeMs: initialized - imported,
+						encodeMs: completed - initialized,
+						totalMs: completed - coldStarted,
+					},
+				}
+			: {}),
 	}),
 );

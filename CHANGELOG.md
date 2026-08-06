@@ -2,6 +2,20 @@
 
 All notable changes to wtfgif are documented here.
 
+## 3.0.1 - 2026-08-06
+
+- Correct the cold benchmark to measure and report complete spawned-process
+  wall time separately from the in-worker image-to-GIF operation. Earlier
+  wording incorrectly said the worker's internal timer included Node launch.
+- Fresh real-image receipts: **224.39x initialized** (94.693 ms vs 0.422 ms),
+  **55.88x first real encode after initialization** (121.353 ms vs 2.172 ms),
+  **38.81x fresh-worker operation** (134.554 ms vs 3.467 ms), and **5.47x
+  complete process wall clock** (163.195 ms vs 29.845 ms).
+- The 512x512x10 stress workload remains **215.40x** faster inside a fresh
+  worker (6,171.189 ms vs 28.650 ms) and **105.40x** faster including the
+  entire spawned process (6,211.252 ms vs 58.928 ms). GIF bytes and quality are
+  unchanged.
+
 ## 3.0.0 - 2026-08-06
 
 - Make `wtfgif/encode` a single-purpose arbitrary-RGBA encoder: adaptive global

@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
+import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -12,6 +13,7 @@ if (!Number.isInteger(iterations) || iterations < 1) {
 }
 
 function runWorker(implementation) {
+	const wallStarted = performance.now();
 	const result = spawnSync(process.execPath, [worker, implementation], {
 		cwd: root,
 		encoding: "utf8",
@@ -31,7 +33,10 @@ function runWorker(implementation) {
 			].join("\n"),
 		);
 	}
-	return JSON.parse(result.stdout);
+	return {
+		...JSON.parse(result.stdout),
+		wallMs: performance.now() - wallStarted,
+	};
 }
 
 function median(values) {
@@ -40,6 +45,14 @@ function median(values) {
 }
 
 const samples = { baseline: [], wtfgif: [] };
+const wallSamples = { baseline: [], wtfgif: [] };
+const phaseSamples = {
+	fixtureMs: [],
+	importMs: [],
+	initializeMs: [],
+	encodeMs: [],
+	totalMs: [],
+};
 let outputBytes = 0;
 for (let iteration = 0; iteration < iterations; iteration += 1) {
 	const order =
@@ -47,24 +60,48 @@ for (let iteration = 0; iteration < iterations; iteration += 1) {
 	for (const implementation of order) {
 		const result = runWorker(implementation);
 		samples[implementation].push(result.elapsedMs);
-		if (implementation === "wtfgif") outputBytes = result.outputBytes;
+		wallSamples[implementation].push(result.wallMs);
+		if (implementation === "wtfgif") {
+			outputBytes = result.outputBytes;
+			if (result.phases) {
+				for (const phase of Object.keys(phaseSamples)) {
+					phaseSamples[phase].push(result.phases[phase]);
+				}
+			}
+		}
 	}
 }
 
 const baseline = median(samples.baseline);
 const wtfgif = median(samples.wtfgif);
+const baselineWall = median(wallSamples.baseline);
+const wtfgifWall = median(wallSamples.wtfgif);
 console.log(
-	`True cold arbitrary-RGBA encode (${fixture}): ${iterations} fresh Node processes per implementation, zero warmups`,
+	`Fresh-process arbitrary-RGBA encode (${fixture}): ${iterations} processes per implementation, zero warmups`,
 );
-console.log("contract\tbaseline ms\twtfgif ms\tspeedup\twtfgif bytes");
-console.log(
-	[
-		fixture === "stress"
-			? "10 synthetic frames / 512x512 / quality global palette"
-			: "8 real MakeEmoji images / 128x128 / quality global palette",
-		baseline.toFixed(3),
-		wtfgif.toFixed(3),
-		`${(baseline / wtfgif).toFixed(2)}x`,
-		outputBytes,
-	].join("\t"),
-);
+console.log("boundary\tbaseline ms\twtfgif ms\tspeedup\twtfgif bytes");
+for (const [boundary, baselineMs, wtfgifMs] of [
+	["in-worker operation", baseline, wtfgif],
+	["complete process wall clock", baselineWall, wtfgifWall],
+]) {
+	console.log(
+		[
+			boundary,
+			baselineMs.toFixed(3),
+			wtfgifMs.toFixed(3),
+			`${(baselineMs / wtfgifMs).toFixed(2)}x`,
+			outputBytes,
+		].join("\t"),
+	);
+}
+if (phaseSamples.totalMs.length > 0) {
+	console.log(
+		"phase\tfixture ms\timport ms\tinitialize ms\tencode ms\ttotal ms",
+	);
+	console.log(
+		[
+			"wtfgif median",
+			...Object.values(phaseSamples).map((values) => median(values).toFixed(3)),
+		].join("\t"),
+	);
+}

@@ -57,14 +57,19 @@ sides create a palette, map every RGBA pixel, and write a valid GIF.
 
 | Boundary | image-q + omggif | wtfgif | Speedup |
 | --- | ---: | ---: | ---: |
-| Initialized encode | 95.096 ms | 0.421 ms | **225.66×** |
-| First real encode after initialization | 123.842 ms | 2.872 ms | **43.12×** |
-| Fresh process, import, initialization, and encode | 137.358 ms | 4.261 ms | **32.24×** |
-| Fresh process, 10 × 512×512 stress encode | 6,259.352 ms | 30.098 ms | **207.97×** |
+| Initialized encode | 94.693 ms | 0.422 ms | **224.39×** |
+| First real encode after initialization | 121.353 ms | 2.172 ms | **55.88×** |
+| Fresh worker operation | 134.554 ms | 3.467 ms | **38.81×** |
+| Complete process wall clock | 163.195 ms | 29.845 ms | **5.47×** |
+| Fresh worker, 10 × 512×512 stress encode | 6,171.189 ms | 28.650 ms | **215.40×** |
+| Complete stress-process wall clock | 6,211.252 ms | 58.928 ms | **105.40×** |
 
 The normal wtfgif output is 149,601 bytes at 34.12 dB PSNR. The baseline is
 39,350 bytes at 31.84 dB. In other words, the initialized path is over 200×
-faster and produces the higher-quality pixels, but the file is larger.
+faster and produces the higher-quality pixels, but the file is larger. The
+fresh-worker clock includes fixture loading, package import, Wasm initialization,
+and encoding after Node starts. The process-wall clock also includes launching
+Node itself; that fixed startup dominates the small real-image job.
 
 ```bash
 npm run bench
