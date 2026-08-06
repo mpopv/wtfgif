@@ -2,6 +2,15 @@
 
 All notable changes to wtfgif are documented here.
 
+## 2.4.15 - 2026-08-05
+
+- Reduce Wasm quality-quantization working memory and avoid clearing reusable
+  histogram bins that are already empty. Palette selection, transparency, GIF
+  bytes, decoded pixels, and quality remain unchanged.
+- Fresh initialized receipt: 235.19x on the real eight-frame 128x128 fixture
+  (95.789 ms image-q + omggif vs 0.407 ms wtfgif), with 149,601 output bytes
+  at 34.12 dB PSNR.
+
 ## 2.4.14 - 2026-08-05
 
 - Publish the current optimized arbitrary-RGBA quality encoder build to npm.

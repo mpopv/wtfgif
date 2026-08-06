@@ -5022,19 +5022,39 @@ struct RgbHistogramBin32 {
     blue: u32,
 }
 
+#[cfg(target_arch = "wasm32")]
+type QuantizedColorCount = u32;
+#[cfg(not(target_arch = "wasm32"))]
+type QuantizedColorCount = u64;
+
+#[inline(always)]
+fn quantized_color_count_u64(count: QuantizedColorCount) -> u64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        u64::from(count)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        count
+    }
+}
+
 #[derive(Clone, Copy, Default)]
 struct QuantizedColor {
-    count: u64,
+    // A Wasm input lives in a 32-bit address space, so its total pixel count
+    // (and therefore every histogram-bin count) fits in u32. Keep the native
+    // build wide for callers that can supply slices larger than Wasm memory.
+    count: QuantizedColorCount,
     // The quality histograms are at most 5 bits per channel (32,768 bins),
-    // so a u16 is sufficient. Keeping the hot fields in a 16-byte record
-    // halves the color-arena footprint versus usize + u64 + padding.
+    // so a u16 is sufficient. Keeping the hot fields compact reduces the
+    // color-arena footprint on wasm32 versus usize + u64 + padding.
     histogram_index: u16,
     red: u8,
     green: u8,
     blue: u8,
 }
 
-type QuantizedColorStats = (u64, u8, u8, u8);
+type QuantizedColorStats = (QuantizedColorCount, u8, u8, u8);
 type QuantizedColorSplit = (usize, QuantizedColorStats, QuantizedColorStats);
 
 #[cfg(all(test, not(feature = "encode-only")))]
@@ -5111,7 +5131,7 @@ impl QuantizedColorBox {
 
 #[inline(always)]
 fn quantized_color_stats(colors: &[QuantizedColor]) -> QuantizedColorStats {
-    let mut weight = 0u64;
+    let mut weight = QuantizedColorCount::default();
     let mut min_red = u8::MAX;
     let mut min_green = u8::MAX;
     let mut min_blue = u8::MAX;
@@ -5142,14 +5162,14 @@ fn quantized_color_split_stats(
     split: usize,
 ) -> (QuantizedColorStats, QuantizedColorStats) {
     debug_assert!(split > 0 && split < colors.len());
-    let mut left_weight = 0u64;
+    let mut left_weight = QuantizedColorCount::default();
     let mut left_min_red = u8::MAX;
     let mut left_min_green = u8::MAX;
     let mut left_min_blue = u8::MAX;
     let mut left_max_red = 0;
     let mut left_max_green = 0;
     let mut left_max_blue = 0;
-    let mut right_weight = 0u64;
+    let mut right_weight = QuantizedColorCount::default();
     let mut right_min_red = u8::MAX;
     let mut right_min_green = u8::MAX;
     let mut right_min_blue = u8::MAX;
@@ -5194,7 +5214,7 @@ fn quantized_color_split_stats(
 struct QuantizedColorArenaBox {
     start: usize,
     end: usize,
-    weight: u64,
+    weight: QuantizedColorCount,
     score: u64,
     representative: u32,
     red_range: u8,
@@ -5218,7 +5238,7 @@ impl QuantizedColorArenaBox {
     fn from_stats(
         start: usize,
         end: usize,
-        weight: u64,
+        weight: QuantizedColorCount,
         red_range: u8,
         green_range: u8,
         blue_range: u8,
@@ -5228,7 +5248,7 @@ impl QuantizedColorArenaBox {
             start,
             end,
             weight,
-            score: weight * range * range,
+            score: quantized_color_count_u64(weight) * range * range,
             representative: 0,
             red_range,
             green_range,
@@ -5270,7 +5290,7 @@ impl QuantizedColorArenaBox {
         self.green_range = left_stats.2;
         self.blue_range = left_stats.3;
         let range = u64::from(left_stats.1.max(left_stats.2).max(left_stats.3));
-        self.score = left_stats.0 * range * range;
+        self.score = quantized_color_count_u64(left_stats.0) * range * range;
         Some(right)
     }
 
@@ -5284,7 +5304,7 @@ impl QuantizedColorArenaBox {
         let mut blue = 0u64;
         let mut count = 0u64;
         for color in &colors[self.start..self.end] {
-            let weight = color.count;
+            let weight = quantized_color_count_u64(color.count);
             red += u64::from(color.red) * weight;
             green += u64::from(color.green) * weight;
             blue += u64::from(color.blue) * weight;
@@ -5336,7 +5356,7 @@ fn weighted_axis_split_index(colors: &mut [QuantizedColor], axis: u8, midpoint: 
 fn weighted_axis_split_index_with_stats(
     colors: &mut [QuantizedColor],
     axis: u8,
-    midpoint: u64,
+    midpoint: QuantizedColorCount,
 ) -> QuantizedColorSplit {
     match axis {
         0 => weighted_axis_split_index_with_stats_const::<0>(colors, midpoint),
@@ -5348,7 +5368,7 @@ fn weighted_axis_split_index_with_stats(
 #[inline(always)]
 fn weighted_axis_split_index_with_stats_const<const AXIS: usize>(
     colors: &mut [QuantizedColor],
-    midpoint: u64,
+    midpoint: QuantizedColorCount,
 ) -> QuantizedColorSplit {
     let total_len = colors.len();
     if total_len <= 1 {
@@ -5357,8 +5377,8 @@ fn weighted_axis_split_index_with_stats_const<const AXIS: usize>(
     }
     // Median-cut splits repeatedly rebuild this byte-axis histogram. Keep the
     // sparse weight slots uninitialized and track which byte values were seen;
-    // zeroing 256 u64s for every split is otherwise pure overhead.
-    let mut weights = [std::mem::MaybeUninit::<u64>::uninit(); 256];
+    // zeroing 256 wide weight slots for every split is otherwise pure overhead.
+    let mut weights = [std::mem::MaybeUninit::<QuantizedColorCount>::uninit(); 256];
     let mut seen = [0u64; 4];
     for color in colors.iter() {
         let value = usize::from(quantized_color_axis_const::<AXIS>(color));
@@ -5374,7 +5394,7 @@ fn weighted_axis_split_index_with_stats_const<const AXIS: usize>(
         }
     }
     let target = midpoint.max(1);
-    let mut below_weight = 0u64;
+    let mut below_weight = QuantizedColorCount::default();
     let mut split_axis = 0usize;
     for (value, weight_slot) in weights.iter().enumerate() {
         let word = value >> 6;
@@ -5397,14 +5417,14 @@ fn weighted_axis_split_index_with_stats_const<const AXIS: usize>(
     let mut less_end = 0usize;
     let mut scan = 0usize;
     let mut greater_start = total_len;
-    let mut less_weight = 0u64;
+    let mut less_weight = QuantizedColorCount::default();
     let mut less_min_red = u8::MAX;
     let mut less_min_green = u8::MAX;
     let mut less_min_blue = u8::MAX;
     let mut less_max_red = 0u8;
     let mut less_max_green = 0u8;
     let mut less_max_blue = 0u8;
-    let mut greater_weight = 0u64;
+    let mut greater_weight = QuantizedColorCount::default();
     let mut greater_min_red = u8::MAX;
     let mut greater_min_green = u8::MAX;
     let mut greater_min_blue = u8::MAX;
@@ -5445,15 +5465,15 @@ fn weighted_axis_split_index_with_stats_const<const AXIS: usize>(
     }
     let target_in_equal = target - below_weight;
     let mut split = less_end;
-    let mut equal_weight = 0u64;
-    let mut left_equal_weight = 0u64;
+    let mut equal_weight = QuantizedColorCount::default();
+    let mut left_equal_weight = QuantizedColorCount::default();
     let mut left_equal_min_red = u8::MAX;
     let mut left_equal_min_green = u8::MAX;
     let mut left_equal_min_blue = u8::MAX;
     let mut left_equal_max_red = 0u8;
     let mut left_equal_max_green = 0u8;
     let mut left_equal_max_blue = 0u8;
-    let mut right_equal_weight = 0u64;
+    let mut right_equal_weight = QuantizedColorCount::default();
     let mut right_equal_min_red = u8::MAX;
     let mut right_equal_min_green = u8::MAX;
     let mut right_equal_min_blue = u8::MAX;
@@ -5702,13 +5722,14 @@ fn map_quality_pixel<const BITS: usize>(
 }
 
 fn quality_colors_from_histogram_u32<const SAFE_SUMS: bool>(
-    histogram: &[RgbHistogramBin32],
+    histogram: &mut [RgbHistogramBin32],
 ) -> Vec<QuantizedColor> {
     let mut colors = take_quality_colors();
     if colors.capacity() < histogram.len() {
         colors.reserve(histogram.len() - colors.capacity());
     }
-    for (histogram_index, bin) in histogram.iter().enumerate() {
+    for (histogram_index, bin_slot) in histogram.iter_mut().enumerate() {
+        let bin = *bin_slot;
         if bin.count == 0 {
             continue;
         }
@@ -5728,13 +5749,15 @@ fn quality_colors_from_histogram_u32<const SAFE_SUMS: bool>(
             rounded_histogram_average_u32(bin.blue, bin.count)
         };
         colors.push(QuantizedColor {
-            count: u64::from(bin.count),
+            count: QuantizedColorCount::from(bin.count),
             histogram_index: histogram_index as u16,
             red,
             green,
             blue,
         });
+        *bin_slot = RgbHistogramBin32::default();
     }
+    REUSABLE_QUALITY_HISTOGRAM_U32_CLEAN.with(|clean| clean.set(true));
     colors
 }
 
@@ -5756,23 +5779,27 @@ fn rounded_weighted_average_u32(sum: u32, count: u32) -> u8 {
     }
 }
 
-fn quality_colors_from_histogram_u64(histogram: &[RgbHistogramBin]) -> Vec<QuantizedColor> {
+fn quality_colors_from_histogram_u64(histogram: &mut [RgbHistogramBin]) -> Vec<QuantizedColor> {
     let mut colors = take_quality_colors();
     if colors.capacity() < histogram.len() {
         colors.reserve(histogram.len() - colors.capacity());
     }
-    for (histogram_index, bin) in histogram.iter().enumerate() {
+    for (histogram_index, bin_slot) in histogram.iter_mut().enumerate() {
+        let bin = *bin_slot;
         if bin.count == 0 {
             continue;
         }
         colors.push(QuantizedColor {
-            count: bin.count,
+            count: QuantizedColorCount::try_from(bin.count)
+                .expect("quality histogram count exceeds the Wasm addressable pixel limit"),
             histogram_index: histogram_index as u16,
             red: ((bin.red + bin.count / 2) / bin.count) as u8,
             green: ((bin.green + bin.count / 2) / bin.count) as u8,
             blue: ((bin.blue + bin.count / 2) / bin.count) as u8,
         });
+        *bin_slot = RgbHistogramBin::default();
     }
+    REUSABLE_QUALITY_HISTOGRAM_U64_CLEAN.with(|clean| clean.set(true));
     colors
 }
 
@@ -5929,7 +5956,7 @@ fn index_rgba_frames_quality_low_res<const HAS_TRANSPARENT: bool>(
                 &mut [],
             );
         }
-        let colors = quality_colors_from_histogram_u32::<true>(&histogram);
+        let colors = quality_colors_from_histogram_u32::<true>(&mut histogram);
         recycle_quality_color_index_table(table);
         recycle_quality_histogram_u32(histogram);
         let plan = build_quality_index_plan_from_colors(
@@ -6058,34 +6085,50 @@ fn quality_prefers_high_precision_histogram(rgba_stream: &[u8], alpha_threshold:
 }
 
 fn take_quality_histogram_u32(length: usize) -> Vec<RgbHistogramBin32> {
+    let clean = REUSABLE_QUALITY_HISTOGRAM_U32_CLEAN.with(|clean| clean.replace(false));
     REUSABLE_QUALITY_HISTOGRAM_U32.with(|scratch| {
         let mut histogram = std::mem::take(&mut *scratch.borrow_mut());
         if histogram.len() != length {
             histogram.resize(length, RgbHistogramBin32::default());
         }
-        histogram.fill(RgbHistogramBin32::default());
+        if !clean {
+            histogram.fill(RgbHistogramBin32::default());
+        }
         histogram
     })
 }
 
-fn recycle_quality_histogram_u32(histogram: Vec<RgbHistogramBin32>) {
+fn recycle_quality_histogram_u32(mut histogram: Vec<RgbHistogramBin32>) {
+    let clean = REUSABLE_QUALITY_HISTOGRAM_U32_CLEAN.with(|clean| clean.replace(false));
+    if !clean {
+        histogram.fill(RgbHistogramBin32::default());
+    }
+    REUSABLE_QUALITY_HISTOGRAM_U32_CLEAN.with(|clean| clean.set(true));
     REUSABLE_QUALITY_HISTOGRAM_U32.with(|scratch| {
         *scratch.borrow_mut() = histogram;
     });
 }
 
 fn take_quality_histogram_u64(length: usize) -> Vec<RgbHistogramBin> {
+    let clean = REUSABLE_QUALITY_HISTOGRAM_U64_CLEAN.with(|clean| clean.replace(false));
     REUSABLE_QUALITY_HISTOGRAM_U64.with(|scratch| {
         let mut histogram = std::mem::take(&mut *scratch.borrow_mut());
         if histogram.len() != length {
             histogram.resize(length, RgbHistogramBin::default());
         }
-        histogram.fill(RgbHistogramBin::default());
+        if !clean {
+            histogram.fill(RgbHistogramBin::default());
+        }
         histogram
     })
 }
 
-fn recycle_quality_histogram_u64(histogram: Vec<RgbHistogramBin>) {
+fn recycle_quality_histogram_u64(mut histogram: Vec<RgbHistogramBin>) {
+    let clean = REUSABLE_QUALITY_HISTOGRAM_U64_CLEAN.with(|clean| clean.replace(false));
+    if !clean {
+        histogram.fill(RgbHistogramBin::default());
+    }
+    REUSABLE_QUALITY_HISTOGRAM_U64_CLEAN.with(|clean| clean.set(true));
     REUSABLE_QUALITY_HISTOGRAM_U64.with(|scratch| {
         *scratch.borrow_mut() = histogram;
     });
@@ -6898,7 +6941,6 @@ fn index_rgba_frames_quality_u32<const BITS: usize>(
         palette.push(rgb);
         indexed.push(index);
     }
-
     if let Some(start_offset) = overflow_offset {
         // Keep the exact-prefix fast path allocation-free. Once overflow is
         // known, rebuild only that prefix and scan the remaining pixels once.
@@ -6996,7 +7038,7 @@ fn index_rgba_frames_quality_u32<const BITS: usize>(
         }
         recycle_quantized_indexed(indexed);
 
-        let colors = quality_colors_from_histogram_u32::<true>(&histogram);
+        let colors = quality_colors_from_histogram_u32::<true>(&mut histogram);
         recycle_quality_color_index_table(table);
         recycle_quality_histogram_u32(histogram);
         let plan = build_quality_index_plan_from_colors(
@@ -7092,7 +7134,7 @@ fn index_rgba_frames_quality_u64(
         all_opaque,
     );
 
-    let colors = quality_colors_from_histogram_u64(&histogram);
+    let colors = quality_colors_from_histogram_u64(&mut histogram);
     recycle_quality_color_index_table(table);
     recycle_quality_histogram_u64(histogram);
     let plan = build_quality_index_plan_from_colors(
@@ -7183,10 +7225,10 @@ fn build_quality_index_plan_from_colors(
         // prefix by the exact count/index key used for palette selection.
         if colors
             .iter()
-            .all(|color| color.count < QUANTIZED_SORT_COUNT_LIMIT)
+            .all(|color| quantized_color_count_u64(color.count) < QUANTIZED_SORT_COUNT_LIMIT)
         {
             let order = |color: &QuantizedColor| {
-                ((QUANTIZED_SORT_COUNT_LIMIT - 1 - color.count) << 16)
+                ((QUANTIZED_SORT_COUNT_LIMIT - 1 - quantized_color_count_u64(color.count)) << 16)
                     | u64::from(color.histogram_index)
             };
             if colors.len() > palette_len {
@@ -7197,7 +7239,10 @@ fn build_quality_index_plan_from_colors(
             }
         } else {
             colors.sort_unstable_by_key(|color| {
-                (std::cmp::Reverse(color.count), color.histogram_index)
+                (
+                    std::cmp::Reverse(quantized_color_count_u64(color.count)),
+                    color.histogram_index,
+                )
             });
         }
         let mut palette = Vec::with_capacity(palette_len + usize::from(has_transparent_pixels));
@@ -7318,6 +7363,8 @@ fn build_quality_index_plan_from_colors(
                     }
                 };
                 previous_hint = Some((index as u8, palette[index]));
+                // This branch is fed only by the u32 histogram path; the
+                // source pixel limit proves every bin count fits in u32.
                 let count = color.count as u32;
                 histogram_to_palette[usize::from(color.histogram_index)] = index as u8;
                 counts[index] += count;
@@ -7403,10 +7450,11 @@ fn build_quality_index_plan_from_colors(
                 };
                 previous_hint = Some((index as u8, palette[index]));
                 histogram_to_palette[usize::from(color.histogram_index)] = index as u8;
-                counts[index] += color.count;
-                red_sums[index] += u64::from(color.red) * color.count;
-                green_sums[index] += u64::from(color.green) * color.count;
-                blue_sums[index] += u64::from(color.blue) * color.count;
+                counts[index] += quantized_color_count_u64(color.count);
+                red_sums[index] += u64::from(color.red) * quantized_color_count_u64(color.count);
+                green_sums[index] +=
+                    u64::from(color.green) * quantized_color_count_u64(color.count);
+                blue_sums[index] += u64::from(color.blue) * quantized_color_count_u64(color.count);
             }
             for index in 0..palette.len() {
                 let count = counts[index];
@@ -9901,8 +9949,12 @@ std::thread_local! {
         const { std::cell::RefCell::new(Vec::new()) };
     static REUSABLE_QUALITY_HISTOGRAM_U32: std::cell::RefCell<Vec<RgbHistogramBin32>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    static REUSABLE_QUALITY_HISTOGRAM_U32_CLEAN: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(true) };
     static REUSABLE_QUALITY_HISTOGRAM_U64: std::cell::RefCell<Vec<RgbHistogramBin>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    static REUSABLE_QUALITY_HISTOGRAM_U64_CLEAN: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(true) };
     static REUSABLE_QUALITY_HISTOGRAM_TO_PALETTE: std::cell::RefCell<Vec<u8>> =
         const { std::cell::RefCell::new(Vec::new()) };
     static REUSABLE_QUALITY_COLORS: std::cell::RefCell<Vec<QuantizedColor>> =
