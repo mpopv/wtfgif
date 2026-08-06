@@ -98,7 +98,7 @@ quality-first RGBA pipeline; there is no fixed-palette or skipped-pixel
 shortcut in the race.
 
 The strict first-real-encode boundary is separate: twenty fresh processes measured
-123.523 ms for image-q + omggif versus 3.750 ms for wtfgif (**32.94×**). There
+123.409 ms for image-q + omggif versus 3.610 ms for wtfgif (**34.19×**). There
 are no timed warmup encodes in this receipt. The remaining gap is portable
 Wasm's first-call lazy compilation, not a retained result cache.
 Reproduce it with:
@@ -107,16 +107,16 @@ Reproduce it with:
 BENCH_INITIALIZED_FIRST=1 BENCH_WTFFIG_ENTRY=encode BENCH_ITERATIONS=20 node scripts/bench-cold-rgba.mjs
 ```
 
-On the larger 10-frame 512×512 stress workload, the initialized SIMD path is
-**1,085.30× faster** (6,213.433 ms for image-q + omggif versus 5.725 ms for
+On the larger 10-frame 512×512 stress workload, the strict-cold SIMD path is
+**199.88× faster** (6,223.341 ms for image-q + omggif versus 31.136 ms for
 wtfgif), with 2,973,381 output bytes and 26.12 dB PSNR versus the baseline's
 24.26 dB:
 
 ```bash
-BENCH_RGBA_FIXTURE=stress BENCH_ITERATIONS=5 BENCH_WARMUP_ITERATIONS=1 node scripts/bench-rgba.mjs
+BENCH_WTFFIG_ENTRY=encode BENCH_ITERATIONS=3 BENCH_COLD_WARMUPS=0 BENCH_COLD_RGBA_FIXTURE=stress node scripts/bench-cold-rgba.mjs
 ```
 
-That 1,085.30× result is not a cache trick: both encoders read all 2,621,440
+That 199.88× result is not a cache trick: both encoders read all 2,621,440
 source pixels and produce a valid GIF. The ratio grows on this larger fixture
 because wtfgif's histogram, lookup, and literal writer stay linear.
 
@@ -126,8 +126,8 @@ The same run with every source pixel treated as opaque
 
 For a true no-cache measurement, run `BENCH_WTFFIG_ENTRY=encode BENCH_ITERATIONS=20 node scripts/bench-cold-rgba.mjs`; it starts a new
 Node process for every sample and includes imports, Wasm initialization, and
-the complete encode. The current twenty-process median is 136.301 ms for the
-baseline versus 5.610 ms for wtfgif's encode entry (**24.30×**). Cold process startup is
+the complete encode. The current twenty-process median is 137.319 ms for the
+baseline versus 5.516 ms for wtfgif's encode entry (**24.89×**). Cold process startup is
 a separate boundary; initialize Wasm during page or worker startup for the hot
 numbers above:
 

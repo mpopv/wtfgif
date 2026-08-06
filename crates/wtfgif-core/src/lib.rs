@@ -6053,6 +6053,7 @@ fn index_rgba_frames_quality_high_res(
 /// input has much larger local color deltas and gets the faster 4-bit pass.
 /// Sampling a few thousand adjacent pixels keeps this decision negligible
 /// compared with the mandatory full histogram scan.
+#[inline(never)]
 fn quality_prefers_high_precision_histogram(rgba_stream: &[u8], alpha_threshold: u8) -> bool {
     let pixel_count = rgba_stream.len() / 4;
     if pixel_count < 2 {
@@ -8370,6 +8371,7 @@ impl PaletteKdTree {
         self.coarse_nearest_table_for_cells(palette_rgb, &[true; 1 << 12])
     }
 
+    #[inline(never)]
     fn coarse_nearest_table_for_cells(
         &self,
         palette_rgb: &[u32],
@@ -8434,6 +8436,7 @@ impl PaletteKdTree {
         table
     }
 
+    #[inline(never)]
     fn coarse_hint_table_for_cells(
         &self,
         palette_rgb: &[u32],
@@ -8547,7 +8550,7 @@ impl PaletteKdTree {
         self.nearest_with_seed::<USE_BOUNDS>(r, g, b, best_index, best_distance)
     }
 
-    #[inline(always)]
+    #[inline(never)]
     fn nearest_with_seed<const USE_BOUNDS: bool>(
         &self,
         r: u8,

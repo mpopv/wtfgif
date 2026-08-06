@@ -2,6 +2,17 @@
 
 All notable changes to wtfgif are documented here.
 
+## 2.4.17 - 2026-08-06
+
+- Reduce Wasm quality-encoder call overhead in the adaptive palette lookup
+  path without changing GIF bytes, decoded pixels, transparency, or quality.
+- Fresh strict-cold receipts on the arbitrary-image contract: **24.89x** on
+  eight real 128x128 frames (137.319 ms baseline vs 5.516 ms wtfgif), **34.19x**
+  for the first real encode after initialization (123.409 ms vs 3.610 ms),
+  and **199.88x** on the 512x512x10 stress fixture (6,223.341 ms vs
+  31.136 ms). Outputs remain byte-for-byte expected at 149,601 and 2,973,381
+  bytes respectively.
+
 ## 2.4.16 - 2026-08-06
 
 - Load the quality encoder's Wasm binary directly on Node instead of paying for
