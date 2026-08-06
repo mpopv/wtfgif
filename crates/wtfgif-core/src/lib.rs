@@ -7031,18 +7031,19 @@ fn build_quality_index_plan_from_colors(
                         usize::from(candidate)
                     } else {
                         usize::from(match previous_hint {
-                            Some((hint_index, hint_color)) => initial_tree.nearest_with_seed_split(
-                                color.red,
-                                color.green,
-                                color.blue,
-                                hint_index,
-                                palette_color_distance(
-                                    hint_color,
+                            Some((hint_index, hint_color)) => initial_tree
+                                .nearest_with_seed_bounds(
                                     color.red,
                                     color.green,
                                     color.blue,
+                                    hint_index,
+                                    palette_color_distance(
+                                        hint_color,
+                                        color.red,
+                                        color.green,
+                                        color.blue,
+                                    ),
                                 ),
-                            ),
                             None => initial_tree.nearest_with_hint_split(
                                 color.red,
                                 color.green,
@@ -7057,18 +7058,19 @@ fn build_quality_index_plan_from_colors(
                         usize::from(index)
                     } else {
                         usize::from(match previous_hint {
-                            Some((hint_index, hint_color)) => initial_tree.nearest_with_seed_split(
-                                color.red,
-                                color.green,
-                                color.blue,
-                                hint_index,
-                                palette_color_distance(
-                                    hint_color,
+                            Some((hint_index, hint_color)) => initial_tree
+                                .nearest_with_seed_bounds(
                                     color.red,
                                     color.green,
                                     color.blue,
+                                    hint_index,
+                                    palette_color_distance(
+                                        hint_color,
+                                        color.red,
+                                        color.green,
+                                        color.blue,
+                                    ),
                                 ),
-                            ),
                             None => initial_tree.nearest_with_hint_split(
                                 color.red,
                                 color.green,
@@ -7113,18 +7115,19 @@ fn build_quality_index_plan_from_colors(
                         usize::from(candidate)
                     } else {
                         usize::from(match previous_hint {
-                            Some((hint_index, hint_color)) => initial_tree.nearest_with_seed_split(
-                                color.red,
-                                color.green,
-                                color.blue,
-                                hint_index,
-                                palette_color_distance(
-                                    hint_color,
+                            Some((hint_index, hint_color)) => initial_tree
+                                .nearest_with_seed_bounds(
                                     color.red,
                                     color.green,
                                     color.blue,
+                                    hint_index,
+                                    palette_color_distance(
+                                        hint_color,
+                                        color.red,
+                                        color.green,
+                                        color.blue,
+                                    ),
                                 ),
-                            ),
                             None => initial_tree.nearest_with_hint_split(
                                 color.red,
                                 color.green,
@@ -7139,18 +7142,19 @@ fn build_quality_index_plan_from_colors(
                         usize::from(index)
                     } else {
                         usize::from(match previous_hint {
-                            Some((hint_index, hint_color)) => initial_tree.nearest_with_seed_split(
-                                color.red,
-                                color.green,
-                                color.blue,
-                                hint_index,
-                                palette_color_distance(
-                                    hint_color,
+                            Some((hint_index, hint_color)) => initial_tree
+                                .nearest_with_seed_bounds(
                                     color.red,
                                     color.green,
                                     color.blue,
+                                    hint_index,
+                                    palette_color_distance(
+                                        hint_color,
+                                        color.red,
+                                        color.green,
+                                        color.blue,
+                                    ),
                                 ),
-                            ),
                             None => initial_tree.nearest_with_hint_split(
                                 color.red,
                                 color.green,
@@ -7194,19 +7198,20 @@ fn build_quality_index_plan_from_colors(
                 // only one refinement step. The KD search still proves the
                 // final nearest color, so this changes no output or tie rule.
                 let hint_index = histogram_to_palette[usize::from(color.histogram_index)];
-                histogram_to_palette[usize::from(color.histogram_index)] = initial_tree
-                    .nearest_with_seed_bounds(
-                        color.red,
-                        color.green,
-                        color.blue,
-                        hint_index,
-                        palette_color_distance(
-                            palette[usize::from(hint_index)],
+                let color_key = rgb_key(color.red, color.green, color.blue);
+                let hint_color = palette[usize::from(hint_index)];
+                histogram_to_palette[usize::from(color.histogram_index)] =
+                    if hint_color == color_key {
+                        hint_index
+                    } else {
+                        initial_tree.nearest_with_seed_bounds(
                             color.red,
                             color.green,
                             color.blue,
-                        ),
-                    );
+                            hint_index,
+                            palette_color_distance(hint_color, color.red, color.green, color.blue),
+                        )
+                    };
             }
         }
         if !use_direct_palette_cells {
@@ -8186,18 +8191,6 @@ impl PaletteKdTree {
     #[inline(always)]
     fn nearest_with_hint_split(&self, r: u8, g: u8, b: u8, hint: Option<(u8, u32)>) -> u8 {
         self.nearest_with_hint_impl::<false>(r, g, b, hint)
-    }
-
-    #[inline(always)]
-    fn nearest_with_seed_split(
-        &self,
-        r: u8,
-        g: u8,
-        b: u8,
-        best_index: u8,
-        best_distance: u32,
-    ) -> u8 {
-        self.nearest_with_seed::<false>(r, g, b, best_index, best_distance)
     }
 
     #[inline(always)]

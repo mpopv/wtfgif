@@ -87,7 +87,7 @@ image loading are not.
 
 | Real-image quality encode | Baseline | wtfgif | Speedup | wtfgif output |
 | --- | ---: | ---: | ---: | ---: |
-| Adaptive global palette | 94.744 ms | 0.454 ms | **208.80×** | 149,601 bytes / 34.12 dB |
+| Adaptive global palette | 99.338 ms | 0.419 ms | **237.18×** | 149,601 bytes / 34.12 dB |
 
 The baseline is `image-q` plus omggif with balanced LZW. Both implementations
 create an adaptive global palette and map every RGBA pixel. WebAssembly is
@@ -97,18 +97,18 @@ encode or input, palette, or output is retained. The race measures this single
 quality-first RGBA pipeline; there is no fixed-palette or skipped-pixel
 shortcut in the race.
 
-The strict first-real-encode boundary is separate: ten fresh processes measured
-123.487 ms for image-q + omggif versus 3.828 ms for wtfgif (**32.26×**). There
+The strict first-real-encode boundary is separate: twenty fresh processes measured
+138.182 ms for image-q + omggif versus 4.083 ms for wtfgif (**33.84×**). There
 are no timed warmup encodes in this receipt. The remaining gap is portable
 Wasm's first-call lazy compilation, not a retained result cache.
 Reproduce it with:
 
 ```bash
-BENCH_INITIALIZED_FIRST=1 BENCH_WTFFIG_ENTRY=encode BENCH_ITERATIONS=10 node scripts/bench-cold-rgba.mjs
+BENCH_INITIALIZED_FIRST=1 BENCH_WTFFIG_ENTRY=encode BENCH_ITERATIONS=20 node scripts/bench-cold-rgba.mjs
 ```
 
 On the larger 10-frame 512×512 stress workload, the initialized SIMD path is
-**1,095.80× faster** (6,076.848 ms for image-q + omggif versus 5.546 ms for
+**1,085.30× faster** (6,213.433 ms for image-q + omggif versus 5.725 ms for
 wtfgif), with 2,973,381 output bytes and 26.12 dB PSNR versus the baseline's
 24.26 dB:
 
@@ -116,18 +116,18 @@ wtfgif), with 2,973,381 output bytes and 26.12 dB PSNR versus the baseline's
 BENCH_RGBA_FIXTURE=stress BENCH_ITERATIONS=5 BENCH_WARMUP_ITERATIONS=1 node scripts/bench-rgba.mjs
 ```
 
-That 1,095.80× result is not a cache trick: both encoders read all 2,621,440
+That 1,085.30× result is not a cache trick: both encoders read all 2,621,440
 source pixels and produce a valid GIF. The ratio grows on this larger fixture
 because wtfgif's histogram, lookup, and literal writer stay linear.
 
 The same run with every source pixel treated as opaque
-(`BENCH_ALPHA_THRESHOLD=0`) measured 104.423 ms for image-q + omggif versus
-0.611 ms for wtfgif: **171.02×**, at 33.91 dB PSNR.
+(`BENCH_ALPHA_THRESHOLD=0`) measured 106.376 ms for image-q + omggif versus
+0.539 ms for wtfgif: **197.48×**, at 33.91 dB PSNR.
 
-For a true no-cache measurement, run `BENCH_WTFFIG_ENTRY=encode BENCH_ITERATIONS=10 node scripts/bench-cold-rgba.mjs`; it starts a new
+For a true no-cache measurement, run `BENCH_WTFFIG_ENTRY=encode BENCH_ITERATIONS=20 node scripts/bench-cold-rgba.mjs`; it starts a new
 Node process for every sample and includes imports, Wasm initialization, and
-the complete encode. The current ten-process median is 137.200 ms for the
-baseline versus 5.845 ms for wtfgif's encode entry (**23.47×**). Cold process startup is
+the complete encode. The current twenty-process median is 153.365 ms for the
+baseline versus 6.763 ms for wtfgif's encode entry (**22.68×**). Cold process startup is
 a separate boundary; initialize Wasm during page or worker startup for the hot
 numbers above:
 
