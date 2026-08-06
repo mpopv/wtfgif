@@ -2,6 +2,15 @@
 
 All notable changes to wtfgif are documented here.
 
+## 2.4.12 - 2026-08-05
+
+- Speed up arbitrary-RGBA quality encoding with chunked wide histograms,
+  larger packed histogram scans, and unrolled literal GIF emission. Palette
+  selection, transparency, GIF bytes, decoded pixels, and quality are
+  unchanged.
+- Fresh receipts: 23.52x strict-cold real encode, 227.65x initialized real
+  encode, and 1,268.54x initialized 512x512x10 stress encode.
+
 ## 2.4.11 - 2026-08-05
 
 - Publish the current optimized arbitrary-RGBA quality encoder build to npm.
