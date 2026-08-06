@@ -1,9 +1,6 @@
 import type { WasmCoreModule } from "../types";
 import { isWasmCoreModule } from "./contracts";
-import {
-	getWasmFeatures as getSharedWasmFeatures,
-	getWasmStatus as getSharedWasmStatus,
-} from "./features";
+import { getWasmStatus as getSharedWasmStatus } from "./features";
 import { createWasmModuleRuntime, type WasmWebBinding } from "./moduleRuntime";
 
 const runtime = createWasmModuleRuntime<WasmCoreModule>({
@@ -43,16 +40,8 @@ export function initializeWasmModule(
 	return runtime.initializeModule(module, moduleOrPath);
 }
 
-export function getWasmFeatures() {
-	return getSharedWasmFeatures();
-}
-
 export function getWasmStatus() {
 	return getSharedWasmStatus(getWasmCoreModule() !== null);
-}
-
-export function isWasmReady(): boolean {
-	return getWasmCoreModule() !== null;
 }
 
 export function cleanupWasm(): void {

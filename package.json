@@ -74,16 +74,10 @@
 			"browser": "./dist/wasm-quality-web/wtfgif_core_bg.wasm",
 			"node": "./dist/wasm-quality/wtfgif_core_bg.wasm",
 			"default": "./dist/wasm-quality-web/wtfgif_core_bg.wasm"
-		},
-		"./wasm-web": {
-			"types": "./dist/wasm-web/wtfgif_core.d.ts",
-			"import": "./dist/wasm-web/wtfgif_core.js",
-			"default": "./dist/wasm-web/wtfgif_core.js"
-		},
-		"./wasm-web/wasm": "./dist/wasm-web/wtfgif_core_bg.wasm"
+		}
 	},
 	"scripts": {
-		"build": "tsup && tsc -p tsconfig.build.json --emitDeclarationOnly && node scripts/copy-wasm-core.mjs",
+		"build": "tsup && tsc -p tsconfig.json --emitDeclarationOnly && node scripts/copy-wasm-core.mjs",
 		"build:site": "node scripts/build-site.mjs",
 		"build:wasm": "npm run build:wasm:node && npm run build:wasm:web && npm run build:wasm:quality && npm run build:wasm:simd && npm run build:wasm:simd:quality",
 		"build:wasm:node": "wasm-pack build crates/wtfgif-core --target nodejs --out-dir pkg --release",
@@ -97,7 +91,7 @@
 		"build:wasm:simd:quality": "npm run build:wasm:node:quality:simd && npm run build:wasm:web:quality:simd",
 		"build:wasm:node:quality:simd": "node scripts/build-wasm-variant.mjs nodejs pkg-quality-simd quality-only simd",
 		"build:wasm:web:quality:simd": "node scripts/build-wasm-variant.mjs web pkg-quality-web-simd quality-only simd",
-		"typecheck": "tsc -p tsconfig.build.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+		"typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
 		"test": "vitest run --coverage",
 		"test:package": "node scripts/validate-package.mjs",
 		"validate:edge": "node scripts/validate-edge-runtime.mjs",
@@ -124,8 +118,7 @@
 		"bench:native:prototype": "npm run build && npm run build:native:prototype && node scripts/bench-native-prototype.mjs",
 		"check": "npm run lint && npm run typecheck && npm run audit && npm run rust:check && npm run build:wasm && npm test && npm run build && npm run validate:wasm-core && npm run validate:edge && npm run test:package",
 		"prepublishOnly": "npm run check",
-		"prepack": "npm run build:wasm",
-		"prepare": "npm run build"
+		"prepack": "npm run build:wasm && npm run build"
 	},
 	"publishConfig": {
 		"access": "public"

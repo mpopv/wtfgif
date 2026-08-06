@@ -7,7 +7,6 @@ import {
 	encodeRgbaGifFrames,
 	getFastBackendStatus,
 	initializeWasmGlobally,
-	remuxGifPixelPerfect,
 	GifReader as WtfGifReader,
 } from "./vendor/wtfgif.mjs";
 
@@ -480,67 +479,6 @@ function psnrAgainstSource(source, decoded) {
 	return 20 * Math.log10(255 / Math.sqrt(squaredError / samples));
 }
 
-function reencodeOmggif(data) {
-	const reader = new OmgGifReader(data);
-	let totalFramePixels = 0;
-	for (let frame = 0; frame < reader.numFrames(); frame += 1) {
-		const info = reader.frameInfo(frame);
-		totalFramePixels += info.width * info.height;
-	}
-	const output = new Uint8Array(totalFramePixels * 2 + data.length + 4096);
-	const writer = new GifWriter(output, reader.width, reader.height, {
-		loop: reader.loopCount(),
-	});
-	const rgba = new Uint8Array(reader.width * reader.height * 4);
-	const paletteCache = new Map();
-	for (let frame = 0; frame < reader.numFrames(); frame += 1) {
-		const info = reader.frameInfo(frame);
-		const key = `${info.palette_offset}:${info.palette_size}`;
-		let paletteInfo = paletteCache.get(key);
-		if (!paletteInfo) {
-			const palette = new Array(info.palette_size);
-			const colorToIndex = new Map();
-			for (let index = 0; index < info.palette_size; index += 1) {
-				const offset = info.palette_offset + index * 3;
-				const color =
-					(data[offset] << 16) | (data[offset + 1] << 8) | data[offset + 2];
-				palette[index] = color;
-				if (!colorToIndex.has(color)) colorToIndex.set(color, index);
-			}
-			paletteInfo = { colorToIndex, palette };
-			paletteCache.set(key, paletteInfo);
-		}
-		rgba.fill(0);
-		reader.decodeAndBlitFrameRGBA(frame, rgba);
-		const indices = new Uint8Array(info.width * info.height);
-		let target = 0;
-		for (let y = 0; y < info.height; y += 1) {
-			let offset = ((info.y + y) * reader.width + info.x) * 4;
-			for (let x = 0; x < info.width; x += 1) {
-				if (rgba[offset + 3] === 0 && info.transparent_index !== null)
-					indices[target] = info.transparent_index;
-				else {
-					const color =
-						(rgba[offset] << 16) | (rgba[offset + 1] << 8) | rgba[offset + 2];
-					const index = paletteInfo.colorToIndex.get(color);
-					if (index === undefined)
-						throw new Error("Decoded color is absent from the frame palette");
-					indices[target] = index;
-				}
-				target += 1;
-				offset += 4;
-			}
-		}
-		writer.addFrame(info.x, info.y, info.width, info.height, indices, {
-			delay: info.delay,
-			disposal: info.disposal,
-			palette: paletteInfo.palette,
-			transparent: info.transparent_index,
-		});
-	}
-	return output.slice(0, writer.end());
-}
-
 function displayResult(omg, wtf, summary) {
 	const ratio = omg.duration / Math.max(wtf.duration, 0.0001);
 	elements.omgTime.textContent = formatTime(omg.duration);
@@ -620,46 +558,6 @@ async function runDecodeRace() {
 	displayResult(omg, wtf, "PASS / every composited RGBA byte matches omggif.");
 }
 
-async function runRemuxRace() {
-	const data = state.gifBytes;
-	if (!data) throw new Error("No GIF fixture is ready");
-	const source = decodeAll(OmgGifReader, data);
-	const omgOperation = () => reencodeOmggif(data);
-	const wtfOperation = () => remuxGifPixelPerfect(data);
-	let omg;
-	let wtf;
-	if (state.raceCount % 2 === 0) {
-		omg = measure(omgOperation, ENCODE_SAMPLES);
-		await nextFrame();
-		wtf = measure(wtfOperation, ENCODE_SAMPLES);
-	} else {
-		wtf = measure(wtfOperation, ENCODE_SAMPLES);
-		await nextFrame();
-		omg = measure(omgOperation, ENCODE_SAMPLES);
-	}
-	assertSameAnimation(
-		source,
-		decodeAll(OmgGifReader, omg.output),
-		"omggif reencode",
-	);
-	assertSameAnimation(
-		source,
-		decodeAll(OmgGifReader, wtf.output),
-		"wtfgif remux",
-	);
-	elements.omgVerdict.textContent = `${formatBytes(omg.output.length)} / fresh LZW`;
-	elements.wtfVerdict.textContent = `${formatBytes(wtf.output.length)} / original LZW preserved`;
-	elements.metricBytes.textContent = formatBytes(wtf.output.length);
-	elements.metricQuality.textContent = "Exact source pixels";
-	elements.metricValidation.textContent = `${source.frames.length.toLocaleString()} RGBA bytes`;
-	displayResult(
-		omg,
-		wtf,
-		"PASS / structural remux only; this is not an arbitrary-image encode result.",
-	);
-	setOutputPreview(wtf.output);
-}
-
 function showFailure(error) {
 	elements.liveSpeed.textContent = "FAIL";
 	elements.pixelVerdict.textContent =
@@ -688,8 +586,7 @@ async function runRace() {
 		await showCountdown();
 		await nextFrame();
 		if (state.mode === "encode") await runEncodeRace();
-		else if (state.mode === "decode") await runDecodeRace();
-		else await runRemuxRace();
+		else await runDecodeRace();
 		state.raceCount += 1;
 	} catch (error) {
 		showFailure(error);
@@ -762,7 +659,7 @@ function setMode(mode) {
 		elements.raceNote.textContent =
 			"Image decoding, resizing, and one-time Wasm initialization happen before the clock. Results are medians; engine order alternates between races.";
 		normalizeImages();
-	} else if (mode === "decode") {
+	} else {
 		elements.contractKicker.textContent = "GIF → every composited RGBA frame";
 		elements.contractDescription.textContent =
 			"Both public GifReader APIs parse and decode the same real GIF into caller-owned pixel buffers.";
@@ -773,18 +670,6 @@ function setMode(mode) {
 		elements.raceButton.textContent = "Run decode race";
 		elements.raceNote.textContent =
 			"One-time Wasm initialization happens before the clock. Every composited RGBA byte must match omggif.";
-		showGifWorkload();
-	} else {
-		elements.contractKicker.textContent = "Existing GIF → pixel-identical GIF";
-		elements.contractDescription.textContent =
-			"omggif decodes and recompresses; wtfgif validates and preserves existing LZW. This structural shortcut is intentionally not an encoder claim.";
-		elements.omgLabel.textContent = "omggif reencode";
-		elements.omgDetail.textContent = "decode + fresh LZW";
-		elements.wtfLabel.textContent = "wtfgif remux";
-		elements.wtfDetail.textContent = "validate + preserve LZW";
-		elements.raceButton.textContent = "Run remux race";
-		elements.raceNote.textContent =
-			"This mode measures a lossless structural operation on an existing GIF. It does not represent arbitrary-image encoding.";
 		showGifWorkload();
 	}
 	updateRaceAvailability();

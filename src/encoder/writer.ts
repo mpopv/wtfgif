@@ -11,6 +11,7 @@ import type {
 } from "../types";
 import { writeNetscapeLoopCount } from "../utils/netscape";
 import { checkPalette, log2Pow2 } from "../utils/palette";
+import { findChangedRect } from "../utils/pixels";
 import { getWasmEncodeCoreModule } from "../wasm/encodeRuntime";
 import { getWasmQualityCoreModule } from "../wasm/qualityRuntime";
 
@@ -715,7 +716,7 @@ export class GifWriter {
 			return this.addFrame(0, 0, this.width, this.height, indexedPixels, opts);
 		}
 
-		const rect = findChangedIndexedRect(
+		const rect = findChangedRect(
 			previous,
 			indexedPixels,
 			this.width,
@@ -1814,72 +1815,6 @@ function checkedU8(value: number, message: string): number {
 		throw new Error(message);
 	}
 	return checked;
-}
-
-type IndexedRect = {
-	x: number;
-	y: number;
-	width: number;
-	height: number;
-};
-
-function findChangedIndexedRect(
-	previous: Uint8Array,
-	current: IndexedGifFrame,
-	width: number,
-	height: number,
-): IndexedRect | null {
-	let top = 0;
-	let bottom = height - 1;
-
-	while (top < height) {
-		const row = top * width;
-		let changed = false;
-		for (let x = 0; x < width; x++) {
-			if (previous[row + x] !== current[row + x]) {
-				changed = true;
-				break;
-			}
-		}
-		if (changed) break;
-		top++;
-	}
-
-	if (top === height) {
-		return null;
-	}
-
-	while (bottom > top) {
-		const row = bottom * width;
-		let changed = false;
-		for (let x = 0; x < width; x++) {
-			if (previous[row + x] !== current[row + x]) {
-				changed = true;
-				break;
-			}
-		}
-		if (changed) break;
-		bottom--;
-	}
-
-	let left = width - 1;
-	let right = 0;
-	for (let y = top; y <= bottom; y++) {
-		const row = y * width;
-		for (let x = 0; x < width; x++) {
-			if (previous[row + x] !== current[row + x]) {
-				if (x < left) left = x;
-				if (x > right) right = x;
-			}
-		}
-	}
-
-	return {
-		x: left,
-		y: top,
-		width: right - left + 1,
-		height: bottom - top + 1,
-	};
 }
 
 function createIndexedSourceRect(

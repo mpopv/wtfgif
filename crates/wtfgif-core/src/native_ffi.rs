@@ -8,9 +8,6 @@ pub struct NativeDecodedGif {
     width: u32,
     height: u32,
     frame_count: u32,
-    parse_nanos: u64,
-    decode_nanos: u64,
-    compose_nanos: u64,
     host_owned: i32,
 }
 
@@ -26,21 +23,16 @@ pub struct NativeEncodedGif {
     byte_capacity: usize,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-#[no_mangle]
-/// Decodes all GIF frames into a Rust-owned RGBA allocation.
-///
-/// # Safety
-///
-/// `data` must reference `data_len` readable bytes and `decoded` must be a
-/// valid writable pointer. The returned pixels must be released with
-/// `wtfgif_free_rgba` using the reported byte length.
-pub unsafe extern "C" fn wtfgif_decode_all_rgba(
-    data: *const u8,
-    data_len: usize,
-    decoded: *mut NativeDecodedGif,
-) -> i32 {
-    wtfgif_decode_all_rgba_inner(data, data_len, None, std::ptr::null_mut(), decoded)
+impl NativeEncodedGif {
+    fn from_vec(mut bytes: Vec<u8>) -> Self {
+        let encoded = Self {
+            bytes: bytes.as_mut_ptr(),
+            byte_len: bytes.len(),
+            byte_capacity: bytes.capacity(),
+        };
+        std::mem::forget(bytes);
+        encoded
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -106,9 +98,6 @@ unsafe fn wtfgif_decode_all_rgba_inner(
                 width: u32::from(metadata.width),
                 height: u32::from(metadata.height),
                 frame_count: metadata.frames.len() as u32,
-                parse_nanos: 0,
-                decode_nanos: 0,
-                compose_nanos: 0,
                 host_owned: 1,
             });
             return 1;
@@ -135,9 +124,6 @@ unsafe fn wtfgif_decode_all_rgba_inner(
                 width: u32::from(metadata.width),
                 height: u32::from(metadata.height),
                 frame_count: metadata.frames.len() as u32,
-                parse_nanos: 0,
-                decode_nanos: 0,
-                compose_nanos: 0,
                 host_owned: 1,
             });
             return 1;
@@ -169,9 +155,6 @@ unsafe fn wtfgif_decode_all_rgba_inner(
                 width: u32::from(metadata.width),
                 height: u32::from(metadata.height),
                 frame_count: metadata.frames.len() as u32,
-                parse_nanos: 0,
-                decode_nanos: 0,
-                compose_nanos: 0,
                 host_owned: 1,
             });
             return 1;
@@ -206,9 +189,6 @@ unsafe fn wtfgif_decode_all_rgba_inner(
         width: u32::from(metadata.width),
         height: u32::from(metadata.height),
         frame_count: metadata.frames.len() as u32,
-        parse_nanos: 0,
-        decode_nanos: 0,
-        compose_nanos: 0,
         host_owned: 0,
     });
     1
@@ -216,7 +196,7 @@ unsafe fn wtfgif_decode_all_rgba_inner(
 
 #[cfg(not(target_arch = "wasm32"))]
 #[no_mangle]
-/// Releases pixels returned by `wtfgif_decode_all_rgba`.
+/// Releases a Rust-owned decode result returned by `wtfgif_decode_all_rgba_host`.
 ///
 /// # Safety
 ///
@@ -290,16 +270,7 @@ pub unsafe extern "C" fn wtfgif_encode_rgba_fast(
         return 0;
     };
 
-    let mut bytes = bytes;
-    let byte_len = bytes.len();
-    let byte_capacity = bytes.capacity();
-    let bytes_ptr = bytes.as_mut_ptr();
-    std::mem::forget(bytes);
-    encoded.write(NativeEncodedGif {
-        bytes: bytes_ptr,
-        byte_len,
-        byte_capacity,
-    });
+    encoded.write(NativeEncodedGif::from_vec(bytes));
     1
 }
 
@@ -333,7 +304,7 @@ pub unsafe extern "C" fn wtfgif_encode_rgba_quality(
     } else {
         std::slice::from_raw_parts(delays, delay_count)
     };
-    let Ok(mut bytes) = encode_rgba_quality_gif_inner_with_output(
+    let Ok(bytes) = encode_rgba_quality_gif_inner_with_output(
         rgba_stream,
         width,
         height,
@@ -346,15 +317,7 @@ pub unsafe extern "C" fn wtfgif_encode_rgba_quality(
         return 0;
     };
 
-    let byte_len = bytes.len();
-    let byte_capacity = bytes.capacity();
-    let bytes_ptr = bytes.as_mut_ptr();
-    std::mem::forget(bytes);
-    encoded.write(NativeEncodedGif {
-        bytes: bytes_ptr,
-        byte_len,
-        byte_capacity,
-    });
+    encoded.write(NativeEncodedGif::from_vec(bytes));
     1
 }
 
@@ -418,19 +381,10 @@ pub unsafe extern "C" fn wtfgif_encode_rgba_balanced(
         quantization,
         RgbaPaletteMode::Global,
     );
-    let Ok(mut bytes) = result else {
+    let Ok(bytes) = result else {
         return 0;
     };
-
-    let byte_len = bytes.len();
-    let byte_capacity = bytes.capacity();
-    let bytes_ptr = bytes.as_mut_ptr();
-    std::mem::forget(bytes);
-    encoded.write(NativeEncodedGif {
-        bytes: bytes_ptr,
-        byte_len,
-        byte_capacity,
-    });
+    encoded.write(NativeEncodedGif::from_vec(bytes));
     1
 }
 
@@ -485,18 +439,10 @@ pub unsafe extern "C" fn wtfgif_encode_indexed_fast(
             None,
         )
     };
-    let Ok(mut bytes) = result else {
+    let Ok(bytes) = result else {
         return 0;
     };
-    let byte_len = bytes.len();
-    let byte_capacity = bytes.capacity();
-    let bytes_ptr = bytes.as_mut_ptr();
-    std::mem::forget(bytes);
-    encoded.write(NativeEncodedGif {
-        bytes: bytes_ptr,
-        byte_len,
-        byte_capacity,
-    });
+    encoded.write(NativeEncodedGif::from_vec(bytes));
     1
 }
 
@@ -551,57 +497,10 @@ pub unsafe extern "C" fn wtfgif_encode_indexed_balanced(
             None,
         )
     };
-    let Ok(mut bytes) = result else {
-        return 0;
-    };
-    let byte_len = bytes.len();
-    let byte_capacity = bytes.capacity();
-    let bytes_ptr = bytes.as_mut_ptr();
-    std::mem::forget(bytes);
-    encoded.write(NativeEncodedGif {
-        bytes: bytes_ptr,
-        byte_len,
-        byte_capacity,
-    });
-    1
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[no_mangle]
-/// Reencodes a GIF into a Rust-owned byte allocation.
-///
-/// # Safety
-///
-/// `data` must reference `data_len` readable bytes and `encoded` must be
-/// writable. Release the returned bytes with `wtfgif_free_bytes`.
-pub unsafe extern "C" fn wtfgif_reencode_gif_fast(
-    data: *const u8,
-    data_len: usize,
-    encoded: *mut NativeEncodedGif,
-) -> i32 {
-    if data.is_null() || encoded.is_null() {
-        return 0;
-    }
-    let data = std::slice::from_raw_parts(data, data_len);
-    let result = (|| {
-        let metadata = parse_metadata(data)?;
-        let loop_count = metadata.loop_count.map(i32::from).unwrap_or(-1);
-        reencode_gif_literal_parallel_native(data, &metadata, loop_count)
-    })();
     let Ok(bytes) = result else {
         return 0;
     };
-
-    let mut bytes = bytes;
-    let byte_len = bytes.len();
-    let byte_capacity = bytes.capacity();
-    let bytes_ptr = bytes.as_mut_ptr();
-    std::mem::forget(bytes);
-    encoded.write(NativeEncodedGif {
-        bytes: bytes_ptr,
-        byte_len,
-        byte_capacity,
-    });
+    encoded.write(NativeEncodedGif::from_vec(bytes));
     1
 }
 
@@ -611,17 +510,16 @@ pub unsafe extern "C" fn wtfgif_reencode_gif_fast(
 ///
 /// # Safety
 ///
-/// `data` must reference `data_len` readable bytes, `encoded` must be writable,
-/// and `allocate` must return a writable allocation of at least the requested
-/// size that remains valid after this call returns.
+/// `data` must reference `data_len` readable bytes and `allocate` must return a
+/// writable allocation of at least the requested size that remains valid after
+/// this call returns.
 pub unsafe extern "C" fn wtfgif_reencode_gif_fast_host(
     data: *const u8,
     data_len: usize,
     allocate: NativeRgbaAllocator,
     allocate_context: *mut std::ffi::c_void,
-    encoded: *mut NativeEncodedGif,
 ) -> i32 {
-    if data.is_null() || encoded.is_null() {
+    if data.is_null() {
         return 0;
     }
     let data_slice = std::slice::from_raw_parts(data, data_len);
@@ -638,12 +536,7 @@ pub unsafe extern "C" fn wtfgif_reencode_gif_fast_host(
         return 0;
     }
     std::ptr::copy_nonoverlapping(bytes.as_ptr(), destination, byte_len);
-    encoded.write(NativeEncodedGif {
-        bytes: destination,
-        byte_len,
-        byte_capacity: 0,
-    });
-    2
+    1
 }
 
 #[cfg(not(target_arch = "wasm32"))]

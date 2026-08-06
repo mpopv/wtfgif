@@ -1,9 +1,6 @@
 import type { WasmQualityCoreModule } from "../types";
 import { isWasmQualityCoreModule } from "./contracts";
-import {
-	getWasmFeatures as getSharedWasmFeatures,
-	getWasmStatus as getSharedWasmStatus,
-} from "./features";
+import { getWasmStatus as getSharedWasmStatus } from "./features";
 import type { WasmWebBinding } from "./moduleRuntime";
 import { loadRawQualityNode } from "./rawQuality";
 import { supportsWasmSimd } from "./simd";
@@ -91,16 +88,8 @@ export async function initializeWasmModule(
 	setWasmQualityCoreModule(module);
 }
 
-export function getWasmFeatures() {
-	return getSharedWasmFeatures();
-}
-
 export function getWasmStatus() {
 	return getSharedWasmStatus(getWasmQualityCoreModule() !== null);
-}
-
-export function isWasmReady(): boolean {
-	return getWasmQualityCoreModule() !== null;
 }
 
 export function cleanupWasm(): void {

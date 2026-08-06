@@ -173,7 +173,6 @@ try {
 			"-e",
 			`
 				const wtfgif = require("wtfgif");
-				const status = wtfgif.installWasmCoreBackend();
 				const gif = wtfgif.encodeIndexedGifFrames({
 					width: 2,
 					height: 2,
@@ -208,7 +207,7 @@ try {
 				});
 				const arbitraryReader = new wtfgif.GifReader(arbitrary);
 				const result = {
-					available: status.available,
+					initialized: wtfgif.getWasmStatus().initialized,
 					frames: reader.numFrames(),
 					retimedDelay: retimedReader.frameInfo(0).delay,
 					boomerangFrames: boomerangReader.numFrames(),
@@ -232,7 +231,7 @@ try {
 		]),
 	);
 	if (
-		!commonJsResult.available ||
+		!commonJsResult.initialized ||
 		commonJsResult.frames !== 1 ||
 		commonJsResult.retimedDelay !== 13 ||
 		commonJsResult.boomerangFrames !== 2 ||
@@ -329,7 +328,6 @@ try {
 				const wtfgif = await import("wtfgif");
 				const sideEffectFree = globalThis.window.wtfgif === undefined;
 				await import("wtfgif/global");
-				const status = wtfgif.installWasmCoreBackend();
 				const gif = wtfgif.encodeIndexedGifFrames({
 					width: 2,
 					height: 2,
@@ -339,7 +337,7 @@ try {
 				});
 				const reader = new wtfgif.GifReader(gif);
 				const result = {
-					available: status.available,
+					initialized: wtfgif.getWasmStatus().initialized,
 					frames: reader.numFrames(),
 					sideEffectFree,
 					browserGlobal:
@@ -352,7 +350,7 @@ try {
 		]),
 	);
 	if (
-		!esmResult.available ||
+		!esmResult.initialized ||
 		esmResult.frames !== 1 ||
 		!esmResult.sideEffectFree ||
 		!esmResult.browserGlobal
@@ -373,13 +371,12 @@ try {
 				const wtfgif = await import("wtfgif");
 				const encodeOnly = await import("wtfgif/encode");
 				wtfgif.cleanupWasm();
-				const wasmUrl = import.meta.resolve("wtfgif/wasm-web/wasm");
+				const wasmUrl = import.meta.resolve("wtfgif/wasm-core/wasm");
 				const wasmBytes = readFileSync(fileURLToPath(wasmUrl));
 				await wtfgif.initializeWasmGlobally(wasmBytes);
 				const encodeWasmUrl = import.meta.resolve("wtfgif/wasm-encode/wasm");
 				const encodeWasmBytes = readFileSync(fileURLToPath(encodeWasmUrl));
 				await encodeOnly.initializeWasmGlobally(encodeWasmBytes);
-				const status = wtfgif.installWasmCoreBackend();
 				const source = wtfgif.encodeIndexedGifFrames({
 					width: 2,
 					height: 2,
@@ -422,7 +419,6 @@ try {
 					loop: 0,
 				});
 				process.stdout.write(JSON.stringify({
-					available: status.available,
 					initialized: wtfgif.getWasmStatus().initialized,
 					pixelPerfect:
 						before.width === after.width &&
@@ -442,7 +438,6 @@ try {
 		]),
 	);
 	if (
-		!browserWasmResult.available ||
 		!browserWasmResult.initialized ||
 		!browserWasmResult.pixelPerfect ||
 		!browserWasmResult.arbitraryRgba ||

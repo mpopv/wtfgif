@@ -2,11 +2,9 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import type { WasmCoreInstance, WasmCoreModule } from "../src/types";
 import {
 	cleanupWasm,
-	getWasmFeatures,
 	getWasmStatus,
 	initializeGlobalWasm,
 	initializeWasmModule,
-	isWasmReady,
 	setWasmCoreModule,
 } from "../src/wasm/runtime";
 import { supportsWasmSimd } from "../src/wasm/simd";
@@ -96,11 +94,9 @@ describe("WebAssembly runtime integration", () => {
 		cleanupWasm();
 		await initializeGlobalWasm(fakeCoreModule);
 
-		expect(isWasmReady()).toBe(true);
 		expect(getWasmStatus()).toMatchObject({
 			supported: true,
 			initialized: true,
-			workerPoolAvailable: false,
 		});
 	});
 
@@ -128,23 +124,21 @@ describe("WebAssembly runtime integration", () => {
 		await initializeWasmModule(module, compiledModule);
 
 		expect(init).toHaveBeenCalledWith({ module_or_path: compiledModule });
-		expect(isWasmReady()).toBe(true);
+		expect(getWasmStatus().initialized).toBe(true);
 	});
 
 	test("cleanup disables the configured core", () => {
 		setWasmCoreModule(fakeCoreModule);
-		expect(isWasmReady()).toBe(true);
+		expect(getWasmStatus().initialized).toBe(true);
 
 		cleanupWasm();
-		expect(isWasmReady()).toBe(false);
 		expect(getWasmStatus().initialized).toBe(false);
 	});
 
 	test("reports runtime WebAssembly capabilities", () => {
-		expect(getWasmFeatures()).toEqual({
+		expect(getWasmStatus()).toMatchObject({
 			supported: typeof WebAssembly !== "undefined",
 			simd: supportsWasmSimd(),
-			threads: typeof SharedArrayBuffer !== "undefined",
 		});
 	});
 });

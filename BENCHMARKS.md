@@ -166,9 +166,9 @@ That optimization does not change the drop-in reader's frame-by-frame contract.
 ## Browser racer
 
 The [live racer](https://mpopv.github.io/wtfgif/) uses the same eight-image
-workload by default and also accepts multiple PNG, JPEG, or WebP uploads. It
-keeps Encode, Decode, and the separate structural remux experiment in distinct
-modes so a remux shortcut can never be mistaken for arbitrary-image encoding.
+workload by default and also accepts multiple PNG, JPEG, or WebP uploads. Its
+Encode and Decode modes keep arbitrary-image encoding separate from GIF
+decoding.
 
 Browser results vary with device, browser, thermal state, and background load.
 Speedup ratios are generally more useful than raw milliseconds, but neither is

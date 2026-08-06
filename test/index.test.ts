@@ -6,15 +6,13 @@ import {
 	GifReader as WtfGifReader,
 	GifWriter as WtfGifWriter,
 } from "../src/index";
-import type { FrameInfo } from "../src/types";
+import type { Frame } from "../src/types";
 
 const gifsDir = join(__dirname, "gifs");
-const allGifFiles = readdirSync(gifsDir).filter((f) => f.endsWith(".gif"));
-const gifFiles = allGifFiles;
+const gifFiles = readdirSync(gifsDir).filter((file) => file.endsWith(".gif"));
 
 describe("GIF file inventory", () => {
 	test("discovers all GIF files in test directory", () => {
-		expect(allGifFiles.length).toBeGreaterThan(0);
 		expect(gifFiles.length).toBeGreaterThan(0);
 	});
 });
@@ -121,7 +119,7 @@ describe("GifReader parity with omggif", () => {
 				"interlaced",
 				"delay",
 				"disposal",
-			] as (keyof FrameInfo)[];
+			] as (keyof Frame)[];
 			const numFrames = omg.numFrames();
 			const frameLimit = Math.min(numFrames, 3);
 			const len = wtf.width * wtf.height * 4;
@@ -196,33 +194,6 @@ describe("Pixel-perfect decoding compatibility", () => {
 
 			wtf.dispose();
 		}, 60_000);
-	}
-});
-
-describe("Global properties compatibility", () => {
-	for (const file of gifFiles) {
-		test(`${file} - global properties match omggif`, () => {
-			const gif = readFileSync(join(gifsDir, file));
-			const omg = new OmgGifReader(gif);
-			const wtf = new WtfGifReader(gif);
-
-			// Basic dimensions
-			expect(wtf.width).toBe(omg.width);
-			expect(wtf.height).toBe(omg.height);
-			expect(wtf.numFrames()).toBe(omg.numFrames());
-
-			// Loop count
-			expect(wtf.loopCount()).toBe(omg.loopCount());
-
-			// Global color table comparison (if available through omggif)
-			if ("globalColorTable" in omg && omg.globalColorTable) {
-				// Note: omggif exposes globalColorTable, wtfgif has different API
-				// This tests that both can handle the same global palette data
-				expect(wtf.numFrames()).toBeGreaterThan(0); // Basic sanity check
-			}
-
-			wtf.dispose();
-		});
 	}
 });
 

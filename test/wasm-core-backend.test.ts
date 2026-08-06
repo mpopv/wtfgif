@@ -1,19 +1,16 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { GifReader as OmgGifReader } from "omggif";
-import { afterEach, describe, expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 import {
-	createWasmCoreDecodeBackend,
 	encodeIndexedGifFrames,
 	encodeRgbaGifFrames,
 	GifReader,
 	GifWriter,
-	initializeWasmGlobally,
-	installWasmCoreBackend,
+	getWasmStatus,
 } from "../src/index";
 
-const backend = createWasmCoreDecodeBackend();
-const maybeTest = backend.isAvailable() ? test : test.skip;
+const maybeTest = getWasmStatus().initialized ? test : test.skip;
 
 function sentinelCanvas(width: number, height: number): Uint8Array {
 	const canvas = new Uint8Array(width * height * 4);
@@ -64,31 +61,7 @@ function makeQualityGradient(width: number, height: number): Uint8Array {
 }
 
 describe("Rust/Wasm core decode backend", () => {
-	afterEach(() => {
-		GifReader.setDecodeBackend(null);
-	});
-
-	maybeTest("installs as the GifReader Wasm backend", () => {
-		expect(installWasmCoreBackend()).toStrictEqual({
-			name: "wtfgif-rust-wasm",
-			available: true,
-		});
-	});
-
-	maybeTest(
-		"full-package initialization installs the prepared backend",
-		async () => {
-			GifReader.setDecodeBackend(null);
-			await initializeWasmGlobally();
-			expect(GifReader.getDecodeBackendStatus()).toStrictEqual({
-				name: "wtfgif-rust-wasm",
-				available: true,
-			});
-		},
-	);
-
 	maybeTest("prepares indexed frames that copy like omggif RGBA", () => {
-		GifReader.setDecodeBackend(backend);
 		const gif = readFileSync(join(__dirname, "gifs", "party_blob.gif"));
 		const omg = new OmgGifReader(gif);
 		const wtf = new GifReader(gif);
@@ -118,12 +91,10 @@ describe("Rust/Wasm core decode backend", () => {
 		const gif = makeDisposalGif();
 		const jsReader = new GifReader(gif);
 		const nativeReader = new GifReader(gif);
-		GifReader.setDecodeBackend(null);
 		const expectedPrepared = jsReader.preparePlayback({
 			backend: "javascript",
 			deltas: true,
 		});
-		GifReader.setDecodeBackend(backend);
 		const actualPrepared = nativeReader.preparePlayback({
 			backend: "wasm",
 			deltas: true,
@@ -170,7 +141,6 @@ describe("Rust/Wasm core decode backend", () => {
 	});
 
 	maybeTest("deduplicates identical Wasm composited frames", () => {
-		GifReader.setDecodeBackend(backend);
 		const reader = new GifReader(makeDuplicateFrameGif());
 		const prepared = reader.preparePlayback({ backend: "wasm" });
 
@@ -182,7 +152,6 @@ describe("Rust/Wasm core decode backend", () => {
 	});
 
 	maybeTest("respects maxBytes", () => {
-		GifReader.setDecodeBackend(backend);
 		const gif = readFileSync(join(__dirname, "gifs", "party_blob.gif"));
 		const reader = new GifReader(gif);
 
@@ -199,7 +168,6 @@ describe("Rust/Wasm core decode backend", () => {
 	});
 
 	maybeTest("respects maxBytes for composited frames", () => {
-		GifReader.setDecodeBackend(backend);
 		const reader = new GifReader(makeDisposalGif());
 
 		expect(() =>

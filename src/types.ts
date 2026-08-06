@@ -462,21 +462,6 @@ export interface PreparedGifPlayer {
 	reset: () => void;
 }
 
-export interface GifDecodeBackendStatus {
-	name: string;
-	available: boolean;
-}
-
-export interface GifDecodeBackend {
-	name: string;
-	isAvailable: () => boolean;
-	prepareFrames?: (
-		gifData: Uint8Array,
-		options: Required<Pick<PrepareFramesOptions, "format" | "composited">> &
-			PrepareFramesOptions,
-	) => PreparedGifFrames | null;
-}
-
 /** Frame metadata compatible with omggif's public Frame type. */
 export interface Frame {
 	x: number;

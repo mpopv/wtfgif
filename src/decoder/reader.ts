@@ -1,9 +1,8 @@
 import { GIF } from "../constants/gif";
 import type {
+	Frame,
 	FrameInfo,
 	GifBinary,
-	GifDecodeBackend,
-	GifDecodeBackendStatus,
 	GifPixelBuffer,
 	PreparedFrameBackendPreference,
 	PreparedFrameCacheMode,
@@ -16,7 +15,16 @@ import type {
 	WasmCoreInstance,
 } from "../types";
 import { buildPal32 } from "../utils/palette";
+import {
+	blitRectPixels,
+	findChangedRect,
+	findMatchingPixels,
+	hashPixels,
+	type PixelRect,
+	pixelsEqual,
+} from "../utils/pixels";
 import { concatSubBlocks } from "../utils/subblocks";
+import { prepareWasmCoreFrames } from "../wasm/coreBackend";
 import { getWasmCoreModule } from "../wasm/runtime";
 import { parseGif } from "./parser";
 
@@ -27,13 +35,6 @@ type NormalizedPrepareFramesOptions = PrepareFramesOptions & {
 	backend: PreparedFrameBackendPreference;
 	deltas: boolean;
 	dedupe: PreparedFrameDedupeMode;
-};
-
-type ChangedRect = {
-	x: number;
-	y: number;
-	width: number;
-	height: number;
 };
 
 const SEQUENTIAL_COMPOSITED_PIXEL_LIMIT = 2_500_000;
@@ -89,21 +90,6 @@ export class GifReader {
 	private directCodeTable = new Int32Array(0);
 	private directIndices = new Uint8Array(0);
 	private directStack = new Uint8Array(0);
-	private static decodeBackend: GifDecodeBackend | null = null;
-
-	static setDecodeBackend(backend: GifDecodeBackend | null): void {
-		GifReader.decodeBackend = backend;
-	}
-
-	static getDecodeBackendStatus(): GifDecodeBackendStatus {
-		const backend = GifReader.decodeBackend;
-		if (!backend) {
-			return { name: "javascript", available: false };
-		}
-
-		return { name: backend.name, available: backend.isAvailable() };
-	}
-
 	constructor(buf: GifBinary) {
 		this.buf = buf instanceof Uint8Array ? buf : Uint8Array.from(buf);
 		const parsed = parseGif(this.buf);
@@ -248,7 +234,7 @@ export class GifReader {
 		return this.loop_count;
 	}
 
-	frameInfo(i: number): FrameInfo {
+	frameInfo(i: number): Frame {
 		if (i < 0 || i >= this.frames.length)
 			throw new Error("Frame index out of range.");
 		return this.frames[i]!;
@@ -432,7 +418,7 @@ export class GifReader {
 			const frameIndices = this.normalizeFrameIndices(normalized.frameIndices);
 
 			if (normalized.backend !== "javascript") {
-				const backendResult = this.prepareFramesWithBackend(normalized);
+				const backendResult = prepareWasmCoreFrames(this.buf, normalized);
 				if (backendResult) {
 					return this.createBackendPreparedFramesResult(backendResult);
 				}
@@ -511,21 +497,6 @@ export class GifReader {
 		return normalized;
 	}
 
-	private prepareFramesWithBackend(
-		options: NormalizedPrepareFramesOptions,
-	): PreparedGifFrames | null {
-		const backend = GifReader.decodeBackend;
-		if (!backend || !backend.prepareFrames) {
-			return null;
-		}
-
-		if (!backend.isAvailable()) {
-			return null;
-		}
-
-		return backend.prepareFrames(this.buf, options) ?? null;
-	}
-
 	private createBackendPreparedFramesResult(
 		prepared: PreparedGifFrames,
 	): PreparedGifFrames {
@@ -570,24 +541,19 @@ export class GifReader {
 				let bucket: Uint32Array[] | undefined;
 				let hash = 0;
 				if (dedupe) {
-					hash = GifReader.hashPixels(canvas);
+					hash = hashPixels(canvas);
 					bucket = dedupe.get(hash);
-					pixels = GifReader.findMatchingPixels(canvas, bucket);
+					pixels = findMatchingPixels(canvas, bucket);
 				} else if (
 					options.dedupe === "adjacent" &&
 					previousPixels &&
-					GifReader.pixelsEqual(previousPixels, canvas)
+					pixelsEqual(previousPixels, canvas)
 				) {
 					pixels = previousPixels;
 				}
 				const changedRect =
 					options.deltas && previousPixels
-						? GifReader.findChangedRect(
-								previousPixels,
-								canvas,
-								this.width_,
-								this.height_,
-							)
+						? findChangedRect(previousPixels, canvas, this.width_, this.height_)
 						: null;
 				const changedPixels = changedRect
 					? GifReader.copyRectPixels(canvas, this.width_, changedRect)
@@ -802,7 +768,7 @@ export class GifReader {
 				changedPixelCount <= fullPixelCount >>> 3 &&
 				currentIndex === index - 1
 			) {
-				GifReader.blitRectPixels(
+				blitRectPixels(
 					frame.changedPixels,
 					target32,
 					this.width_,
@@ -990,69 +956,10 @@ export class GifReader {
 		}
 	}
 
-	private static findChangedRect(
-		previous: Uint32Array,
-		current: Uint32Array,
-		width: number,
-		height: number,
-	): ChangedRect | null {
-		let top = 0;
-		let bottom = height - 1;
-
-		while (top < height) {
-			const row = top * width;
-			let changed = false;
-			for (let x = 0; x < width; x++) {
-				if (previous[row + x] !== current[row + x]) {
-					changed = true;
-					break;
-				}
-			}
-			if (changed) break;
-			top++;
-		}
-
-		if (top === height) {
-			return null;
-		}
-
-		while (bottom > top) {
-			const row = bottom * width;
-			let changed = false;
-			for (let x = 0; x < width; x++) {
-				if (previous[row + x] !== current[row + x]) {
-					changed = true;
-					break;
-				}
-			}
-			if (changed) break;
-			bottom--;
-		}
-
-		let left = width - 1;
-		let right = 0;
-		for (let y = top; y <= bottom; y++) {
-			const row = y * width;
-			for (let x = 0; x < width; x++) {
-				if (previous[row + x] !== current[row + x]) {
-					if (x < left) left = x;
-					if (x > right) right = x;
-				}
-			}
-		}
-
-		return {
-			x: left,
-			y: top,
-			width: right - left + 1,
-			height: bottom - top + 1,
-		};
-	}
-
 	private static copyRectPixels(
 		source: Uint32Array,
 		sourceWidth: number,
-		rect: ChangedRect,
+		rect: PixelRect,
 	): Uint32Array {
 		const pixels = new Uint32Array(rect.width * rect.height);
 		for (let y = 0; y < rect.height; y++) {
@@ -1060,22 +967,6 @@ export class GifReader {
 			pixels.set(source.subarray(src, src + rect.width), y * rect.width);
 		}
 		return pixels;
-	}
-
-	private static blitRectPixels(
-		source: Uint32Array,
-		target: Uint32Array,
-		targetWidth: number,
-		x: number,
-		y: number,
-		width: number,
-		height: number,
-	): void {
-		for (let row = 0; row < height; row++) {
-			const src = row * width;
-			const dst = (y + row) * targetWidth + x;
-			target.set(source.subarray(src, src + width), dst);
-		}
 	}
 
 	private enforcePreparedByteBudget(
@@ -1087,55 +978,6 @@ export class GifReader {
 				`Prepared frame output exceeds maxBytes (${nextByteLength} > ${maxBytes}).`,
 			);
 		}
-	}
-
-	private static hashPixels(pixels: Uint32Array): number {
-		let hash = 2166136261;
-		for (let i = 0; i < pixels.length; i++) {
-			hash ^= pixels[i]!;
-			hash = Math.imul(hash, 16777619);
-		}
-		return hash >>> 0;
-	}
-
-	private static findMatchingPixels(
-		pixels: Uint32Array,
-		bucket: Uint32Array[] | undefined,
-	): Uint32Array | null {
-		if (!bucket) {
-			return null;
-		}
-
-		for (const candidate of bucket) {
-			if (candidate.length !== pixels.length) {
-				continue;
-			}
-
-			let match = true;
-			for (let i = 0; i < pixels.length; i++) {
-				if (candidate[i] !== pixels[i]) {
-					match = false;
-					break;
-				}
-			}
-			if (match) {
-				return candidate;
-			}
-		}
-		return null;
-	}
-
-	private static pixelsEqual(a: Uint32Array, b: Uint32Array): boolean {
-		if (a.length !== b.length) {
-			return false;
-		}
-
-		for (let i = 0; i < a.length; i++) {
-			if (a[i] !== b[i]) {
-				return false;
-			}
-		}
-		return true;
 	}
 
 	dispose(): void {

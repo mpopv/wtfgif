@@ -1,5 +1,4 @@
 import type {
-	GifDecodeBackend,
 	PreparedFrameFormat,
 	PreparedGifFrame,
 	PreparedGifFrames,
@@ -8,6 +7,13 @@ import type {
 	WasmCoreInstance,
 } from "../types";
 import { buildPal32 } from "../utils/palette";
+import {
+	blitRectPixels,
+	findMatchingPixels,
+	hashPixels,
+	type PixelRect,
+	pixelsEqual,
+} from "../utils/pixels";
 import { getWasmCoreModule } from "./runtime";
 
 type WasmFrameMetadata = {
@@ -32,7 +38,7 @@ type WasmMetadata = {
 type NativeCompositedFrame = {
 	index: number;
 	pixels: Uint32Array;
-	changedRect: ChangedRect | null;
+	changedRect: PixelRect | null;
 	changedPixels?: Uint32Array | undefined;
 };
 
@@ -46,16 +52,7 @@ const COMPOSITED_DELTA_VERSION = 1;
 const COMPOSITED_DELTA_HEADER_LEN = 4;
 const COMPOSITED_DELTA_ENTRY_LEN = 9;
 
-export function createWasmCoreDecodeBackend(): GifDecodeBackend {
-	return {
-		name: "wtfgif-rust-wasm",
-		isAvailable: () => getWasmCoreModule() !== null,
-		prepareFrames: (gifData, options) =>
-			prepareWasmCoreFrames(gifData, options),
-	};
-}
-
-function prepareWasmCoreFrames(
+export function prepareWasmCoreFrames(
 	gifData: Uint8Array,
 	options: NormalizedBackendOptions,
 ): PreparedGifFrames | null {
@@ -616,71 +613,6 @@ function getTarget32(
 	}
 
 	return new Uint32Array(target.buffer, target.byteOffset, requiredPixels);
-}
-
-type ChangedRect = {
-	x: number;
-	y: number;
-	width: number;
-	height: number;
-};
-
-function blitRectPixels(
-	source: Uint32Array,
-	target: Uint32Array,
-	targetWidth: number,
-	x: number,
-	y: number,
-	width: number,
-	height: number,
-): void {
-	for (let row = 0; row < height; row++) {
-		const src = row * width;
-		const dst = (y + row) * targetWidth + x;
-		target.set(source.subarray(src, src + width), dst);
-	}
-}
-
-function hashPixels(pixels: Uint32Array): number {
-	let hash = 2166136261;
-	for (let i = 0; i < pixels.length; i++) {
-		hash ^= pixels[i]!;
-		hash = Math.imul(hash, 16777619);
-	}
-	return hash >>> 0;
-}
-
-function findMatchingPixels(
-	pixels: Uint32Array,
-	bucket: Uint32Array[] | undefined,
-): Uint32Array | null {
-	if (!bucket) {
-		return null;
-	}
-
-	for (const candidate of bucket) {
-		if (candidate.length !== pixels.length) {
-			continue;
-		}
-
-		if (pixelsEqual(candidate, pixels)) {
-			return candidate;
-		}
-	}
-	return null;
-}
-
-function pixelsEqual(a: Uint32Array, b: Uint32Array): boolean {
-	if (a.length !== b.length) {
-		return false;
-	}
-
-	for (let i = 0; i < a.length; i++) {
-		if (a[i] !== b[i]) {
-			return false;
-		}
-	}
-	return true;
 }
 
 function createRequestedFrameFlags(

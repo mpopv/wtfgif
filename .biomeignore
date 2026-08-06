@@ -1,5 +1,0 @@
-dist
-site-dist
-node_modules
-crates/**/pkg
-crates/**/target

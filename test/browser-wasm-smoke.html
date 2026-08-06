@@ -20,7 +20,6 @@
 				GifReader,
 				getWasmStatus,
 				initializeWasmGlobally,
-				installWasmCoreBackend,
 				remuxGifPixelPerfect,
 			} from "../dist/global.mjs";
 
@@ -28,7 +27,6 @@
 			const benchmark = document.querySelector("#benchmark");
 			try {
 				await initializeWasmGlobally();
-				const backend = installWasmCoreBackend();
 				const realGif = new Uint8Array(
 					await (
 						await fetch("./gifs/NODDERS-2x.gif")
@@ -71,7 +69,6 @@
 				reader.decodeAndBlitFrameRGBA(0, sourcePixels);
 				reencodedReader.decodeAndBlitFrameRGBA(0, reencodedPixels);
 				const passed =
-					backend.available &&
 					getWasmStatus().initialized &&
 					reader.numFrames() === 1 &&
 					reencodedReader.numFrames() === 1 &&
@@ -85,7 +82,7 @@
 				reader.dispose();
 				reencodedReader.dispose();
 				result.textContent = passed ? "PASS" : "FAIL";
-				result.dataset.backend = backend.name;
+				result.dataset.backend = "wtfgif-rust-wasm";
 				result.dataset.realGifMilliseconds = elapsedMs.toFixed(3);
 				benchmark.textContent = `NODDERS pixel-perfect remux: ${elapsedMs.toFixed(3)} ms`;
 			} catch (error) {

@@ -4,7 +4,6 @@ import { dirname, join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import {
-	createWasmCoreDecodeBackend,
 	decodeGifFramesRgba,
 	encodeIndexedGifFrames,
 	encodeRgbaGifFrames,
@@ -19,7 +18,6 @@ const nativeAddon = require("../native/build/wtfgif_native.node");
 setNativeAddonModule(nativeAddon);
 const wasm = require("../crates/wtfgif-core/pkg/wtfgif_core.js");
 setWasmCoreModule(wasm);
-const wasmDecodeBackend = createWasmCoreDecodeBackend();
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const gifsDir = join(root, "test", "gifs");
@@ -90,7 +88,6 @@ function decodeAllOmggif(data) {
 }
 
 function decodeAllWtfgif(data, backend) {
-	WtfGifReader.setDecodeBackend(backend === "wasm" ? wasmDecodeBackend : null);
 	const reader = new WtfGifReader(data);
 	const prepared = reader.preparePlayback({
 		backend,

@@ -22,7 +22,6 @@ import {
 	setNativeAddonModule,
 } from "./native/runtime";
 import type { WasmCoreModule } from "./types";
-import { createWasmCoreDecodeBackend } from "./wasm/coreBackend";
 import { setWasmEncodeCoreModule } from "./wasm/encodeRuntime";
 import {
 	cleanupWasm as cleanupWasmRuntime,
@@ -39,23 +38,6 @@ const bindPublicWasmApi = () => {
 	setWasmEncodeCoreModule(wasmCore);
 	prepareWasmEncoderModule(wasmCore);
 	prepareWasmOneOffApi(wasmCore);
-	const decodeBackendStatus = GifReader.getDecodeBackendStatus();
-	if (wasmCore) {
-		// Initialization is the opt-in boundary for the full package. Install
-		// the exact-parity prepared-frame backend automatically when the caller
-		// has not selected a different backend, so `preparePlayback()` benefits
-		// from the same Wasm module without an extra setup call.
-		if (
-			decodeBackendStatus.name === "javascript" ||
-			decodeBackendStatus.name === "wtfgif-rust-wasm"
-		) {
-			installWasmCoreBackend();
-		}
-	} else if (decodeBackendStatus.name === "wtfgif-rust-wasm") {
-		// Do not leave an unavailable auto-installed backend behind after
-		// cleanup; the reader falls back to its portable JavaScript path.
-		GifReader.setDecodeBackend(null);
-	}
 };
 
 const initializeWasmGlobally = async (
@@ -83,12 +65,6 @@ const cleanupWasm = (): void => {
 	bindPublicWasmApi();
 };
 
-const installWasmCoreBackend = () => {
-	const backend = createWasmCoreDecodeBackend();
-	GifReader.setDecodeBackend(backend);
-	return GifReader.getDecodeBackendStatus();
-};
-
 export type { GifFrameDelays } from "./compiled";
 
 export type {
@@ -111,11 +87,8 @@ export type {
 } from "./native/runtime";
 export type {
 	Frame,
-	FrameInfo,
 	FrameOptions,
 	GifBinary,
-	GifDecodeBackend,
-	GifDecodeBackendStatus,
 	GifOptions,
 	GifPixelBuffer,
 	PreparedFrameBackendPreference,
@@ -135,7 +108,6 @@ export {
 	CompiledGif,
 	cleanupWasm,
 	compileGif,
-	createWasmCoreDecodeBackend,
 	decodeGifFramesRgba,
 	encodeIndexedGifFrames,
 	encodeRgbaGifFrames,
@@ -146,7 +118,6 @@ export {
 	getWasmStatus,
 	initializeWasmGlobally,
 	initializeWasmModule,
-	installWasmCoreBackend,
 	reencodeGifPixelPerfect,
 	remuxGifPixelPerfect,
 	retimeGifPixelPerfect,

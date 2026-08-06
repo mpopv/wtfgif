@@ -15,9 +15,6 @@ typedef struct {
   uint32_t width;
   uint32_t height;
   uint32_t frame_count;
-  uint64_t parse_nanos;
-  uint64_t decode_nanos;
-  uint64_t compose_nanos;
   int32_t host_owned;
 } NativeDecodedGif;
 
@@ -32,10 +29,6 @@ typedef struct {
   size_t byte_capacity;
 } EncodedBufferHint;
 
-extern int32_t wtfgif_decode_all_rgba(
-    const uint8_t *data,
-    size_t data_len,
-    NativeDecodedGif *decoded);
 typedef uint8_t *(*NativeRgbaAllocator)(void *context, size_t byte_len);
 extern int32_t wtfgif_decode_all_rgba_host(
     const uint8_t *data,
@@ -109,16 +102,11 @@ extern int32_t wtfgif_encode_indexed_balanced(
     int32_t loop_count,
     int32_t deltas,
     NativeEncodedGif *encoded);
-extern int32_t wtfgif_reencode_gif_fast(
-    const uint8_t *data,
-    size_t data_len,
-    NativeEncodedGif *encoded);
 extern int32_t wtfgif_reencode_gif_fast_host(
     const uint8_t *data,
     size_t data_len,
     NativeRgbaAllocator allocate,
-    void *allocate_context,
-    NativeEncodedGif *encoded);
+    void *allocate_context);
 extern void wtfgif_free_bytes(
     uint8_t *bytes,
     size_t byte_len,
@@ -149,6 +137,12 @@ static void finalize_bytes(napi_env env, void *data, void *finalize_hint) {
       hint->byte_len,
       hint->byte_capacity);
   free(hint);
+}
+
+static napi_value expose_encoded_buffer(
+    napi_env env,
+    NativeEncodedGif encoded) {
+  return expose_encoded_buffer(env, encoded);
 }
 
 typedef struct {
@@ -988,32 +982,7 @@ static napi_value encode_rgba_fast(
         "Native exact encoder rejected invalid or non-GIF-representable RGBA input.");
   }
 
-  EncodedBufferHint *hint = malloc(sizeof(*hint));
-  if (hint == NULL) {
-    wtfgif_free_bytes(
-        encoded.bytes,
-        encoded.byte_len,
-        encoded.byte_capacity);
-    return throw_error(env, "Could not allocate encoded GIF owner.");
-  }
-  hint->byte_len = encoded.byte_len;
-  hint->byte_capacity = encoded.byte_capacity;
-  napi_value output;
-  if (napi_create_external_buffer(
-          env,
-          encoded.byte_len,
-          encoded.bytes,
-          finalize_bytes,
-          hint,
-          &output) != napi_ok) {
-    wtfgif_free_bytes(
-        encoded.bytes,
-        encoded.byte_len,
-        encoded.byte_capacity);
-    free(hint);
-    return throw_error(env, "Could not expose encoded GIF buffer.");
-  }
-  return output;
+  return expose_encoded_buffer(env, encoded);
 }
 
 static napi_value encode_rgba_balanced(
@@ -1114,32 +1083,7 @@ static napi_value encode_rgba_balanced(
     return throw_error(env, "Native balanced encoder rejected RGBA input.");
   }
 
-  EncodedBufferHint *hint = malloc(sizeof(*hint));
-  if (hint == NULL) {
-    wtfgif_free_bytes(
-        encoded.bytes,
-        encoded.byte_len,
-        encoded.byte_capacity);
-    return throw_error(env, "Could not allocate encoded GIF owner.");
-  }
-  hint->byte_len = encoded.byte_len;
-  hint->byte_capacity = encoded.byte_capacity;
-  napi_value output;
-  if (napi_create_external_buffer(
-          env,
-          encoded.byte_len,
-          encoded.bytes,
-          finalize_bytes,
-          hint,
-          &output) != napi_ok) {
-    wtfgif_free_bytes(
-        encoded.bytes,
-        encoded.byte_len,
-        encoded.byte_capacity);
-    free(hint);
-    return throw_error(env, "Could not expose encoded GIF buffer.");
-  }
-  return output;
+  return expose_encoded_buffer(env, encoded);
 }
 
 static napi_value encode_rgba_quality(
@@ -1221,29 +1165,7 @@ static napi_value encode_rgba_quality(
         "Native quality encoder rejected invalid RGBA input.");
   }
 
-  EncodedBufferHint *hint = malloc(sizeof(*hint));
-  if (hint == NULL) {
-    wtfgif_free_bytes(encoded.bytes, encoded.byte_len, encoded.byte_capacity);
-    return throw_error(env, "Could not allocate encoded GIF owner.");
-  }
-  hint->byte_len = encoded.byte_len;
-  hint->byte_capacity = encoded.byte_capacity;
-  napi_value output;
-  if (napi_create_external_buffer(
-          env,
-          encoded.byte_len,
-          encoded.bytes,
-          finalize_bytes,
-          hint,
-          &output) != napi_ok) {
-    wtfgif_free_bytes(
-        encoded.bytes,
-        encoded.byte_len,
-        encoded.byte_capacity);
-    free(hint);
-    return throw_error(env, "Could not expose encoded GIF buffer.");
-  }
-  return output;
+  return expose_encoded_buffer(env, encoded);
 }
 
 static napi_value encode_indexed_fast(
@@ -1327,26 +1249,7 @@ static napi_value encode_indexed_fast(
     return throw_error(env, "Native exact encoder rejected indexed input.");
   }
 
-  EncodedBufferHint *hint = malloc(sizeof(*hint));
-  if (hint == NULL) {
-    wtfgif_free_bytes(encoded.bytes, encoded.byte_len, encoded.byte_capacity);
-    return throw_error(env, "Could not allocate encoded GIF owner.");
-  }
-  hint->byte_len = encoded.byte_len;
-  hint->byte_capacity = encoded.byte_capacity;
-  napi_value output;
-  if (napi_create_external_buffer(
-          env,
-          encoded.byte_len,
-          encoded.bytes,
-          finalize_bytes,
-          hint,
-          &output) != napi_ok) {
-    wtfgif_free_bytes(encoded.bytes, encoded.byte_len, encoded.byte_capacity);
-    free(hint);
-    return throw_error(env, "Could not expose encoded GIF buffer.");
-  }
-  return output;
+  return expose_encoded_buffer(env, encoded);
 }
 
 static napi_value encode_indexed_balanced(
@@ -1484,68 +1387,16 @@ static napi_value reencode_gif_fast(
     return tiny_output;
   }
 
-  NativeEncodedGif encoded = {0};
   HostRgbaBuffer host = {env, NULL};
   int32_t reencode_status = wtfgif_reencode_gif_fast_host(
           (const uint8_t *)input_data,
           input_length,
           allocate_host_rgba,
-          &host,
-          &encoded);
+          &host);
   if (!reencode_status) {
     return throw_error(env, "Native exact GIF transcoder rejected the input.");
   }
-  if (reencode_status == 2) {
-    return host.buffer;
-  }
-
-  if (encoded.byte_len <= 16 * 1024) {
-    napi_value output;
-    if (napi_create_buffer_copy(
-            env,
-            encoded.byte_len,
-            encoded.bytes,
-            NULL,
-            &output) != napi_ok) {
-      wtfgif_free_bytes(
-          encoded.bytes,
-          encoded.byte_len,
-          encoded.byte_capacity);
-      return throw_error(env, "Could not expose reencoded GIF buffer.");
-    }
-    wtfgif_free_bytes(
-        encoded.bytes,
-        encoded.byte_len,
-        encoded.byte_capacity);
-    return output;
-  }
-
-  EncodedBufferHint *hint = malloc(sizeof(*hint));
-  if (hint == NULL) {
-    wtfgif_free_bytes(
-        encoded.bytes,
-        encoded.byte_len,
-        encoded.byte_capacity);
-    return throw_error(env, "Could not allocate reencoded GIF owner.");
-  }
-  hint->byte_len = encoded.byte_len;
-  hint->byte_capacity = encoded.byte_capacity;
-  napi_value output;
-  if (napi_create_external_buffer(
-          env,
-          encoded.byte_len,
-          encoded.bytes,
-          finalize_bytes,
-          hint,
-          &output) != napi_ok) {
-    wtfgif_free_bytes(
-        encoded.bytes,
-        encoded.byte_len,
-        encoded.byte_capacity);
-    free(hint);
-    return throw_error(env, "Could not expose reencoded GIF buffer.");
-  }
-  return output;
+  return host.buffer;
 }
 
 static napi_value initialize(napi_env env, napi_value exports) {

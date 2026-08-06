@@ -18,10 +18,8 @@ export type {
 export { encodeRgbaGifFrames } from "./encoder/quality";
 export type { WasmQualityWebModule as WasmWebModule } from "./wasm/qualityRuntime";
 export {
-	getWasmFeatures,
 	getWasmQualityCoreModule as getWasmCoreModule,
 	getWasmStatus,
-	isWasmReady,
 } from "./wasm/qualityRuntime";
 
 export async function initializeWasmGlobally(

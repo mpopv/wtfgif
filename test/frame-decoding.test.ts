@@ -251,6 +251,7 @@ describe("GifReader frame decoding", () => {
 	test("prepareFrames can cache sparse transparent pixels", () => {
 		const reader = new GifReader(makeDisposalGif());
 		const prepared = reader.prepareFrames({
+			backend: "javascript",
 			composited: false,
 			cache: "sparse-rgba",
 			frameIndices: [1],
@@ -280,19 +281,11 @@ describe("GifReader frame decoding", () => {
 		const reader = new GifReader(buf.slice(0, writer.end()));
 
 		const prepared = reader.prepareFrames({
+			backend: "javascript",
 			composited: false,
 			cache: "sparse-rgba",
 		});
 
 		expect(prepared.getFrame(0)?.spans?.length).toBe(3);
-	});
-
-	test("Wasm backend status is unavailable by default", () => {
-		GifReader.setDecodeBackend(null);
-
-		expect(GifReader.getDecodeBackendStatus()).toStrictEqual({
-			name: "javascript",
-			available: false,
-		});
 	});
 });
