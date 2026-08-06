@@ -23,7 +23,6 @@ type RawQualityExports = WebAssembly.Exports & {
 	core_version: () => string;
 	__wbindgen_add_to_stack_pointer: (delta: number) => number;
 	__wbindgen_malloc: (size: number, align: number) => number;
-	__wbindgen_free: (ptr: number, size: number, align: number) => void;
 	indexed_lzw_input_scratch_reserve: (length: number) => number;
 	encode_rgba_quality_gif_constant_delay_scratch_from_input: (
 		retptr: number,
@@ -98,23 +97,21 @@ function createRawQualityModule(raw: RawQualityExports): WasmQualityCoreModule {
 		) => {
 			const ptr = raw.__wbindgen_malloc(delays.length * 2, 2);
 			new Uint16Array(memory.buffer, ptr, delays.length).set(delays);
-			try {
-				return callResult((retptr) =>
-					raw.encode_rgba_quality_gif_scratch_from_input(
-						retptr,
-						length,
-						width,
-						height,
-						frameCount,
-						ptr,
-						delays.length,
-						loopCount,
-						alphaThreshold,
-					),
-				);
-			} finally {
-				raw.__wbindgen_free(ptr, delays.length * 2, 2);
-			}
+			// The wasm-bindgen export shim takes ownership of this temporary array.
+			// Freeing it again here corrupts the allocator after a successful call.
+			return callResult((retptr) =>
+				raw.encode_rgba_quality_gif_scratch_from_input(
+					retptr,
+					length,
+					width,
+					height,
+					frameCount,
+					ptr,
+					delays.length,
+					loopCount,
+					alphaThreshold,
+				),
+			);
 		},
 		encode_rgba_quality_gif_constant_delay_scratch_from_input: (
 			length: number,

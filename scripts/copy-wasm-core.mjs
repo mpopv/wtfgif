@@ -24,18 +24,6 @@ const packages = [
 		moduleType: "module",
 	},
 	{
-		source: "pkg-encode",
-		target: "wasm-encode",
-		label: "encode Node",
-		moduleType: "commonjs",
-	},
-	{
-		source: "pkg-encode-web",
-		target: "wasm-encode-web",
-		label: "encode browser",
-		moduleType: "module",
-	},
-	{
 		source: "pkg-simd",
 		target: "wasm-core-simd",
 		label: "Node SIMD",
@@ -45,18 +33,6 @@ const packages = [
 		source: "pkg-web-simd",
 		target: "wasm-web-simd",
 		label: "browser SIMD",
-		moduleType: "module",
-	},
-	{
-		source: "pkg-encode-simd",
-		target: "wasm-encode-simd",
-		label: "encode Node SIMD",
-		moduleType: "commonjs",
-	},
-	{
-		source: "pkg-encode-web-simd",
-		target: "wasm-encode-web-simd",
-		label: "encode browser SIMD",
 		moduleType: "module",
 	},
 	{

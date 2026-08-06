@@ -6606,11 +6606,11 @@ fn accumulate_quality_histogram_u32_bits_remaining<
     let histogram_indices_pointer = histogram_indices.as_mut_ptr();
     let mut has_transparent_pixels = false;
     let mut offset = start_offset;
-    // Keep sixteen packed pixels in flight. This is the fallback scan for the
+    // Keep eight packed pixels in flight. This is the fallback scan for the
     // normal-sized quality path (4-bit histogram), so avoiding a loop branch
     // and repeated offset arithmetic here matters more than the tiny prefix
     // scan that discovers the palette overflow.
-    while offset + 64 <= rgba_stream.len() {
+    while offset + 32 <= rgba_stream.len() {
         let (packed0, packed1) = unsafe { read_rgba_pair(rgba_pointer, offset) };
         let (packed2, packed3) = unsafe { read_rgba_pair(rgba_pointer, offset + 8) };
         let (packed4, packed5) = unsafe { read_rgba_pair(rgba_pointer, offset + 16) };
@@ -6675,71 +6675,7 @@ fn accumulate_quality_histogram_u32_bits_remaining<
                 alpha_threshold,
             );
         }
-        let (packed8, packed9) = unsafe { read_rgba_pair(rgba_pointer, offset + 32) };
-        let (packed10, packed11) = unsafe { read_rgba_pair(rgba_pointer, offset + 40) };
-        let (packed12, packed13) = unsafe { read_rgba_pair(rgba_pointer, offset + 48) };
-        let (packed14, packed15) = unsafe { read_rgba_pair(rgba_pointer, offset + 56) };
-        if RECORD_INDICES {
-            let pixel_index = offset / 4 + 8;
-            has_transparent_pixels |= add_quality_histogram_u32_pair_with_alpha_record::<BITS>(
-                histogram,
-                histogram_indices_pointer,
-                pixel_index,
-                packed8,
-                packed9,
-                alpha_threshold,
-            );
-            has_transparent_pixels |= add_quality_histogram_u32_pair_with_alpha_record::<BITS>(
-                histogram,
-                histogram_indices_pointer,
-                pixel_index + 2,
-                packed10,
-                packed11,
-                alpha_threshold,
-            );
-            has_transparent_pixels |= add_quality_histogram_u32_pair_with_alpha_record::<BITS>(
-                histogram,
-                histogram_indices_pointer,
-                pixel_index + 4,
-                packed12,
-                packed13,
-                alpha_threshold,
-            );
-            has_transparent_pixels |= add_quality_histogram_u32_pair_with_alpha_record::<BITS>(
-                histogram,
-                histogram_indices_pointer,
-                pixel_index + 6,
-                packed14,
-                packed15,
-                alpha_threshold,
-            );
-        } else {
-            has_transparent_pixels |= add_quality_histogram_u32_pair_with_alpha::<BITS>(
-                histogram,
-                packed8,
-                packed9,
-                alpha_threshold,
-            );
-            has_transparent_pixels |= add_quality_histogram_u32_pair_with_alpha::<BITS>(
-                histogram,
-                packed10,
-                packed11,
-                alpha_threshold,
-            );
-            has_transparent_pixels |= add_quality_histogram_u32_pair_with_alpha::<BITS>(
-                histogram,
-                packed12,
-                packed13,
-                alpha_threshold,
-            );
-            has_transparent_pixels |= add_quality_histogram_u32_pair_with_alpha::<BITS>(
-                histogram,
-                packed14,
-                packed15,
-                alpha_threshold,
-            );
-        }
-        offset += 64;
+        offset += 32;
     }
     while offset < rgba_stream.len() {
         let packed =

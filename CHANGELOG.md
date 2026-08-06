@@ -2,6 +2,30 @@
 
 All notable changes to wtfgif are documented here.
 
+## 3.0.0 - 2026-08-06
+
+- Make `wtfgif/encode` a single-purpose arbitrary-RGBA encoder: adaptive global
+  quality quantization in Wasm followed by lossless literal LZW. The subpath no
+  longer exports `GifWriter`, indexed-frame encoding, alternate quantizers,
+  palette modes, delta encoding, or JavaScript/native backends. General and
+  omggif-compatible APIs remain available from the package root.
+- Cut the encode-only JavaScript bundle from 28.35 KB to 6.38 KB ESM by giving
+  the quality encoder a dedicated runtime and input path. Remove the obsolete
+  generic encode-only Wasm artifacts; `wtfgif/wasm-encode` now resolves to the
+  smaller quality-only module used by `wtfgif/encode`.
+- Fix allocator corruption when one process alternates between constant and
+  per-frame delays. The wasm-bindgen function owns its temporary delay buffer;
+  the raw Node loader no longer frees that allocation twice.
+- Reduce first-call Wasm compilation and improve initialized throughput by
+  keeping eight packed pixels in flight in the quality histogram scan. Output
+  remains byte-for-byte unchanged from the established quality path.
+- Release receipts on the eight-image arbitrary-RGBA fixture: **225.66x
+  initialized** (95.096 ms vs 0.421 ms), **43.12x first real encode after
+  initialization** (123.842 ms vs 2.872 ms), and **32.24x full strict-cold**
+  (137.358 ms vs 4.261 ms). The 512x512x10 strict-cold stress fixture is
+  **207.97x** faster (6,259.352 ms vs 30.098 ms). Expected output bytes and
+  decoded quality remain unchanged.
+
 ## 2.4.18 - 2026-08-06
 
 - Reduce portable Wasm first-call compilation by keeping the unselected

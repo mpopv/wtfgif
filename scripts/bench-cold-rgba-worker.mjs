@@ -178,14 +178,11 @@ if (implementation === "baseline") {
 	if (initializedFirst) started = performance.now();
 	output = encodeRgbaGifFrames({
 		alphaThreshold,
-		backend: "wasm",
 		delay: 10,
 		frameCount,
 		frames: rgba,
 		height,
 		loop: 0,
-		paletteMode: "global",
-		quantization: "quality",
 		width,
 	});
 } else {

@@ -3,7 +3,14 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
-import { encodeRgbaGifFrames, initializeWasmGlobally } from "../dist/index.mjs";
+
+const encoderEntry =
+	process.env.BENCH_WTFFIG_ENTRY === "root"
+		? "../dist/index.mjs"
+		: "../dist/encode.mjs";
+const { encodeRgbaGifFrames, initializeWasmGlobally } = await import(
+	encoderEntry
+);
 
 const require = createRequire(import.meta.url);
 const ImageQ = require("image-q");
@@ -211,14 +218,11 @@ function encodeOmggifQuality(fixture) {
 function encodeWtfgif(fixture) {
 	return encodeRgbaGifFrames({
 		alphaThreshold,
-		backend: "wasm",
 		delay: 10,
 		frameCount: fixture.frameCount,
 		frames: fixture.rgba,
 		height: fixture.height,
 		loop: 0,
-		paletteMode: "global",
-		quantization: "quality",
 		width: fixture.width,
 	});
 }

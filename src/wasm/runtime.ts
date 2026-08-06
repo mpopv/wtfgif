@@ -1,11 +1,10 @@
 import type { WasmCoreModule } from "../types";
 import { isWasmCoreModule } from "./contracts";
 import {
-	createWasmModuleRuntime,
 	getWasmFeatures as getSharedWasmFeatures,
 	getWasmStatus as getSharedWasmStatus,
-	type WasmWebBinding,
-} from "./moduleRuntime";
+} from "./features";
+import { createWasmModuleRuntime, type WasmWebBinding } from "./moduleRuntime";
 
 const runtime = createWasmModuleRuntime<WasmCoreModule>({
 	name: "wtfgif full-core",

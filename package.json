@@ -1,6 +1,6 @@
 {
 	"name": "wtfgif",
-	"version": "2.4.18",
+	"version": "3.0.0",
 	"main": "dist/index.cjs",
 	"module": "dist/index.mjs",
 	"types": "dist/index.d.ts",
@@ -55,25 +55,25 @@
 			"default": "./dist/wasm-web/wtfgif_core_bg.wasm"
 		},
 		"./wasm-encode": {
-			"types": "./dist/wasm-encode/wtfgif_core.d.ts",
+			"types": "./dist/wasm-quality/wtfgif_core.d.ts",
 			"browser": {
-				"types": "./dist/wasm-encode-web/wtfgif_core.d.ts",
-				"import": "./dist/wasm-encode-web/wtfgif_core.js",
-				"default": "./dist/wasm-encode-web/wtfgif_core.js"
+				"types": "./dist/wasm-quality-web/wtfgif_core.d.ts",
+				"import": "./dist/wasm-quality-web/wtfgif_core.js",
+				"default": "./dist/wasm-quality-web/wtfgif_core.js"
 			},
 			"node": {
-				"types": "./dist/wasm-encode/wtfgif_core.d.ts",
-				"import": "./dist/wasm-encode/wtfgif_core.js",
-				"require": "./dist/wasm-encode/wtfgif_core.js"
+				"types": "./dist/wasm-quality/wtfgif_core.d.ts",
+				"import": "./dist/wasm-quality/wtfgif_core.js",
+				"require": "./dist/wasm-quality/wtfgif_core.js"
 			},
-			"import": "./dist/wasm-encode-web/wtfgif_core.js",
-			"require": "./dist/wasm-encode/wtfgif_core.js",
-			"default": "./dist/wasm-encode-web/wtfgif_core.js"
+			"import": "./dist/wasm-quality-web/wtfgif_core.js",
+			"require": "./dist/wasm-quality/wtfgif_core.js",
+			"default": "./dist/wasm-quality-web/wtfgif_core.js"
 		},
 		"./wasm-encode/wasm": {
-			"browser": "./dist/wasm-encode-web/wtfgif_core_bg.wasm",
-			"node": "./dist/wasm-encode/wtfgif_core_bg.wasm",
-			"default": "./dist/wasm-encode-web/wtfgif_core_bg.wasm"
+			"browser": "./dist/wasm-quality-web/wtfgif_core_bg.wasm",
+			"node": "./dist/wasm-quality/wtfgif_core_bg.wasm",
+			"default": "./dist/wasm-quality-web/wtfgif_core_bg.wasm"
 		},
 		"./wasm-web": {
 			"types": "./dist/wasm-web/wtfgif_core.d.ts",
@@ -85,21 +85,15 @@
 	"scripts": {
 		"build": "tsup && tsc -p tsconfig.build.json --emitDeclarationOnly && node scripts/copy-wasm-core.mjs",
 		"build:site": "node scripts/build-site.mjs",
-		"build:wasm": "npm run build:wasm:node && npm run build:wasm:web && npm run build:wasm:encode && npm run build:wasm:quality && npm run build:wasm:simd && npm run build:wasm:simd:quality",
+		"build:wasm": "npm run build:wasm:node && npm run build:wasm:web && npm run build:wasm:quality && npm run build:wasm:simd && npm run build:wasm:simd:quality",
 		"build:wasm:node": "wasm-pack build crates/wtfgif-core --target nodejs --out-dir pkg --release",
 		"build:wasm:web": "wasm-pack build crates/wtfgif-core --target web --out-dir pkg-web --release",
-		"build:wasm:encode": "npm run build:wasm:node:encode && npm run build:wasm:web:encode",
-		"build:wasm:node:encode": "wasm-pack build crates/wtfgif-core --target nodejs --out-dir pkg-encode --release -- --features encode-only",
-		"build:wasm:web:encode": "wasm-pack build crates/wtfgif-core --target web --out-dir pkg-encode-web --release -- --features encode-only",
 		"build:wasm:quality": "npm run build:wasm:node:quality && npm run build:wasm:web:quality",
 		"build:wasm:node:quality": "node scripts/build-wasm-variant.mjs nodejs pkg-quality quality-only",
 		"build:wasm:web:quality": "node scripts/build-wasm-variant.mjs web pkg-quality-web quality-only",
-		"build:wasm:simd": "npm run build:wasm:node:simd && npm run build:wasm:web:simd && npm run build:wasm:encode:simd",
+		"build:wasm:simd": "npm run build:wasm:node:simd && npm run build:wasm:web:simd",
 		"build:wasm:node:simd": "node scripts/build-wasm-variant.mjs nodejs pkg-simd simd",
 		"build:wasm:web:simd": "node scripts/build-wasm-variant.mjs web pkg-web-simd simd",
-		"build:wasm:encode:simd": "npm run build:wasm:node:encode:simd && npm run build:wasm:web:encode:simd",
-		"build:wasm:node:encode:simd": "node scripts/build-wasm-variant.mjs nodejs pkg-encode-simd encode-only simd",
-		"build:wasm:web:encode:simd": "node scripts/build-wasm-variant.mjs web pkg-encode-web-simd encode-only simd",
 		"build:wasm:simd:quality": "npm run build:wasm:node:quality:simd && npm run build:wasm:web:quality:simd",
 		"build:wasm:node:quality:simd": "node scripts/build-wasm-variant.mjs nodejs pkg-quality-simd quality-only simd",
 		"build:wasm:web:quality:simd": "node scripts/build-wasm-variant.mjs web pkg-quality-web-simd quality-only simd",
@@ -164,7 +158,7 @@
 		"url": "https://github.com/mpopv/wtfgif/issues"
 	},
 	"homepage": "https://github.com/mpopv/wtfgif#readme",
-	"description": "A fast, TypeScript-ready drop-in replacement for omggif with portable JavaScript and WebAssembly backends.",
+	"description": "Fast GIF encoding and omggif-compatible decoding for Node.js, browsers, Workers, and edge runtimes.",
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.4",
 		"@edge-runtime/vm": "^5.0.0",
