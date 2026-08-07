@@ -23,7 +23,6 @@ function fixture({
 	frameCount,
 	rgba,
 	delay = 10,
-	delta = false,
 	source,
 }) {
 	if (rgba.length !== width * height * frameCount * 4) {
@@ -38,7 +37,6 @@ function fixture({
 		frameCount,
 		rgba,
 		delay,
-		delta,
 		source,
 	};
 }
@@ -51,7 +49,6 @@ function generatedFixture({
 	height,
 	frameCount,
 	draw,
-	delta,
 }) {
 	const rgba = new Uint8Array(width * height * frameCount * 4);
 	let offset = 0;
@@ -74,7 +71,6 @@ function generatedFixture({
 		height,
 		frameCount,
 		rgba,
-		delta,
 		source: { kind: "deterministic-generator", version: 1 },
 	});
 }
@@ -199,11 +195,10 @@ function makeNearlyStatic() {
 	return generatedFixture({
 		id: "nearly-static",
 		label: "Nearly static animation",
-		category: "changed-rectangle",
+		category: "frame-similarity",
 		width: 128,
 		height: 128,
 		frameCount: 12,
-		delta: true,
 		draw(x, y, frame) {
 			const moving = x >= frame * 8 && x < frame * 8 + 12 && y >= 56 && y < 68;
 			const grid = x % 16 === 0 || y % 16 === 0;
@@ -391,7 +386,6 @@ export function corpusManifestEntry(value) {
 		height: value.height,
 		frameCount: value.frameCount,
 		pixelCount: value.width * value.height * value.frameCount,
-		delta: value.delta,
 		rgbaSha256: sha256(value.rgba),
 		source: value.source,
 	};

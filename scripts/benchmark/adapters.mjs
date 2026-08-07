@@ -7,7 +7,7 @@ const { GifWriter } = require("omggif");
 let wtfgif;
 
 export async function initializeAdapters() {
-	wtfgif = await import("../../dist/index.mjs");
+	wtfgif = await import("../../dist/encode.mjs");
 	await wtfgif.initializeWasmGlobally();
 	return wtfgif.getWasmStatus();
 }
@@ -21,7 +21,6 @@ export function encodeWtfgif(value, alphaThreshold) {
 	return wtfgif.encodeRgbaGifFrames({
 		alphaThreshold,
 		delay: value.delay,
-		delta: value.delta,
 		frameCount: value.frameCount,
 		frames: value.rgba,
 		height: value.height,
@@ -106,35 +105,6 @@ function quantizeImageQGlobal(rgba, alphaThreshold) {
 	return { indexed, palette: padPalette(palette), transparentIndex };
 }
 
-function changedRect(previous, current, width, height) {
-	let left = width;
-	let top = height;
-	let right = -1;
-	let bottom = -1;
-	for (let y = 0; y < height; y += 1) {
-		for (let x = 0; x < width; x += 1) {
-			const index = y * width + x;
-			if (previous[index] === current[index]) continue;
-			left = Math.min(left, x);
-			top = Math.min(top, y);
-			right = Math.max(right, x);
-			bottom = Math.max(bottom, y);
-		}
-	}
-	return right < left
-		? null
-		: { x: left, y: top, width: right - left + 1, height: bottom - top + 1 };
-}
-
-function copyRect(frame, canvasWidth, rect) {
-	const output = new Uint8Array(rect.width * rect.height);
-	for (let row = 0; row < rect.height; row += 1) {
-		const source = (rect.y + row) * canvasWidth + rect.x;
-		output.set(frame.subarray(source, source + rect.width), row * rect.width);
-	}
-	return output;
-}
-
 export function encodeImageQOmggif(value, alphaThreshold) {
 	const quantized = quantizeImageQGlobal(value.rgba, alphaThreshold);
 	const output = new Uint8Array(
@@ -145,36 +115,18 @@ export function encodeImageQOmggif(value, alphaThreshold) {
 		palette: quantized.palette,
 	});
 	const framePixels = value.width * value.height;
-	let previous = null;
 	for (let frameIndex = 0; frameIndex < value.frameCount; frameIndex += 1) {
 		const frame = quantized.indexed.subarray(
 			frameIndex * framePixels,
 			(frameIndex + 1) * framePixels,
 		);
-		let x = 0;
-		let y = 0;
-		let width = value.width;
-		let height = value.height;
-		let pixels = frame;
-		if (value.delta && previous) {
-			const rect = changedRect(previous, frame, value.width, value.height);
-			if (rect) {
-				({ x, y, width, height } = rect);
-				pixels = copyRect(frame, value.width, rect);
-			} else {
-				width = 1;
-				height = 1;
-				pixels = frame.subarray(0, 1);
-			}
-		}
-		writer.addFrame(x, y, width, height, pixels, {
+		writer.addFrame(0, 0, value.width, value.height, frame, {
 			delay: delayAt(value.delay, frameIndex),
-			disposal: value.delta ? 0 : 2,
+			disposal: 2,
 			...(quantized.transparentIndex === undefined
 				? {}
 				: { transparent: quantized.transparentIndex }),
 		});
-		previous = frame;
 	}
 	return output.slice(0, writer.end());
 }

@@ -84,13 +84,15 @@ or URL, use `new Blob([gif], { type: "image/gif" })`.
 ## Encoding tradeoff
 
 `wtfgif` is optimized for maximum encoding speed at the cost of larger output
-files. On the documented 128×128, eight-frame small-image workload, it encoded
-**180.13× faster** than image-q + omggif under comparable conditions (0.536 ms
-vs 96.612 ms), with a **3.80× larger file**.
+files. The default benchmark starts a fresh Node process for every sample,
+initializes Wasm before the clock, and times the first and only complete encode.
+There are no encode warmups or retained palettes, source pixels, scratch
+buffers, or output results between samples.
 
-Every fixture in the 10-fixture corpus was more than 100× faster. Speedups
-ranged from 130.19× to 264.51× with a 166.28× geometric mean. Output files
-ranged from 1.17× to 22.74× larger, with a 6.23× geometric mean.
+Across the 10-fixture arbitrary-RGBA corpus, `wtfgif` encoded **54.02×–128.86×
+faster** than image-q + omggif, with a **73.61× geometric mean**. The real
+128×128 MakeEmoji workload was **110.43× faster** (1.182 ms vs 130.531 ms).
+Output files were 1.17×–22.74× larger, with a 6.50× geometric mean.
 
 ## Browser comparison
 

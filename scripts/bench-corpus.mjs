@@ -1,15 +1,9 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { cpus } from "node:os";
 import { dirname, join } from "node:path";
-import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
-import {
-	encodeImageQOmggif,
-	encodeWtfgif,
-	initializeAdapters,
-} from "./benchmark/adapters.mjs";
 import {
 	ALPHA_THRESHOLD,
 	corpusManifestEntry,
@@ -20,82 +14,100 @@ import { percentile, validateAndMeasure } from "./benchmark/metrics.mjs";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const require = createRequire(import.meta.url);
+const worker = join(root, "scripts", "bench-corpus-worker.mjs");
 const iterations = Number(process.env.BENCH_ITERATIONS ?? 15);
-const warmups = Number(process.env.BENCH_WARMUP_ITERATIONS ?? 3);
 const includeStress = process.env.BENCH_CORPUS_INCLUDE_STRESS === "1";
 const fixtureFilter = process.env.BENCH_CORPUS_FIXTURE;
 const writeReceipt = process.env.BENCH_WRITE_RECEIPT !== "0";
-if (
-	!Number.isInteger(iterations) ||
-	iterations < 1 ||
-	!Number.isInteger(warmups) ||
-	warmups < 0
-) {
-	throw new Error(
-		"BENCH_ITERATIONS must be positive and BENCH_WARMUP_ITERATIONS non-negative",
-	);
+if (!Number.isInteger(iterations) || iterations < 1) {
+	throw new Error("BENCH_ITERATIONS must be a positive integer");
 }
 
-const wasmStatus = await initializeAdapters();
 let corpus = loadBenchmarkCorpus({ includeStress });
 if (fixtureFilter)
 	corpus = corpus.filter((value) => value.id === fixtureFilter);
 if (corpus.length === 0)
 	throw new Error("No benchmark fixture matched BENCH_CORPUS_FIXTURE");
 
-const implementations = [
-	{ id: "wtfgif", encode: encodeWtfgif },
-	{ id: "image-q-rgbquant+omggif", encode: encodeImageQOmggif },
-];
+const implementations = ["wtfgif", "image-q-rgbquant+omggif"];
 let sink = 0;
+let wasmStatus;
 
-function runEncode(implementation, value) {
-	const started = performance.now();
-	const bytes = implementation.encode(value, ALPHA_THRESHOLD);
-	const milliseconds = performance.now() - started;
-	sink ^= bytes[0] ^ bytes[Math.floor(bytes.length / 2)] ^ bytes.at(-1);
-	return { bytes, milliseconds };
+function runWorker(implementation, value, returnOutput) {
+	const result = spawnSync(
+		process.execPath,
+		[worker, implementation, value.id],
+		{
+			cwd: root,
+			encoding: "utf8",
+			env: {
+				...process.env,
+				BENCH_CORPUS_INCLUDE_STRESS: includeStress ? "1" : "0",
+				BENCH_RETURN_OUTPUT: returnOutput ? "1" : "0",
+				WTFGIF_CORPUS_WORKER: "1",
+			},
+			maxBuffer: 16 * 1024 * 1024,
+		},
+	);
+	if (result.status !== 0) {
+		throw new Error(
+			[
+				`Corpus worker failed: ${value.id} / ${implementation}`,
+				result.stdout,
+				result.stderr,
+			].join("\n"),
+		);
+	}
+	const row = JSON.parse(result.stdout);
+	if (row.wasmStatus) wasmStatus = row.wasmStatus;
+	sink ^= row.bytes ^ Number.parseInt(row.outputSha256.slice(0, 8), 16);
+	return row;
 }
 
 function benchmarkFixture(value, fixtureIndex) {
+	const samples = new Map(implementations.map((id) => [id, []]));
 	const first = new Map();
-	for (const implementation of implementations) {
-		first.set(implementation.id, runEncode(implementation, value));
-	}
-	for (let warmup = 0; warmup < warmups; warmup += 1) {
-		const order =
-			(warmup + fixtureIndex) & 1
-				? implementations.toReversed()
-				: implementations;
-		for (const implementation of order) runEncode(implementation, value);
-	}
-
-	const samples = new Map(implementations.map(({ id }) => [id, []]));
 	for (let iteration = 0; iteration < iterations; iteration += 1) {
 		const order =
 			(iteration + fixtureIndex) & 1
 				? implementations.toReversed()
 				: implementations;
 		for (const implementation of order) {
-			samples
-				.get(implementation.id)
-				.push(runEncode(implementation, value).milliseconds);
+			const row = runWorker(implementation, value, iteration === 0);
+			const initial = first.get(implementation);
+			if (initial) {
+				if (
+					row.bytes !== initial.bytes ||
+					row.outputSha256 !== initial.outputSha256
+				) {
+					throw new Error(
+						`${value.id}: ${implementation} output changed between fresh processes`,
+					);
+				}
+			} else {
+				first.set(implementation, row);
+			}
+			samples.get(implementation).push(row.milliseconds);
 		}
 	}
 
 	const rows = implementations.map((implementation) => {
-		const firstRun = first.get(implementation.id);
-		const rawSamples = samples.get(implementation.id);
-		const quality = validateAndMeasure(firstRun.bytes, value, ALPHA_THRESHOLD);
+		const firstRun = first.get(implementation);
+		const output = Buffer.from(firstRun.outputBase64, "base64");
+		if (output.length !== firstRun.bytes) {
+			throw new Error(`${value.id}: worker output length is inconsistent`);
+		}
+		const quality = validateAndMeasure(output, value, ALPHA_THRESHOLD);
+		const rawSamples = samples.get(implementation);
 		return {
 			fixtureId: value.id,
-			implementation: implementation.id,
-			firstObservedMs: firstRun.milliseconds,
+			implementation,
+			firstObservedMs: rawSamples[0],
 			samplesMs: rawSamples,
 			medianMs: percentile(rawSamples, 0.5),
 			p95Ms: percentile(rawSamples, 0.95),
-			bytes: firstRun.bytes.length,
-			outputSha256: sha256(firstRun.bytes),
+			bytes: firstRun.bytes,
+			outputSha256: firstRun.outputSha256,
 			quality: {
 				opaquePixels: quality.opaquePixels,
 				psnrDb: Number.isFinite(quality.psnrDb) ? quality.psnrDb : null,
@@ -128,17 +140,16 @@ const packageJson = JSON.parse(
 	readFileSync(join(root, "package.json"), "utf8"),
 );
 const receipt = {
-	schemaVersion: 1,
+	schemaVersion: 2,
 	createdAt: new Date().toISOString(),
 	benchmark: {
 		boundary:
-			"Synchronous RGBA-to-complete-GIF calls after package loading and Wasm initialization; warmup calls are excluded from samples.",
-		firstObservedBoundary:
-			"The first call for each implementation in this initialized corpus process; only the first fixture is also the process's first encode.",
+			"First synchronous RGBA-to-complete-GIF call in a fresh process after package loading and wtfgif Wasm initialization; zero encode warmups.",
 		alphaThreshold: ALPHA_THRESHOLD,
 		iterations,
-		warmups,
-		order: "Alternated by fixture and sample",
+		warmups: 0,
+		processesPerImplementation: iterations,
+		order: "Alternated by fixture and fresh process",
 		quality:
 			"Opaque-source RGB PSNR plus per-frame SSIM after binary-alpha compositing against black.",
 	},
@@ -157,12 +168,12 @@ const receipt = {
 		{
 			id: "wtfgif",
 			configuration:
-				"global quality quantization, literal LZW, delta rectangles only for the nearly-static fixture",
+				"global quality quantization and literal LZW through the wtfgif/encode entry point",
 		},
 		{
 			id: "image-q-rgbquant+omggif",
 			configuration:
-				"global image-q rgbquant palette, nearest mapping, omggif LZW, equivalent delta rectangles for the nearly-static fixture",
+				"global image-q rgbquant palette, nearest mapping, and omggif LZW",
 		},
 	],
 	corpus: corpus.map(corpusManifestEntry),

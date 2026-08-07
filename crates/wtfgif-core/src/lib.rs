@@ -8050,35 +8050,56 @@ fn build_quality_index_plan_from_colors<
             let mut red_sums = [0u32; 256];
             let mut green_sums = [0u32; 256];
             let mut blue_sums = [0u32; 256];
+            let mut previous_green_hints = [u16::MAX; 16];
+            let mut previous_red_hints = [u16::MAX; 256];
+            let mut current_red_cell = usize::MAX;
             for color in &mut colors {
                 let cell = usize::from(color.histogram_index & !DIRECT_PALETTE_CELL);
+                if use_direct_palette_cells {
+                    let red_cell = cell >> 8;
+                    if red_cell != current_red_cell {
+                        previous_green_hints.fill(u16::MAX);
+                        current_red_cell = red_cell;
+                    }
+                }
                 let index = if use_direct_palette_cells {
                     let candidate = histogram_to_palette[cell];
                     if color.histogram_index & DIRECT_PALETTE_CELL != 0 {
                         color.histogram_index &= !DIRECT_PALETTE_CELL;
                         usize::from(candidate)
                     } else {
-                        usize::from(match previous_hint {
-                            Some((hint_index, hint_color)) => initial_tree
-                                .nearest_with_seed_bounds(
-                                    color.red,
-                                    color.green,
-                                    color.blue,
-                                    hint_index,
-                                    palette_color_distance(
-                                        hint_color,
-                                        color.red,
-                                        color.green,
-                                        color.blue,
-                                    ),
-                                ),
-                            None => initial_tree.nearest_with_hint_split(
+                        let (mut hint_index, hint_color) =
+                            previous_hint.unwrap_or_else(|| (0, palette[0]));
+                        let mut hint_distance =
+                            palette_color_distance(hint_color, color.red, color.green, color.blue);
+                        for candidate in [
+                            previous_green_hints[cell & 15],
+                            previous_red_hints[cell & 255],
+                        ] {
+                            if candidate == u16::MAX {
+                                continue;
+                            }
+                            let candidate = candidate as u8;
+                            let distance = palette_color_distance(
+                                palette[usize::from(candidate)],
                                 color.red,
                                 color.green,
                                 color.blue,
-                                None,
-                            ),
-                        })
+                            );
+                            if distance < hint_distance
+                                || (distance == hint_distance && candidate < hint_index)
+                            {
+                                hint_index = candidate;
+                                hint_distance = distance;
+                            }
+                        }
+                        usize::from(initial_tree.nearest_with_seed_bounds(
+                            color.red,
+                            color.green,
+                            color.blue,
+                            hint_index,
+                            hint_distance,
+                        ))
                     }
                 } else {
                     let rgb = rgb_key(color.red, color.green, color.blue);
@@ -8109,6 +8130,10 @@ fn build_quality_index_plan_from_colors<
                     }
                 };
                 previous_hint = Some((index as u8, palette[index]));
+                if use_direct_palette_cells {
+                    previous_green_hints[cell & 15] = index as u16;
+                    previous_red_hints[cell & 255] = index as u16;
+                }
                 // This branch is fed only by the u32 histogram path; the
                 // source pixel limit proves every bin count fits in u32.
                 let count = color.count as u32;
@@ -8339,21 +8364,17 @@ fn wu_prefix_moment(
 }
 
 #[inline(always)]
-fn wu_cube_moment(moments: &[RgbHistogramBin32], squared: &[f32], cube: WuCube) -> WuMoment {
-    let red_low = cube.minimum[0] as i8 - 1;
-    let green_low = cube.minimum[1] as i8 - 1;
-    let blue_low = cube.minimum[2] as i8 - 1;
-    let red_high = cube.maximum[0] as i8 - 1;
-    let green_high = cube.maximum[1] as i8 - 1;
-    let blue_high = cube.maximum[2] as i8 - 1;
-    let upper = wu_prefix_moment(moments, squared, red_high, green_high, blue_high);
-    let red_plane = wu_prefix_moment(moments, squared, red_low, green_high, blue_high);
-    let green_plane = wu_prefix_moment(moments, squared, red_high, green_low, blue_high);
-    let blue_plane = wu_prefix_moment(moments, squared, red_high, green_high, blue_low);
-    let red_green = wu_prefix_moment(moments, squared, red_low, green_low, blue_high);
-    let red_blue = wu_prefix_moment(moments, squared, red_low, green_high, blue_low);
-    let green_blue = wu_prefix_moment(moments, squared, red_high, green_low, blue_low);
-    let lower = wu_prefix_moment(moments, squared, red_low, green_low, blue_low);
+#[allow(clippy::too_many_arguments)]
+fn wu_moment_from_corners(
+    upper: WuMoment,
+    red_plane: WuMoment,
+    green_plane: WuMoment,
+    blue_plane: WuMoment,
+    red_green: WuMoment,
+    red_blue: WuMoment,
+    green_blue: WuMoment,
+    lower: WuMoment,
+) -> WuMoment {
     macro_rules! volume_field {
         ($field:ident) => {
             ((upper.$field - red_plane.$field) - (green_plane.$field - red_green.$field))
@@ -8371,6 +8392,112 @@ fn wu_cube_moment(moments: &[RgbHistogramBin32], squared: &[f32], cube: WuCube) 
             - blue_plane.squared
             - lower.squared,
     }
+}
+
+#[inline(always)]
+fn wu_cube_moment(moments: &[RgbHistogramBin32], squared: &[f32], cube: WuCube) -> WuMoment {
+    let red_low = cube.minimum[0] as i8 - 1;
+    let green_low = cube.minimum[1] as i8 - 1;
+    let blue_low = cube.minimum[2] as i8 - 1;
+    let red_high = cube.maximum[0] as i8 - 1;
+    let green_high = cube.maximum[1] as i8 - 1;
+    let blue_high = cube.maximum[2] as i8 - 1;
+    wu_moment_from_corners(
+        wu_prefix_moment(moments, squared, red_high, green_high, blue_high),
+        wu_prefix_moment(moments, squared, red_low, green_high, blue_high),
+        wu_prefix_moment(moments, squared, red_high, green_low, blue_high),
+        wu_prefix_moment(moments, squared, red_high, green_high, blue_low),
+        wu_prefix_moment(moments, squared, red_low, green_low, blue_high),
+        wu_prefix_moment(moments, squared, red_low, green_high, blue_low),
+        wu_prefix_moment(moments, squared, red_high, green_low, blue_low),
+        wu_prefix_moment(moments, squared, red_low, green_low, blue_low),
+    )
+}
+
+#[inline(always)]
+fn wu_best_axis_cut<const AXIS: usize>(
+    moments: &[RgbHistogramBin32],
+    squared: &[f32],
+    cube: WuCube,
+    total: WuMoment,
+) -> (f32, u8) {
+    let red_low = cube.minimum[0] as i8 - 1;
+    let green_low = cube.minimum[1] as i8 - 1;
+    let blue_low = cube.minimum[2] as i8 - 1;
+    let red_high = cube.maximum[0] as i8 - 1;
+    let green_high = cube.maximum[1] as i8 - 1;
+    let blue_high = cube.maximum[2] as i8 - 1;
+    let fixed = if AXIS == 0 {
+        [
+            wu_prefix_moment(moments, squared, red_low, green_high, blue_high),
+            wu_prefix_moment(moments, squared, red_low, green_low, blue_high),
+            wu_prefix_moment(moments, squared, red_low, green_high, blue_low),
+            wu_prefix_moment(moments, squared, red_low, green_low, blue_low),
+        ]
+    } else if AXIS == 1 {
+        [
+            wu_prefix_moment(moments, squared, red_high, green_low, blue_high),
+            wu_prefix_moment(moments, squared, red_low, green_low, blue_high),
+            wu_prefix_moment(moments, squared, red_high, green_low, blue_low),
+            wu_prefix_moment(moments, squared, red_low, green_low, blue_low),
+        ]
+    } else {
+        [
+            wu_prefix_moment(moments, squared, red_high, green_high, blue_low),
+            wu_prefix_moment(moments, squared, red_low, green_high, blue_low),
+            wu_prefix_moment(moments, squared, red_high, green_low, blue_low),
+            wu_prefix_moment(moments, squared, red_low, green_low, blue_low),
+        ]
+    };
+    let mut best_score = f32::NEG_INFINITY;
+    let mut best_cut = 0u8;
+    for cut in (cube.minimum[AXIS] + 1)..cube.maximum[AXIS] {
+        let coordinate = cut as i8 - 1;
+        let moving = if AXIS == 0 {
+            [
+                wu_prefix_moment(moments, squared, coordinate, green_high, blue_high),
+                wu_prefix_moment(moments, squared, coordinate, green_low, blue_high),
+                wu_prefix_moment(moments, squared, coordinate, green_high, blue_low),
+                wu_prefix_moment(moments, squared, coordinate, green_low, blue_low),
+            ]
+        } else if AXIS == 1 {
+            [
+                wu_prefix_moment(moments, squared, red_high, coordinate, blue_high),
+                wu_prefix_moment(moments, squared, red_low, coordinate, blue_high),
+                wu_prefix_moment(moments, squared, red_high, coordinate, blue_low),
+                wu_prefix_moment(moments, squared, red_low, coordinate, blue_low),
+            ]
+        } else {
+            [
+                wu_prefix_moment(moments, squared, red_high, green_high, coordinate),
+                wu_prefix_moment(moments, squared, red_low, green_high, coordinate),
+                wu_prefix_moment(moments, squared, red_high, green_low, coordinate),
+                wu_prefix_moment(moments, squared, red_low, green_low, coordinate),
+            ]
+        };
+        let left_moment = if AXIS == 0 {
+            wu_moment_from_corners(
+                moving[0], fixed[0], moving[1], moving[2], fixed[1], fixed[2], moving[3], fixed[3],
+            )
+        } else if AXIS == 1 {
+            wu_moment_from_corners(
+                moving[0], moving[1], fixed[0], moving[2], fixed[1], moving[3], fixed[2], fixed[3],
+            )
+        } else {
+            wu_moment_from_corners(
+                moving[0], moving[1], moving[2], fixed[0], moving[3], fixed[1], fixed[2], fixed[3],
+            )
+        };
+        if left_moment.count == 0 || left_moment.count == total.count {
+            continue;
+        }
+        let score = wu_sum_score(left_moment) + wu_sum_score(total.subtract(left_moment));
+        if score > best_score {
+            best_score = score;
+            best_cut = cut;
+        }
+    }
+    (best_score, best_cut)
 }
 
 #[inline(always)]
@@ -8408,19 +8535,15 @@ fn split_wu_cube(
     let mut best_axis = 0usize;
     let mut best_cut = 0u8;
     for axis in 0..3 {
-        for cut in (cube.minimum[axis] + 1)..cube.maximum[axis] {
-            let mut left = cube;
-            left.maximum[axis] = cut;
-            let left_moment = wu_cube_moment(moments, squared, left);
-            if left_moment.count == 0 || left_moment.count == total.count {
-                continue;
-            }
-            let score = wu_sum_score(left_moment) + wu_sum_score(total.subtract(left_moment));
-            if score > best_score {
-                best_score = score;
-                best_axis = axis;
-                best_cut = cut;
-            }
+        let (score, cut) = match axis {
+            0 => wu_best_axis_cut::<0>(moments, squared, cube, total),
+            1 => wu_best_axis_cut::<1>(moments, squared, cube, total),
+            _ => wu_best_axis_cut::<2>(moments, squared, cube, total),
+        };
+        if score > best_score {
+            best_score = score;
+            best_axis = axis;
+            best_cut = cut;
         }
     }
     if best_cut == 0 {
@@ -8441,6 +8564,68 @@ fn build_quality_wu_palette(
     opaque_color_limit: usize,
     mut palette: Vec<u32>,
 ) -> (Vec<u32>, Vec<u8>) {
+    #[inline(always)]
+    fn heap_entry_is_greater(cubes: &[WuCubeVariance], left: u16, right: u16) -> bool {
+        let left_variance = cubes[usize::from(left)].variance;
+        let right_variance = cubes[usize::from(right)].variance;
+        match left_variance.total_cmp(&right_variance) {
+            std::cmp::Ordering::Greater => true,
+            std::cmp::Ordering::Equal => left > right,
+            std::cmp::Ordering::Less => false,
+        }
+    }
+
+    #[inline(always)]
+    fn heap_push(
+        heap: &mut [u16; 256],
+        heap_len: &mut usize,
+        cubes: &[WuCubeVariance],
+        entry: u16,
+    ) {
+        let mut position = *heap_len;
+        *heap_len += 1;
+        while position != 0 {
+            let parent = (position - 1) / 2;
+            if !heap_entry_is_greater(cubes, entry, heap[parent]) {
+                break;
+            }
+            heap[position] = heap[parent];
+            position = parent;
+        }
+        heap[position] = entry;
+    }
+
+    #[inline(always)]
+    fn heap_pop(heap: &mut [u16; 256], heap_len: &mut usize, cubes: &[WuCubeVariance]) -> u16 {
+        let result = heap[0];
+        *heap_len -= 1;
+        if *heap_len == 0 {
+            return result;
+        }
+        let replacement = heap[*heap_len];
+        let mut position = 0usize;
+        loop {
+            let left = position * 2 + 1;
+            if left >= *heap_len {
+                break;
+            }
+            let right = left + 1;
+            let child =
+                if right < *heap_len && heap_entry_is_greater(cubes, heap[right], heap[left]) {
+                    right
+                } else {
+                    left
+                };
+            if !heap_entry_is_greater(cubes, heap[child], replacement) {
+                break;
+            }
+            heap[position] = heap[child];
+            position = child;
+        }
+        heap[position] = replacement;
+        result
+    }
+
     debug_assert_eq!(mapping_len, WU_HISTOGRAM_LEN);
     let mut moments = take_quality_histogram_u32(WU_HISTOGRAM_LEN);
     let mut squared = vec![0.0f32; WU_HISTOGRAM_LEN];
@@ -8506,14 +8691,11 @@ fn build_quality_wu_palette(
         cube: full_cube,
         variance: f32::INFINITY,
     });
+    let mut split_heap = [0u16; 256];
+    let mut split_heap_len = 1usize;
     while cubes.len() < opaque_color_limit {
-        let Some((split_index, selected)) = cubes
-            .iter()
-            .enumerate()
-            .max_by(|(_, left), (_, right)| left.variance.total_cmp(&right.variance))
-        else {
-            break;
-        };
+        let split_index = usize::from(heap_pop(&mut split_heap, &mut split_heap_len, &cubes));
+        let selected = cubes[split_index];
         if selected.variance <= 0.0 {
             break;
         }
@@ -8523,12 +8705,26 @@ fn build_quality_wu_palette(
                 cube: left,
                 variance: wu_cube_variance(&moments, &squared, left),
             };
+            heap_push(
+                &mut split_heap,
+                &mut split_heap_len,
+                &cubes,
+                split_index as u16,
+            );
+            let right_index = cubes.len() as u16;
             cubes.push(WuCubeVariance {
                 cube: right,
                 variance: wu_cube_variance(&moments, &squared, right),
             });
+            heap_push(&mut split_heap, &mut split_heap_len, &cubes, right_index);
         } else {
             cubes[split_index].variance = 0.0;
+            heap_push(
+                &mut split_heap,
+                &mut split_heap_len,
+                &cubes,
+                split_index as u16,
+            );
         }
     }
 
@@ -8609,8 +8805,12 @@ fn build_quality_wu_palette(
     }
 
     let palette_tree = PaletteKdTree::new(&palette);
-    let coarse_nearest =
-        palette_tree.coarse_nearest_table_for_cells(&palette, &requested_cells, &initial_hints);
+    let coarse_nearest = palette_tree.coarse_nearest_table_for_cells(
+        &palette,
+        &requested_cells,
+        &initial_hints,
+        colors.len(),
+    );
     let mut histogram_to_palette = take_quality_histogram_to_palette(mapping_len);
     for color in &colors {
         let cell = usize::from(color.histogram_index);
@@ -8668,6 +8868,7 @@ fn build_quality_median_cut_palette(
     }
     let mut histogram_to_palette = take_quality_histogram_to_palette(mapping_len);
     let mut requested_cells = [false; 1 << 12];
+    let mut requested_cell_count = 0usize;
     let mut initial_hints = [0u8; 1 << 12];
     let mut canonical_palette_indices = [0u8; 256];
     for (palette_index, &representative) in palette.iter().enumerate() {
@@ -8689,6 +8890,7 @@ fn build_quality_median_cut_palette(
             let candidate_distance = palette_color_distance(candidate_color, red, green, blue);
             if !requested_cells[coarse_index] {
                 requested_cells[coarse_index] = true;
+                requested_cell_count += 1;
                 initial_hints[coarse_index] = candidate;
                 continue;
             }
@@ -8703,8 +8905,12 @@ fn build_quality_median_cut_palette(
         }
     }
     let palette_tree = PaletteKdTree::new(&palette);
-    let coarse_nearest =
-        palette_tree.coarse_nearest_table_for_cells(&palette, &requested_cells, &initial_hints);
+    let coarse_nearest = palette_tree.coarse_nearest_table_for_cells(
+        &palette,
+        &requested_cells,
+        &initial_hints,
+        requested_cell_count,
+    );
     if histogram_bits == 4 {
         for color_box in &boxes {
             for color in &colors[color_box.start..color_box.end] {
@@ -9468,7 +9674,7 @@ impl PaletteKdTree {
     /// zero-distance early exit cannot change the existing lowest-index tie.
     #[cfg(all(test, not(feature = "encode-only")))]
     fn coarse_nearest_table(&self, palette_rgb: &[u32]) -> [u8; 1 << 12] {
-        self.coarse_nearest_table_for_cells(palette_rgb, &[true; 1 << 12], &[0; 1 << 12])
+        self.coarse_nearest_table_for_cells(palette_rgb, &[true; 1 << 12], &[0; 1 << 12], 1 << 12)
     }
 
     #[inline(never)]
@@ -9477,7 +9683,12 @@ impl PaletteKdTree {
         palette_rgb: &[u32],
         requested_cells: &[bool; 1 << 12],
         initial_hints: &[u8; 1 << 12],
+        _requested_cell_count: usize,
     ) -> [u8; 1 << 12] {
+        #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+        if _requested_cell_count >= 2_048 {
+            return dense_coarse_nearest_table_simd(palette_rgb, requested_cells);
+        }
         let mut sorted = true;
         let mut has_duplicate = false;
         for pair in palette_rgb.windows(2) {
@@ -9639,6 +9850,67 @@ impl PaletteKdTree {
         }
         best_index
     }
+}
+
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[inline(never)]
+fn dense_coarse_nearest_table_simd(
+    palette_rgb: &[u32],
+    requested_cells: &[bool; 1 << 12],
+) -> [u8; 1 << 12] {
+    use core::arch::wasm32::{
+        i32x4_add, i32x4_lt, i32x4_splat, v128_bitselect, v128_load, v128_store,
+    };
+
+    let mut best = [i32::MAX as u32; 1 << 12];
+    for (palette_index, &color) in palette_rgb.iter().enumerate() {
+        let palette_red = ((color >> 16) & 0xff) as i32;
+        let palette_green = ((color >> 8) & 0xff) as i32;
+        let palette_blue = (color & 0xff) as i32;
+        let mut red_distances = [0u32; 16];
+        let mut green_distances = [0u32; 16];
+        let mut blue_distances_and_index = [0u32; 16];
+        for (channel, distance) in red_distances.iter_mut().enumerate() {
+            let delta = ((channel << 4) | 8) as i32 - palette_red;
+            *distance = (delta * delta) as u32;
+        }
+        for (channel, distance) in green_distances.iter_mut().enumerate() {
+            let delta = ((channel << 4) | 8) as i32 - palette_green;
+            *distance = (delta * delta) as u32;
+        }
+        for (blue, distance) in blue_distances_and_index.iter_mut().enumerate() {
+            let delta = ((blue << 4) | 8) as i32 - palette_blue;
+            *distance = ((delta * delta) as u32) << 8 | palette_index as u32;
+        }
+        for red in 0..16usize {
+            for green in 0..16usize {
+                let base_distance =
+                    i32x4_splat(((red_distances[red] + green_distances[green]) << 8) as i32);
+                let row = (red << 8) | (green << 4);
+                for blue in (0..16usize).step_by(4) {
+                    let blue_distance =
+                        unsafe { v128_load(blue_distances_and_index.as_ptr().add(blue).cast()) };
+                    let candidate = i32x4_add(base_distance, blue_distance);
+                    let best_pointer = unsafe { best.as_mut_ptr().add(row | blue) };
+                    let previous = unsafe { v128_load(best_pointer.cast()) };
+                    let closer = i32x4_lt(candidate, previous);
+                    unsafe {
+                        v128_store(
+                            best_pointer.cast(),
+                            v128_bitselect(candidate, previous, closer),
+                        )
+                    };
+                }
+            }
+        }
+    }
+    let mut table = [0u8; 1 << 12];
+    for (cell, requested) in requested_cells.iter().enumerate() {
+        if *requested {
+            table[cell] = best[cell] as u8;
+        }
+    }
+    table
 }
 
 #[allow(clippy::too_many_arguments)]

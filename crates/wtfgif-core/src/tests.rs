@@ -1016,7 +1016,12 @@ fn coarse_nearest_table_matches_exact_search() {
                 }
             }
         }
-        let sparse_table = tree.coarse_nearest_table_for_cells(&palette, &requested, &[0; 1 << 12]);
+        let sparse_table = tree.coarse_nearest_table_for_cells(
+            &palette,
+            &requested,
+            &[0; 1 << 12],
+            requested.iter().filter(|requested| **requested).count(),
+        );
         for red in 0..16u8 {
             for green in 0..16u8 {
                 for blue in 0..16u8 {

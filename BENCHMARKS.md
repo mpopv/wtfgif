@@ -12,30 +12,32 @@ npm run bench
 Both implementations receive the same contiguous RGBA frames and must build a
 global adaptive palette of up to 256 colors, map every pixel, encode the same
 animation shape and delays, and return a complete GIF. Both use an alpha
-threshold of 179. The nearly-static fixture enables equivalent changed-frame
-rectangles on both implementations; the other fixtures encode full frames.
+threshold of 179. Every fixture encodes complete frames through the public
+`wtfgif/encode` entry point and the equivalent image-q + omggif pipeline.
 
-The timed boundary is one synchronous encode after package loading and wtfgif
-Wasm initialization. Fifteen measured calls follow three warmups, and encoder
-order alternates by fixture and sample. Validation and quality measurement are
-outside the clock. Results below are medians on an Apple M3 Pro with Node.js
-22.23.2.
+Each sample runs in a fresh Node process. Package loading and wtfgif Wasm
+initialization happen before the clock; the first and only synchronous encode
+is timed. There are zero encode warmups and no palettes, source pixels, scratch
+buffers, or output results retained between processes. Encoder order alternates
+by fixture and process. Validation and quality measurement are outside the
+clock. Results below are medians from 15 processes per implementation on an
+Apple M3 Pro with Node.js 22.23.2.
 
 | Fixture | Shape | wtfgif | image-q + omggif | Speedup | File-size ratio |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| MakeEmoji production sample | 128×128×8 | 0.536 ms | 96.612 ms | **180.13×** | 3.80× |
-| Photographic animation | 128×96×8 | 0.290 ms | 41.144 ms | **141.80×** | 1.84× |
-| Pixel art | 64×64×12 | 0.078 ms | 12.666 ms | **161.43×** | 6.35× |
-| Smooth gradients | 128×128×8 | 0.520 ms | 95.772 ms | **184.32×** | 8.00× |
-| Random noise | 128×128×8 | 0.569 ms | 75.782 ms | **133.26×** | 7.28× |
-| Transparency | 128×128×8 | 0.182 ms | 26.802 ms | **147.60×** | 20.85× |
-| Disjoint frame palettes | 128×128×8 | 0.189 ms | 38.491 ms | **203.56×** | 7.64× |
-| Nearly static animation | 128×128×12 | 0.316 ms | 48.744 ms | **154.19×** | 7.93× |
-| Tiny animation | 16×16×6 | 0.257 ms | 33.400 ms | **130.19×** | 1.17× |
-| One-megapixel animation | 512×512×4 | 1.919 ms | 507.624 ms | **264.51×** | 22.74× |
+| MakeEmoji production sample | 128×128×8 | 1.182 ms | 130.531 ms | **110.43×** | 3.80× |
+| Photographic animation | 128×96×8 | 1.089 ms | 66.697 ms | **61.26×** | 1.84× |
+| Pixel art | 64×64×12 | 0.503 ms | 27.149 ms | **54.02×** | 6.35× |
+| Smooth gradients | 128×128×8 | 1.482 ms | 113.637 ms | **76.69×** | 8.00× |
+| Random noise | 128×128×8 | 1.511 ms | 90.776 ms | **60.09×** | 7.28× |
+| Transparency | 128×128×8 | 0.799 ms | 46.002 ms | **57.57×** | 20.85× |
+| Disjoint frame palettes | 128×128×8 | 0.671 ms | 61.159 ms | **91.11×** | 7.64× |
+| Nearly static animation | 128×128×12 | 1.012 ms | 70.962 ms | **70.15×** | 12.19× |
+| Tiny animation | 16×16×6 | 0.912 ms | 53.359 ms | **58.50×** | 1.17× |
+| One-megapixel animation | 512×512×4 | 4.300 ms | 554.101 ms | **128.86×** | 22.74× |
 
-The observed range is 130.19×–264.51×, with a 166.28× geometric-mean speedup.
-The corresponding files are 1.17×–22.74× larger, with a 6.23× geometric mean.
+The observed range is 54.02×–128.86×, with a 73.61× geometric-mean speedup.
+The corresponding files are 1.17×–22.74× larger, with a 6.50× geometric mean.
 This is the library's intended tradeoff: encode latency takes priority over
 compression ratio.
 
@@ -50,9 +52,9 @@ frame count, delays, and exact binary alpha before it is accepted.
 medians, p95 values, output hashes, quality values, fixture hashes and
 provenance, package-lock hash, commit, dirty state, and runtime environment.
 The corpus covers real small images, photographic content, flat pixel art,
-gradients, noise, transparency, disjoint frame palettes, changed rectangles,
-tiny animations, and a one-megapixel workload. Add the optional three-megapixel
-fixture with `npm run bench:corpus:stress`.
+gradients, noise, transparency, disjoint frame palettes, similar adjacent
+frames, tiny animations, and a one-megapixel workload. Add the optional
+three-megapixel fixture with `npm run bench:corpus:stress`.
 
 ## Independent correctness checks
 
