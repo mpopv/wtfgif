@@ -24,5 +24,5 @@ jobs:
       - run: npm ci
       - run: rustup toolchain install stable --profile minimal --no-self-update
       - run: rustup default stable
-      - run: command -v wasm-pack >/dev/null || cargo install wasm-pack --locked
+      - run: cargo +stable install wasm-pack --version 0.15.0 --locked
       - run: npm run check
