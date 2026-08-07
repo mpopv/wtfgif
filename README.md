@@ -85,12 +85,21 @@ or URL, use `new Blob([gif], { type: "image/gif" })`.
 
 `wtfgif` is optimized for maximum encoding speed at the cost of larger output
 files. On the documented 128×128, eight-frame small-image workload, it encoded
-**182.81× faster** than image-q + omggif under comparable conditions (0.528 ms
-vs 96.471 ms), with a **3.80× larger file**.
+**184.57× faster** than image-q + omggif under comparable conditions (0.526 ms
+vs 97.060 ms), with a **3.80× larger file**.
 
-Across the 10-fixture corpus, speedups ranged from 65.71× to 263.68× with a
-127.02× geometric mean. Output files ranged from 1.17× to 22.74× larger, with a
-6.23× geometric mean.
+Every fixture in the 10-fixture corpus was more than 100× faster. Speedups
+ranged from 104.06× to 266.44× with a 157.63× geometric mean. Output files
+ranged from 1.17× to 22.74× larger, with a 6.23× geometric mean.
+
+## Browser comparison
+
+![Browser GIF encoder benchmark](docs/encoder-race.svg)
+
+These are median first encodes from 15 fresh Chrome processes per encoder on
+the documented eight-frame small-image workload. Package loading and wtfgif's
+one-time Wasm initialization are outside the clock. Output size and quality
+results are reported alongside the raw timings in [BENCHMARKS.md](BENCHMARKS.md).
 
 ```bash
 npm run bench

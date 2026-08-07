@@ -580,7 +580,9 @@ pub fn encode_rgba_quality_low_res_constant_delay_scratch_from_input(
     debug_assert!(rgba_stream.len() % 4 == 0);
     debug_assert!(rgba_stream.len() / 4 <= QUALITY_LOW_RES_PIXEL_LIMIT);
     let output = REUSABLE_GIF_OUTPUT.with(|scratch| std::mem::take(&mut *scratch.borrow_mut()));
-    let encoded = if quality_low_res_exact_is_impossible(rgba_stream, alpha_threshold) {
+    let encoded = if !quality_low_res_likely_exact(rgba_stream, alpha_threshold)
+        && quality_low_res_exact_is_impossible(rgba_stream, alpha_threshold)
+    {
         encode_rgba_quality_low_res_quantized_gif_inner_with_output::<true>(
             rgba_stream,
             width,
@@ -637,7 +639,9 @@ pub fn encode_rgba_quality_gif_constant_delay_scratch_from_input(
     let low_res =
         rgba_stream.len() % 4 == 0 && rgba_stream.len() / 4 <= QUALITY_LOW_RES_PIXEL_LIMIT;
     let encoded = if low_res {
-        if quality_low_res_exact_is_impossible(rgba_stream, alpha_threshold) {
+        if !quality_low_res_likely_exact(rgba_stream, alpha_threshold)
+            && quality_low_res_exact_is_impossible(rgba_stream, alpha_threshold)
+        {
             encode_rgba_quality_low_res_quantized_gif_inner_with_output::<true>(
                 rgba_stream,
                 width,

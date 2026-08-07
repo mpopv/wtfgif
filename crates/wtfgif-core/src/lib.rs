@@ -4182,12 +4182,20 @@ fn encode_rgba_gif_advanced_inner_with_output(
         }
     }
 
-    let (palette, indexed, transparent_index) = index_rgba_frames_with_quantization(
-        rgba_stream,
-        palette_rgb,
-        alpha_threshold,
-        quantization,
-    )?;
+    let (palette, indexed, transparent_index) = if deltas
+        && palette_rgb.is_empty()
+        && quantization == RgbaQuantization::Quality
+        && rgba_stream.len() / 4 <= QUALITY_LOW_RES_PIXEL_LIMIT
+    {
+        index_rgba_frames_quality_low_res_delta(rgba_stream, alpha_threshold)
+    } else {
+        index_rgba_frames_with_quantization(
+            rgba_stream,
+            palette_rgb,
+            alpha_threshold,
+            quantization,
+        )?
+    };
     if !deltas {
         let encoded = encode_indexed_literal_gif_inner_with_output(
             output,
@@ -6339,6 +6347,32 @@ fn index_rgba_frames_quality_low_res(
     index_rgba_frames_quality_low_res_exact(rgba_stream, alpha_threshold)
 }
 
+/// The delta encoder is already a distinct advanced path, so give flat source
+/// animations the same cheap likely-exact probe as the constant-delay hot
+/// path. The authoritative exact scan still catches every sample collision or
+/// missed color before output is emitted.
+#[inline(never)]
+fn index_rgba_frames_quality_low_res_delta(
+    rgba_stream: &[u8],
+    alpha_threshold: u8,
+) -> (Vec<u32>, Vec<u8>, Option<u8>) {
+    let result = if !quality_low_res_likely_exact(rgba_stream, alpha_threshold)
+        && quality_low_res_exact_is_impossible(rgba_stream, alpha_threshold)
+    {
+        QualityIndexResult::Quantized(index_rgba_frames_quality_low_res_quantized(
+            rgba_stream,
+            alpha_threshold,
+            take_quality_palette(256),
+        ))
+    } else {
+        index_rgba_frames_quality_low_res_exact(rgba_stream, alpha_threshold)
+    };
+    match result {
+        QualityIndexResult::Exact(exact) => exact,
+        QualityIndexResult::Quantized(plan) => plan.into_indexed(rgba_stream, alpha_threshold),
+    }
+}
+
 /// Prove that an image needs quantization before allocating the reusable
 /// palette and prefix-index buffers. Every occupied hash bucket represents at
 /// least one distinct RGB value, so crossing GIF's color limit is conclusive.
@@ -6378,6 +6412,58 @@ fn quality_low_res_exact_is_impossible(rgba_stream: &[u8], alpha_threshold: u8) 
 }
 
 #[inline(never)]
+fn quality_low_res_likely_exact(rgba_stream: &[u8], alpha_threshold: u8) -> bool {
+    // Flat art commonly repeats a small color set over a large canvas. Sample
+    // the complete stream first so those inputs can enter the authoritative
+    // exact scan without paying for this second full pass. A false "likely
+    // exact" result is safe: the exact scan still detects overflow and falls
+    // back to quantization.
+    const SAMPLE_COUNT: usize = 256;
+    const SAMPLE_BUCKETS: usize = 128;
+    const SAMPLE_COLOR_LIMIT: usize = 48;
+    let pixel_count = rgba_stream.len() / 4;
+    let sample_count = pixel_count.min(SAMPLE_COUNT);
+    let mut sample_occupied = [0u64; SAMPLE_BUCKETS / u64::BITS as usize];
+    let mut sample_colors = 0usize;
+    let rgba_pointer = rgba_stream.as_ptr();
+    let mut sample_pixel = 0usize;
+    let sample_step = if pixel_count == 0 {
+        0
+    } else {
+        let step = 8_191 % pixel_count;
+        if step == 0 {
+            1
+        } else {
+            step
+        }
+    };
+    for _ in 0..sample_count {
+        let packed = u32::from_le(unsafe {
+            std::ptr::read_unaligned(rgba_pointer.add(sample_pixel * 4).cast())
+        });
+        sample_pixel += sample_step;
+        if sample_pixel >= pixel_count {
+            sample_pixel -= pixel_count;
+        }
+        if ((packed >> 24) as u8) < alpha_threshold {
+            continue;
+        }
+        let rgb = packed & 0x00ff_ffff;
+        let bucket = (rgb.wrapping_mul(2_654_435_761) >> (u32::BITS as usize - 7)) as usize;
+        let word = bucket / u64::BITS as usize;
+        let mask = 1u64 << (bucket % u64::BITS as usize);
+        if sample_occupied[word] & mask == 0 {
+            sample_occupied[word] |= mask;
+            sample_colors += 1;
+            if sample_colors > SAMPLE_COLOR_LIMIT {
+                break;
+            }
+        }
+    }
+    sample_colors <= SAMPLE_COLOR_LIMIT
+}
+
+#[inline(never)]
 fn index_rgba_frames_quality_low_res_exact(
     rgba_stream: &[u8],
     alpha_threshold: u8,
@@ -6391,24 +6477,26 @@ fn index_rgba_frames_quality_low_res_exact(
     // that was already scanned before the 257th color was discovered.
     // Keep the exact-prefix indices so <=256-color inputs do not require a
     // second full RGBA scan after the palette decision is known.
-    // The indexed stream is needed only if the exact-color probe succeeds.
-    // Start with a small prefix buffer so the common quantized path does not
-    // reserve the entire RGBA image just to discard the prefix after overflow.
-    let mut indexed = take_quality_probe_indices(pixel_count.min(4_096));
+    // The reusable buffer is already reserved during Wasm initialization for
+    // the common image sizes. Give it its final length up front so exact-color
+    // inputs can write indices directly instead of growing and updating Vec
+    // length once per pixel. Overflow paths discard the partially written u8
+    // buffer without reading it and then reuse the same capacity for mapping.
+    let mut indexed = take_quantized_indexed(pixel_count);
+    let indexed_pointer = indexed.as_mut_ptr();
     let mut has_transparent_pixels = false;
+    let mut previous_rgb = u32::MAX;
+    let mut previous_index = 0u8;
     let rgba_pointer = rgba_stream.as_ptr();
     let mut overflowed = false;
     for pixel_index in 0..pixel_count {
-        if pixel_index == 4_096 {
-            indexed.reserve(pixel_count.saturating_sub(indexed.len()));
-        }
         let packed = u32::from_le(unsafe {
             std::ptr::read_unaligned(rgba_pointer.add(pixel_index * 4).cast())
         });
         let alpha = (packed >> 24) as u8;
         if alpha < alpha_threshold {
             has_transparent_pixels = true;
-            indexed.push(u8::MAX);
+            unsafe { *indexed_pointer.add(pixel_index) = u8::MAX };
             if palette.len() == 256 {
                 overflowed = true;
                 break;
@@ -6416,8 +6504,14 @@ fn index_rgba_frames_quality_low_res_exact(
             continue;
         }
         let rgb = rgb_key(packed as u8, (packed >> 8) as u8, (packed >> 16) as u8);
+        if rgb == previous_rgb {
+            unsafe { *indexed_pointer.add(pixel_index) = previous_index };
+            continue;
+        }
         if let Some(index) = table.get(rgb) {
-            indexed.push(index);
+            previous_rgb = rgb;
+            previous_index = index;
+            unsafe { *indexed_pointer.add(pixel_index) = index };
             continue;
         }
         let color_limit = if has_transparent_pixels { 255 } else { 256 };
@@ -6428,7 +6522,9 @@ fn index_rgba_frames_quality_low_res_exact(
         let index = palette.len() as u8;
         table.insert_if_absent(rgb, index);
         palette.push(rgb);
-        indexed.push(index);
+        previous_rgb = rgb;
+        previous_index = index;
+        unsafe { *indexed_pointer.add(pixel_index) = index };
     }
     if overflowed {
         recycle_quantized_indexed(indexed);

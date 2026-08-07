@@ -487,6 +487,72 @@ fn encodes_rgba_gif_frames_with_generated_exact_palette() {
 }
 
 #[test]
+fn quality_exact_direct_buffer_preserves_runs_and_transparency() {
+    let pixel_count = 8_193usize;
+    let colors = [[0xf0, 0x20, 0x10], [0x10, 0xe0, 0x30], [0x20, 0x40, 0xf0]];
+    let mut rgba = Vec::with_capacity(pixel_count * 4);
+    let mut expected = Vec::with_capacity(pixel_count);
+    for pixel in 0..pixel_count {
+        let color_index = (pixel / 137) % colors.len();
+        let transparent = pixel % 997 == 996;
+        rgba.extend_from_slice(&[
+            colors[color_index][0],
+            colors[color_index][1],
+            colors[color_index][2],
+            if transparent { 0 } else { 255 },
+        ]);
+        expected.push(if transparent { 3 } else { color_index as u8 });
+    }
+
+    let QualityIndexResult::Exact((palette, indexed, transparent_index)) =
+        index_rgba_frames_quality_low_res_exact(&rgba, TRANSPARENT_ALPHA_THRESHOLD)
+    else {
+        panic!("three opaque colors plus transparency must remain exact");
+    };
+    assert_eq!(palette, vec![0xf02010, 0x10e030, 0x2040f0, 0]);
+    assert_eq!(transparent_index, Some(3));
+    assert_eq!(indexed, expected);
+    recycle_quality_palette(palette);
+    recycle_quantized_indexed(indexed);
+}
+
+#[test]
+fn likely_exact_delta_probe_falls_back_without_changing_quantization() {
+    let pixel_count = 8_192usize;
+    let mut rgba = Vec::with_capacity(pixel_count * 4);
+    for pixel in 0..pixel_count {
+        rgba.extend_from_slice(&[pixel as u8, (pixel >> 8) as u8, (pixel >> 16) as u8, 255]);
+    }
+    let mut sample_pixel = 0usize;
+    for _ in 0..256 {
+        rgba[sample_pixel * 4..sample_pixel * 4 + 4].copy_from_slice(&[0, 0, 0, 255]);
+        sample_pixel = (sample_pixel + 8_191) % pixel_count;
+    }
+
+    assert!(quality_low_res_likely_exact(
+        &rgba,
+        TRANSPARENT_ALPHA_THRESHOLD,
+    ));
+    assert!(quality_low_res_exact_is_impossible(
+        &rgba,
+        TRANSPARENT_ALPHA_THRESHOLD,
+    ));
+
+    let expected = match index_rgba_frames_quality_low_res(&rgba, TRANSPARENT_ALPHA_THRESHOLD) {
+        QualityIndexResult::Exact(_) => panic!("fixture must overflow the exact palette"),
+        QualityIndexResult::Quantized(plan) => {
+            plan.into_indexed(&rgba, TRANSPARENT_ALPHA_THRESHOLD)
+        }
+    };
+    let actual = index_rgba_frames_quality_low_res_delta(&rgba, TRANSPARENT_ALPHA_THRESHOLD);
+    assert_eq!(actual, expected);
+    recycle_quality_palette(expected.0);
+    recycle_quantized_indexed(expected.1);
+    recycle_quality_palette(actual.0);
+    recycle_quantized_indexed(actual.1);
+}
+
+#[test]
 fn transparent_rgba_frames_restore_the_canvas() {
     let encoded = encode_rgba_gif_advanced_inner(
         &[

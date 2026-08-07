@@ -23,18 +23,18 @@ outside the clock. Results below are medians on an Apple M3 Pro with Node.js
 
 | Fixture | Shape | wtfgif | image-q + omggif | Speedup | File-size ratio |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| MakeEmoji production sample | 128×128×8 | 0.528 ms | 96.471 ms | **182.81×** | 3.80× |
-| Photographic animation | 128×96×8 | 0.317 ms | 41.097 ms | **129.56×** | 1.84× |
-| Pixel art | 64×64×12 | 0.191 ms | 12.559 ms | **65.71×** | 6.35× |
-| Smooth gradients | 128×128×8 | 0.557 ms | 94.398 ms | **169.46×** | 8.00× |
-| Random noise | 128×128×8 | 0.599 ms | 72.663 ms | **121.36×** | 7.28× |
-| Transparency | 128×128×8 | 0.182 ms | 26.087 ms | **143.60×** | 20.85× |
-| Disjoint frame palettes | 128×128×8 | 0.379 ms | 38.548 ms | **101.79×** | 7.64× |
-| Nearly static animation | 128×128×12 | 0.688 ms | 48.406 ms | **70.34×** | 7.93× |
-| Tiny animation | 16×16×6 | 0.269 ms | 33.876 ms | **126.01×** | 1.17× |
-| One-megapixel animation | 512×512×4 | 1.869 ms | 492.747 ms | **263.68×** | 22.74× |
+| MakeEmoji production sample | 128×128×8 | 0.526 ms | 97.060 ms | **184.57×** | 3.80× |
+| Photographic animation | 128×96×8 | 0.297 ms | 41.215 ms | **138.89×** | 1.84× |
+| Pixel art | 64×64×12 | 0.124 ms | 12.869 ms | **104.06×** | 6.35× |
+| Smooth gradients | 128×128×8 | 0.550 ms | 98.910 ms | **179.70×** | 8.00× |
+| Random noise | 128×128×8 | 0.579 ms | 79.441 ms | **137.10×** | 7.28× |
+| Transparency | 128×128×8 | 0.182 ms | 26.763 ms | **146.92×** | 20.85× |
+| Disjoint frame palettes | 128×128×8 | 0.182 ms | 38.652 ms | **212.28×** | 7.64× |
+| Nearly static animation | 128×128×12 | 0.363 ms | 49.168 ms | **135.37×** | 7.93× |
+| Tiny animation | 16×16×6 | 0.271 ms | 34.697 ms | **128.13×** | 1.17× |
+| One-megapixel animation | 512×512×4 | 1.906 ms | 507.710 ms | **266.44×** | 22.74× |
 
-The observed range is 65.71×–263.68×, with a 127.02× geometric-mean speedup.
+The observed range is 104.06×–266.44×, with a 157.63× geometric-mean speedup.
 The corresponding files are 1.17×–22.74× larger, with a 6.23× geometric mean.
 This is the library's intended tradeoff: encode latency takes priority over
 compression ratio.
