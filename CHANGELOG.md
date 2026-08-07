@@ -2,6 +2,14 @@
 
 All notable changes to wtfgif are documented here.
 
+## 3.0.5 - 2026-08-06
+
+- Rewrite the README benchmark section around the honest first-encode result:
+  **100.26x** after Wasm initialization across 500 fresh processes with zero
+  encode warmups. Separate that contract clearly from the **298.94x** repeated
+  initialized result and the six-library browser race. Runtime code and GIF
+  output are unchanged from 3.0.4.
+
 ## 3.0.4 - 2026-08-06
 
 - Make the first real arbitrary-RGBA encode after initialized Wasm **100.26x**
