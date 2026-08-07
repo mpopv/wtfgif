@@ -4,15 +4,19 @@ All notable changes to wtfgif are documented here.
 
 ## Unreleased
 
+- Reserve a source-agnostic 4 MB input arena during Wasm initialization so the
+  first real encode does not allocate its ordinary input scratch inside the
+  timed path. No source pixels, palette, or encoded result exists at
+  initialization, and corpus output hashes remain byte-for-byte unchanged.
 - Route strongly uniform mid-sized animations into the exact small-palette
   attempt after a conservative bounded probe, and stop the general classifier
   after eight decisive samples. The complete exact-color scan remains
   authoritative: GIF bytes and decoded pixels are unchanged. The fresh-process
-  pixel-art median improves from 0.507 ms to 0.457 ms in the current corpus
+  pixel-art median improved from 0.507 ms to 0.457 ms in that change's paired
   receipt.
 - Refresh the 10-fixture first-encode receipt and six-library browser chart.
-  The corpus spans **57.35x to 128.74x** with an **86.05x geometric mean**;
-  the five browser alternatives are **72.64x to 110.00x slower** than wtfgif.
+  The corpus spans **47.29x to 135.16x** with an **86.37x geometric mean**;
+  the five browser alternatives are **67.23x to 94.27x slower** than wtfgif.
 - Make encoding latency the only compression policy. Remove the public
   `compression` option and delete the balanced dictionary encoder from the
   JavaScript, Rust, Wasm, and native paths; all encoders now use literal LZW.

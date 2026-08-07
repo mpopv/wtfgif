@@ -1,8 +1,10 @@
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import {
 	cleanupWasm,
 	encodeRgbaGifFrames,
+	getWasmCoreModule,
 	initializeWasmGlobally,
+	setWasmCoreModule,
 } from "../src/encode";
 import {
 	encodeRgbaGifFrames as encodeRgbaGifFramesGeneral,
@@ -38,6 +40,30 @@ afterAll(() => {
 });
 
 describe("encode-only quality entry", () => {
+	test("reserves the ordinary input arena during initialization", () => {
+		const module = getWasmCoreModule();
+		if (!module) throw new Error("Expected initialized encode module.");
+		const reserve = vi.fn(module.indexed_lzw_input_scratch_reserve);
+		setWasmCoreModule({
+			...module,
+			indexed_lzw_input_scratch_reserve: reserve,
+		});
+
+		try {
+			expect(reserve).toHaveBeenCalledExactlyOnceWith(4_000_000);
+			encodeRgbaGifFrames({
+				width: 2,
+				height: 1,
+				frames,
+				frameCount: 2,
+				delay: 10,
+			});
+			expect(reserve).toHaveBeenCalledTimes(1);
+		} finally {
+			setWasmCoreModule(module);
+		}
+	});
+
 	test("matches the established quality encoder byte for byte", () => {
 		const options = {
 			width: 2,

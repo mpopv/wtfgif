@@ -37,11 +37,17 @@ export function prepareQualityWasmEncoderModule(
 	}
 	scratchModule = module;
 	scratchMemory = module?.wasm_memory() ?? null;
+	if (module && scratchMemory) {
+		scratchPointer = module.indexed_lzw_input_scratch_reserve(
+			QUALITY_LOW_RES_BYTE_LIMIT,
+		);
+		scratchCapacity = QUALITY_LOW_RES_BYTE_LIMIT;
+		encodeRgbaGifFrames = encodeRgbaGifFramesPrepared;
+		return;
+	}
 	scratchPointer = 0;
 	scratchCapacity = 0;
-	encodeRgbaGifFrames = scratchMemory
-		? encodeRgbaGifFramesPrepared
-		: encodeRgbaGifFramesUnprepared;
+	encodeRgbaGifFrames = encodeRgbaGifFramesUnprepared;
 }
 
 function encodeRgbaGifFramesUnprepared(

@@ -17,27 +17,29 @@ threshold of 179. Every fixture encodes complete frames through the public
 
 Each sample runs in a fresh Node process. Package loading and wtfgif Wasm
 initialization happen before the clock; the first and only synchronous encode
-is timed. There are zero encode warmups and no palettes, source pixels, scratch
-buffers, or output results retained between processes. Encoder order alternates
-by fixture and process, and each worker loads only the implementation it is
+is timed. Initialization reserves a fixed 4 MB input arena without seeing the
+fixture. Every source byte is copied into that arena after the clock starts;
+there are zero encode warmups and no palettes, source pixels, encoded outputs,
+or prior encode results retained between processes. Encoder order alternates by
+fixture and process, and each worker loads only the implementation it is
 measuring. Validation and quality measurement are outside the clock. Results
 below are medians from 15 processes per implementation on an Apple M3 Pro with
 Node.js 22.23.2.
 
 | Fixture | Shape | wtfgif | image-q + omggif | Speedup | File-size ratio |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| MakeEmoji production sample | 128×128×8 | 1.239 ms | 127.071 ms | **102.54×** | 3.80× |
-| Photographic animation | 128×96×8 | 0.834 ms | 63.045 ms | **75.64×** | 1.84× |
-| Pixel art | 64×64×12 | 0.457 ms | 26.199 ms | **57.35×** | 6.35× |
-| Smooth gradients | 128×128×8 | 1.572 ms | 107.274 ms | **68.23×** | 8.00× |
-| Random noise | 128×128×8 | 0.745 ms | 86.191 ms | **115.72×** | 7.28× |
-| Transparency | 128×128×8 | 0.647 ms | 44.087 ms | **68.09×** | 20.85× |
-| Disjoint frame palettes | 128×128×8 | 0.660 ms | 54.905 ms | **83.14×** | 7.64× |
-| Nearly static animation | 128×128×12 | 0.914 ms | 70.017 ms | **76.58×** | 12.19× |
-| Tiny animation | 16×16×6 | 0.460 ms | 52.224 ms | **113.58×** | 1.17× |
-| One-megapixel animation | 512×512×4 | 4.144 ms | 533.460 ms | **128.74×** | 22.74× |
+| MakeEmoji production sample | 128×128×8 | 1.773 ms | 170.120 ms | **95.96×** | 3.80× |
+| Photographic animation | 128×96×8 | 0.987 ms | 86.589 ms | **87.74×** | 1.84× |
+| Pixel art | 64×64×12 | 0.829 ms | 39.211 ms | **47.29×** | 6.35× |
+| Smooth gradients | 128×128×8 | 1.960 ms | 157.356 ms | **80.30×** | 8.00× |
+| Random noise | 128×128×8 | 1.569 ms | 128.579 ms | **81.96×** | 7.28× |
+| Transparency | 128×128×8 | 0.646 ms | 47.262 ms | **73.17×** | 20.85× |
+| Disjoint frame palettes | 128×128×8 | 0.682 ms | 61.446 ms | **90.04×** | 7.64× |
+| Nearly static animation | 128×128×12 | 0.921 ms | 77.486 ms | **84.09×** | 12.19× |
+| Tiny animation | 16×16×6 | 0.466 ms | 54.906 ms | **117.72×** | 1.17× |
+| One-megapixel animation | 512×512×4 | 4.632 ms | 626.128 ms | **135.16×** | 22.74× |
 
-The observed range is 57.35×–128.74×, with an 86.05× geometric-mean speedup.
+The observed range is 47.29×–135.16×, with an 86.37× geometric-mean speedup.
 The corresponding files are 1.17×–22.74× larger, with a 6.50× geometric mean.
 This is the library's intended tradeoff: encode latency takes priority over
 compression ratio.
@@ -90,20 +92,22 @@ Wasm initialization happen before the clock. The timed boundary includes
 palette creation, pixel mapping, GIF compression, and final byte assembly.
 
 Each sample is the first and only encode in a fresh, cross-origin-isolated
-Chrome process and fresh browser profile. There are no encode warmups, retained
-palettes, retained outputs, or scratch-buffer reuse between samples. The six
-encoders run in a rotating order to reduce thermal and ordering bias. Results
-below are medians from 15 processes per encoder on an Apple M3 Pro in Google
-Chrome 151.0.7922.77.
+Chrome process and fresh browser profile. wtfgif reserves its generic input
+arena during the untimed initialization, then copies the fixture and performs
+all palette, mapping, compression, and assembly work after the clock starts.
+There are no encode warmups, image-derived retained state, or results reused
+between samples. The six encoders run in a rotating order to reduce thermal and
+ordering bias. Results below are medians from 15 processes per encoder on an
+Apple M3 Pro in Google Chrome 151.0.7922.77.
 
 | Implementation | Version | Median | wtfgif advantage | Bytes | PSNR | Alpha match |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| **wtfgif** | 3.0.6 | **1.415 ms** | — | 149,689 | 34.12 dB | 100% |
-| gif.js | 0.2.0 | 102.785 ms | **72.64×** | 80,869 | 33.08 dB | 99.78% |
-| modern-gif | 2.1.0 | 115.195 ms | **81.41×** | 43,114 | 32.65 dB | 100% |
-| gif.js.optimized | 1.0.1 | 120.655 ms | **85.27×** | 80,304 | 32.20 dB | 99.76% |
-| gifenc | 1.0.3 | 120.835 ms | **85.40×** | 39,101 | 34.54 dB | 100% |
-| image-q + omggif | 2.1.2 + 1.0.10 | 155.655 ms | **110.00×** | 39,350 | 31.84 dB | 100% |
+| **wtfgif** | 3.0.6 | **1.395 ms** | — | 149,689 | 34.12 dB | 100% |
+| image-q + omggif | 2.1.2 + 1.0.10 | 93.785 ms | **67.23×** | 39,350 | 31.84 dB | 100% |
+| gif.js | 0.2.0 | 94.705 ms | **67.89×** | 80,869 | 33.08 dB | 99.78% |
+| gif.js.optimized | 1.0.1 | 108.205 ms | **77.57×** | 80,304 | 32.20 dB | 99.76% |
+| gifenc | 1.0.3 | 124.420 ms | **89.19×** | 39,101 | 34.54 dB | 100% |
+| modern-gif | 2.1.0 | 131.505 ms | **94.27×** | 43,114 | 32.65 dB | 100% |
 
 Every output must parse as an eight-frame 128×128 animation with exact 100 ms
 delays before its sample is accepted. The validator composites all frames,
@@ -134,6 +138,10 @@ with omggif, which accepts that widely tolerated padding.
 
 ## Earlier single-workload measurements
 
+These retained release-3.0.6 receipts document narrower throughput, stress,
+indexed-input, and decode contracts. They are historical context, not the
+current 10-fixture headline result above.
+
 The committed workload is eight real images from MakeEmoji. Each image was
 aspect-fitted into a transparent 128×128 canvas, then stored as one contiguous
 RGBA fixture at `test/rgba/makeemoji-128x128x8.rgba`.
@@ -144,7 +152,7 @@ decoding, resizing, WebAssembly initialization, warmup, validation, and quality
 measurement are outside timed samples.
 
 Results below are medians from 200 samples after 30 timed-loop warmups on an
-Apple M3 Pro with Node.js 22.23.2, measured on the current main checkpoint.
+Apple M3 Pro with Node.js 22.23.2, measured on release 3.0.6.
 
 | Implementation | Median | Speedup | Bytes | PSNR |
 | --- | ---: | ---: | ---: | ---: |

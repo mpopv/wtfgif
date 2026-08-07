@@ -86,12 +86,14 @@ or URL, use `new Blob([gif], { type: "image/gif" })`.
 `wtfgif` is optimized for maximum encoding speed at the cost of larger output
 files. The default benchmark starts a fresh Node process for every sample,
 initializes Wasm before the clock, and times the first and only complete encode.
-There are no encode warmups or retained palettes, source pixels, scratch
-buffers, or output results between samples.
+Initialization reserves one generic 4 MB Wasm input arena. It does not inspect
+or retain source pixels, palettes, or output, and every input byte is copied
+after the clock starts. There are no encode warmups or results reused between
+samples.
 
-Across the 10-fixture arbitrary-RGBA corpus, `wtfgif` encoded **57.35×–128.74×
-faster** than image-q + omggif, with an **86.05× geometric mean**. The real
-128×128 MakeEmoji workload was **102.54× faster** (1.239 ms vs 127.071 ms).
+Across the 10-fixture arbitrary-RGBA corpus, `wtfgif` encoded **47.29×–135.16×
+faster** than image-q + omggif, with an **86.37× geometric mean**. The real
+128×128 MakeEmoji workload was **95.96× faster** (1.773 ms vs 170.120 ms).
 Output files were 1.17×–22.74× larger, with a 6.50× geometric mean.
 
 ## Browser comparison
@@ -102,8 +104,8 @@ These are median first encodes from 15 fresh Chrome processes per encoder on
 the documented eight-frame small-image workload. Package loading and wtfgif's
 one-time Wasm initialization are outside the clock. Output size and quality
 results are reported alongside the raw timings in [BENCHMARKS.md](BENCHMARKS.md).
-On this run, `wtfgif` took **1.415 ms**; the five alternatives took
-**102.785–155.655 ms** and were **72.64×–110.00× slower**.
+On this run, `wtfgif` took **1.395 ms**; the five alternatives took
+**93.785–131.505 ms** and were **67.23×–94.27× slower**.
 
 ```bash
 npm run bench
