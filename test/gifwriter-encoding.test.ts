@@ -477,7 +477,7 @@ describe("GifWriter encoding utilities", () => {
 		expect(decoded).toStrictEqual(frame1);
 	});
 
-	test("fast compression can quantize arbitrary full-color RGBA", () => {
+	test("can quantize arbitrary full-color RGBA", () => {
 		const width = 300;
 		const frames = new Uint8Array(width * 4);
 		for (let x = 0; x < width; x++) {
@@ -492,7 +492,6 @@ describe("GifWriter encoding utilities", () => {
 			width,
 			height: 1,
 			frames,
-			compression: "fast",
 			quantization: "fast",
 			backend: "javascript",
 		});
@@ -522,7 +521,6 @@ describe("GifWriter encoding utilities", () => {
 				width,
 				height,
 				frames,
-				compression: "fast",
 				quantization,
 				backend: "javascript",
 			});
@@ -564,7 +562,6 @@ describe("GifWriter encoding utilities", () => {
 				width,
 				height,
 				frames,
-				compression: "fast",
 				quantization: "exact",
 				backend: "javascript",
 			}),
@@ -574,7 +571,6 @@ describe("GifWriter encoding utilities", () => {
 			width,
 			height,
 			frames,
-			compression: "fast",
 			quantization: "exact",
 			paletteMode: "local",
 			backend: "javascript",

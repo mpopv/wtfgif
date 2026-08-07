@@ -15,16 +15,6 @@ export interface NativeAddonModule {
 		loopCount: number,
 		delta: boolean,
 	) => Uint8Array;
-	encodeIndexedBalanced: (
-		indexedFrames: Uint8Array,
-		width: number,
-		height: number,
-		frameCount: number,
-		palette: Uint32Array,
-		delays: Uint16Array,
-		loopCount: number,
-		delta: boolean,
-	) => Uint8Array;
 	encodeRgbaFast: (
 		rgbaFrames: Uint8Array,
 		width: number,
@@ -34,18 +24,6 @@ export interface NativeAddonModule {
 		delays: Uint16Array,
 		loopCount: number,
 		delta: boolean,
-	) => Uint8Array;
-	encodeRgbaBalanced: (
-		rgbaFrames: Uint8Array,
-		width: number,
-		height: number,
-		frameCount: number,
-		palette: Uint32Array,
-		delays: Uint16Array,
-		loopCount: number,
-		delta: boolean,
-		alphaThreshold: number,
-		quantization: number,
 	) => Uint8Array;
 	encodeRgbaQuality: (
 		rgbaFrames: Uint8Array,
@@ -66,9 +44,7 @@ export function setNativeAddonModule(module: NativeAddonModule | null): void {
 		const exports = [
 			"decodeFramesRgba",
 			"encodeIndexedFast",
-			"encodeIndexedBalanced",
 			"encodeRgbaFast",
-			"encodeRgbaBalanced",
 			"encodeRgbaQuality",
 			"reencodeGifFast",
 		] as const satisfies readonly (keyof NativeAddonModule)[];

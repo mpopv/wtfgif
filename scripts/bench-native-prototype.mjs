@@ -299,7 +299,6 @@ function encodeRgbaNative(fixture) {
 		delay: fixture.delays,
 		loop: 0,
 		backend: "native-addon",
-		compression: "fast",
 	});
 }
 

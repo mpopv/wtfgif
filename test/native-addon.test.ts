@@ -21,9 +21,7 @@ function makeNativeAddon(
 			pixels: new Uint8Array([1, 2, 3, 255]),
 		}),
 		encodeIndexedFast: () => new Uint8Array([71, 73, 70]),
-		encodeIndexedBalanced: () => new Uint8Array([71, 73, 70]),
 		encodeRgbaFast: () => new Uint8Array([71, 73, 70]),
-		encodeRgbaBalanced: () => new Uint8Array([71, 73, 70]),
 		encodeRgbaQuality: () => new Uint8Array([71, 73, 70]),
 		reencodeGifFast: () => new Uint8Array([71, 73, 70]),
 		...overrides,
@@ -70,7 +68,6 @@ describe("one-off native addon API", () => {
 			palette: [0, 0xffffff],
 			delay: 3,
 			loop: 0,
-			compression: "fast",
 			quantization: "exact",
 			backend: "native-addon",
 		});
@@ -96,7 +93,6 @@ describe("one-off native addon API", () => {
 			frames: new Uint8Array([0, 0, 0, 255]),
 			delay: 3,
 			loop: 0,
-			compression: "fast",
 			quantization: "quality",
 			backend: "native-addon",
 		});
@@ -123,7 +119,6 @@ describe("one-off native addon API", () => {
 			palette: [0, 0xffffff],
 			delay: [3, 4],
 			loop: 0,
-			compression: "fast",
 			delta: true,
 			backend: "native-addon",
 		});

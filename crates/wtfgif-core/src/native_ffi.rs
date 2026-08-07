@@ -215,7 +215,7 @@ pub unsafe extern "C" fn wtfgif_free_rgba(pixels: *mut u8, byte_len: usize) {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[no_mangle]
-/// Encodes RGBA frames using the fast native profile.
+/// Encodes RGBA frames with a caller-supplied palette and literal LZW.
 ///
 /// # Safety
 ///
@@ -264,7 +264,6 @@ pub unsafe extern "C" fn wtfgif_encode_rgba_fast(
         loop_count,
         deltas != 0,
         TRANSPARENT_ALPHA_THRESHOLD,
-        true,
     );
     let Ok(bytes) = result else {
         return 0;
@@ -276,7 +275,7 @@ pub unsafe extern "C" fn wtfgif_encode_rgba_fast(
 
 #[cfg(not(target_arch = "wasm32"))]
 #[no_mangle]
-/// Encodes RGBA frames using the quality native profile.
+/// Encodes RGBA frames with adaptive palette generation and literal LZW.
 ///
 /// # Safety
 ///
@@ -323,74 +322,7 @@ pub unsafe extern "C" fn wtfgif_encode_rgba_quality(
 
 #[cfg(not(target_arch = "wasm32"))]
 #[no_mangle]
-/// Encodes RGBA frames using the balanced native profile.
-///
-/// # Safety
-///
-/// Every non-null input pointer must reference the number of readable elements
-/// given by its corresponding length, and `encoded` must be writable.
-pub unsafe extern "C" fn wtfgif_encode_rgba_balanced(
-    rgba_stream: *const u8,
-    rgba_len: usize,
-    width: u16,
-    height: u16,
-    frame_count: usize,
-    palette_rgb: *const u32,
-    palette_len: usize,
-    delays: *const u16,
-    delay_count: usize,
-    loop_count: i32,
-    deltas: i32,
-    alpha_threshold: u8,
-    quantization: u8,
-    encoded: *mut NativeEncodedGif,
-) -> i32 {
-    if rgba_stream.is_null()
-        || encoded.is_null()
-        || (palette_len != 0 && palette_rgb.is_null())
-        || (delay_count != 0 && delays.is_null())
-    {
-        return 0;
-    }
-
-    let Ok(quantization) = RgbaQuantization::from_u8(quantization) else {
-        return 0;
-    };
-    let rgba_stream = std::slice::from_raw_parts(rgba_stream, rgba_len);
-    let palette_rgb = if palette_len == 0 {
-        &[]
-    } else {
-        std::slice::from_raw_parts(palette_rgb, palette_len)
-    };
-    let delays = if delay_count == 0 {
-        &[]
-    } else {
-        std::slice::from_raw_parts(delays, delay_count)
-    };
-    let result = encode_rgba_gif_advanced_inner(
-        rgba_stream,
-        width,
-        height,
-        frame_count,
-        palette_rgb,
-        DelaySource::PerFrame(delays),
-        loop_count,
-        deltas != 0,
-        alpha_threshold,
-        false,
-        quantization,
-        RgbaPaletteMode::Global,
-    );
-    let Ok(bytes) = result else {
-        return 0;
-    };
-    encoded.write(NativeEncodedGif::from_vec(bytes));
-    1
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[no_mangle]
-/// Encodes indexed frames using the fast native profile.
+/// Encodes indexed frames with literal LZW.
 ///
 /// # Safety
 ///
@@ -426,67 +358,10 @@ pub unsafe extern "C" fn wtfgif_encode_indexed_fast(
             palette_rgb,
             delay_source,
             loop_count,
+            None,
         )
     } else {
         encode_indexed_literal_gif_inner(
-            index_stream,
-            width,
-            height,
-            frame_count,
-            palette_rgb,
-            delay_source,
-            loop_count,
-            None,
-        )
-    };
-    let Ok(bytes) = result else {
-        return 0;
-    };
-    encoded.write(NativeEncodedGif::from_vec(bytes));
-    1
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[no_mangle]
-/// Encodes indexed frames using the balanced native profile.
-///
-/// # Safety
-///
-/// Every input pointer must reference the number of readable elements given by
-/// its corresponding length, and `encoded` must be writable.
-pub unsafe extern "C" fn wtfgif_encode_indexed_balanced(
-    index_stream: *const u8,
-    index_len: usize,
-    width: u16,
-    height: u16,
-    frame_count: usize,
-    palette_rgb: *const u32,
-    palette_len: usize,
-    delays: *const u16,
-    delay_count: usize,
-    loop_count: i32,
-    deltas: i32,
-    encoded: *mut NativeEncodedGif,
-) -> i32 {
-    if index_stream.is_null() || encoded.is_null() || palette_rgb.is_null() || delays.is_null() {
-        return 0;
-    }
-    let index_stream = std::slice::from_raw_parts(index_stream, index_len);
-    let palette_rgb = std::slice::from_raw_parts(palette_rgb, palette_len);
-    let delays = std::slice::from_raw_parts(delays, delay_count);
-    let delay_source = DelaySource::PerFrame(delays);
-    let result = if deltas != 0 {
-        encode_indexed_delta_gif_inner(
-            index_stream,
-            width,
-            height,
-            frame_count,
-            palette_rgb,
-            delay_source,
-            loop_count,
-        )
-    } else {
-        encode_indexed_gif_inner(
             index_stream,
             width,
             height,

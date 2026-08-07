@@ -81,54 +81,30 @@ In a browser, get GIF bytes with
 `new Uint8Array(await file.arrayBuffer())`. To turn encoded bytes into a file
 or URL, use `new Blob([gif], { type: "image/gif" })`.
 
-## 100× faster on the first encode
+## Encoding tradeoff
 
-Both encoders start with the same eight real 128×128 RGBA images. They must
-choose a palette, map every pixel, compress every frame, and return a valid GIF.
-Wasm initialization happens first, then the clock measures exactly one encode.
-There are no encode warmups, saved palettes, retained pixels, or cached results.
+`wtfgif` is optimized for maximum encoding speed at the cost of larger output
+files. On the documented 128×128, eight-frame small-image workload, it encoded
+**182.81× faster** than image-q + omggif under comparable conditions (0.528 ms
+vs 96.471 ms), with a **3.80× larger file**.
 
-| 500 fresh Node processes | image-q + omggif | wtfgif | Speedup |
-| --- | ---: | ---: | ---: |
-| First real encode | 127.979 ms | **1.257 ms** | **101.83×** |
-
-For repeated encoding after that first call, the same job takes 94.900 ms with
-image-q + omggif and 0.330 ms with wtfgif: **287.47× faster**.
-
-## Browser comparison
-
-![Browser GIF encoder benchmark](docs/encoder-race.svg)
-
-These are median first encodes from 15 fresh Chrome processes per encoder, with
-package loading and wtfgif's one-time Wasm initialization outside the clock.
-
-| Encoder | First encode | Slower than wtfgif |
-| --- | ---: | ---: |
-| **wtfgif** | **1.465 ms** | — |
-| [gif.js 0.2.0](https://github.com/jnordberg/gif.js) | 110.205 ms | **75.23×** |
-| [gifenc 1.0.3](https://github.com/mattdesl/gifenc) | 126.955 ms | **86.66×** |
-| [gif.js.optimized 1.0.1](https://github.com/terikon/gif.js.optimized) | 128.075 ms | **87.42×** |
-| [modern-gif 2.1.0](https://github.com/qq15725/modern-gif) | 128.460 ms | **87.69×** |
-| image-q + [omggif 1.0.10](https://github.com/deanm/omggif) | 166.285 ms | **113.51×** |
-
-wtfgif's output is 149,689 bytes at 34.12 dB PSNR with 100% alpha agreement.
-It favors encode latency and visual quality over producing the smallest file.
+Across the 10-fixture corpus, speedups ranged from 65.71× to 263.68× with a
+127.02× geometric mean. Output files ranged from 1.17× to 22.74× larger, with a
+6.23× geometric mean.
 
 ```bash
 npm run bench
 npm run bench:race
 ```
 
-Exact conditions, raw browser samples, output sizes, and quality results are in
-[BENCHMARKS.md](BENCHMARKS.md).
+Exact conditions, raw samples, output sizes, PSNR, SSIM, independent-decoder
+checks, and browser checks are in [BENCHMARKS.md](BENCHMARKS.md).
 
 ## Good to know
 
 - GIF delays use hundredths of a second, so `delay: 10` means 100 ms.
 - GIF supports at most 256 colors and only fully transparent or fully opaque
   pixels. Converting from full-color RGBA always involves some color reduction.
-- `wtfgif` favors very fast encoding and high visual quality over the smallest
-  possible file size.
 - `GifReader` and `GifWriter` are compatible with the equivalent `omggif` APIs
   if you need lower-level palette and frame control.
 

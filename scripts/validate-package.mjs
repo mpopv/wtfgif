@@ -116,7 +116,6 @@ try {
 				width: 1,
 				height: 1,
 				frames: Uint8Array.of(1, 2, 3, 255),
-				compression: "fast",
 				quantization,
 				paletteMode,
 			});
@@ -200,7 +199,6 @@ try {
 					width: 300,
 					height: 1,
 					frames: rgba,
-					compression: "fast",
 					quantization: "quality",
 					paletteMode: "local",
 					backend: "wasm",
@@ -383,7 +381,6 @@ try {
 					frames: new Uint8Array([0, 1, 1, 0]),
 					palette: [0, 0xffffff],
 					backend: "wasm",
-					compression: "fast",
 				});
 				const remuxed = wtfgif.remuxGifPixelPerfect(source);
 				const before = wtfgif.decodeGifFramesRgba(source);
@@ -401,7 +398,6 @@ try {
 						width: 300,
 						height: 1,
 						frames: rgba,
-						compression: "fast",
 						quantization: "quality",
 						paletteMode: "local",
 						backend: "wasm",

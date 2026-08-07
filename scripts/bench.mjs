@@ -278,7 +278,7 @@ function encodedResult(bytes) {
 	return { bytes, checksum: bytes[bytes.length - 1] ?? 0 };
 }
 
-function encodeIndexedWtfgif(fixture, delta, compression) {
+function encodeIndexedWtfgif(fixture, delta) {
 	return encodeIndexedGifFrames({
 		width: fixture.width,
 		height: fixture.height,
@@ -288,12 +288,11 @@ function encodeIndexedWtfgif(fixture, delta, compression) {
 		delay: 2,
 		loop: 0,
 		delta,
-		compression,
 		backend: "native-addon",
 	});
 }
 
-function encodeRgbaWtfgif(fixture, delta, compression) {
+function encodeRgbaWtfgif(fixture, delta) {
 	return encodeRgbaGifFrames({
 		width: fixture.width,
 		height: fixture.height,
@@ -303,7 +302,6 @@ function encodeRgbaWtfgif(fixture, delta, compression) {
 		delay: 2,
 		loop: 0,
 		delta,
-		compression,
 		backend: "native-addon",
 	});
 }
@@ -420,35 +418,31 @@ const indexedRows = [];
 for (const fixture of indexedFixtures) {
 	const rgba = toRgbaFixture(fixture);
 	const omgBytes = encodeIndexedOmggif(fixture);
-	const wtfBytes = encodeIndexedWtfgif(fixture, false, "fast");
+	const wtfBytes = encodeIndexedWtfgif(fixture, false);
 	assertEncodedParity(omgBytes, rgba, `${fixture.name}/omggif`);
-	assertEncodedParity(wtfBytes, rgba, `${fixture.name}/wtfgif fast`);
+	assertEncodedParity(wtfBytes, rgba, `${fixture.name}/wtfgif`);
 	indexedRows.push({
 		name: fixture.name,
 		omg: measure(() => encodedResult(encodeIndexedOmggif(fixture))),
-		wtf: measure(() =>
-			encodedResult(encodeIndexedWtfgif(fixture, false, "fast")),
-		),
+		wtf: measure(() => encodedResult(encodeIndexedWtfgif(fixture, false))),
 		omgBytes: omgBytes.length,
 		wtfBytes: wtfBytes.length,
 	});
 }
 printEncodeRows(
-	"Indexed frames -> GIF (pixel-perfect fast compression)",
+	"Indexed frames -> GIF (pixel-perfect literal LZW)",
 	indexedRows,
 );
 
 const deltaOmgBytes = encodeIndexedOmggif(deltaIndexed);
-const deltaWtfBytes = encodeIndexedWtfgif(deltaIndexed, true, "balanced");
+const deltaWtfBytes = encodeIndexedWtfgif(deltaIndexed, true);
 assertEncodedParity(deltaOmgBytes, deltaRgba, "indexed delta/omggif");
 assertEncodedParity(deltaWtfBytes, deltaRgba, "indexed delta/wtfgif");
 printEncodeRows("Indexed changed rectangles -> GIF (pixel-perfect)", [
 	{
 		name: deltaIndexed.name,
 		omg: measure(() => encodedResult(encodeIndexedOmggif(deltaIndexed))),
-		wtf: measure(() =>
-			encodedResult(encodeIndexedWtfgif(deltaIndexed, true, "balanced")),
-		),
+		wtf: measure(() => encodedResult(encodeIndexedWtfgif(deltaIndexed, true))),
 		omgBytes: deltaOmgBytes.length,
 		wtfBytes: deltaWtfBytes.length,
 	},
@@ -458,25 +452,22 @@ const rgbaRows = [];
 for (const fixture of rgbaFixtures) {
 	const omgFixture = indexRgba(fixture);
 	const omgBytes = encodeIndexedOmggif(omgFixture);
-	const wtfBytes = encodeRgbaWtfgif(fixture, false, "fast");
+	const wtfBytes = encodeRgbaWtfgif(fixture, false);
 	assertEncodedParity(omgBytes, fixture, `${fixture.name} RGBA/omggif`);
-	assertEncodedParity(wtfBytes, fixture, `${fixture.name} RGBA/wtfgif fast`);
+	assertEncodedParity(wtfBytes, fixture, `${fixture.name} RGBA/wtfgif`);
 	rgbaRows.push({
 		name: fixture.name,
 		omg: measure(() => encodedResult(encodeIndexedOmggif(indexRgba(fixture)))),
-		wtf: measure(() => encodedResult(encodeRgbaWtfgif(fixture, false, "fast"))),
+		wtf: measure(() => encodedResult(encodeRgbaWtfgif(fixture, false))),
 		omgBytes: omgBytes.length,
 		wtfBytes: wtfBytes.length,
 	});
 }
-printEncodeRows(
-	"RGBA frames -> GIF (pixel-perfect fast compression)",
-	rgbaRows,
-);
+printEncodeRows("RGBA frames -> GIF (pixel-perfect literal LZW)", rgbaRows);
 
 const deltaRgbaOmgFixture = indexRgba(deltaRgba);
 const deltaRgbaOmgBytes = encodeIndexedOmggif(deltaRgbaOmgFixture);
-const deltaRgbaWtfBytes = encodeRgbaWtfgif(deltaRgba, true, "balanced");
+const deltaRgbaWtfBytes = encodeRgbaWtfgif(deltaRgba, true);
 assertEncodedParity(deltaRgbaOmgBytes, deltaRgba, "RGBA delta/omggif");
 assertEncodedParity(deltaRgbaWtfBytes, deltaRgba, "RGBA delta/wtfgif");
 printEncodeRows("RGBA changed rectangles -> GIF (pixel-perfect)", [
@@ -485,9 +476,7 @@ printEncodeRows("RGBA changed rectangles -> GIF (pixel-perfect)", [
 		omg: measure(() =>
 			encodedResult(encodeIndexedOmggif(indexRgba(deltaRgba))),
 		),
-		wtf: measure(() =>
-			encodedResult(encodeRgbaWtfgif(deltaRgba, true, "balanced")),
-		),
+		wtf: measure(() => encodedResult(encodeRgbaWtfgif(deltaRgba, true))),
 		omgBytes: deltaRgbaOmgBytes.length,
 		wtfBytes: deltaRgbaWtfBytes.length,
 	},

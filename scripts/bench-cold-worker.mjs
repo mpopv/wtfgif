@@ -244,7 +244,6 @@ function encodeIndexedNative(fixture, delta) {
 		loop: 0,
 		backend: "native-addon",
 		delta,
-		compression: "fast",
 	});
 }
 
@@ -284,7 +283,6 @@ function encodeRgbaNative(fixture, delta) {
 		loop: 0,
 		backend: "native-addon",
 		delta,
-		compression: "fast",
 	});
 }
 

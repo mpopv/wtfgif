@@ -52,7 +52,6 @@ describe("encode-only quality entry", () => {
 		const expected = encodeRgbaGifFramesGeneral({
 			...options,
 			backend: "wasm",
-			compression: "fast",
 			quantization: "quality",
 			paletteMode: "global",
 		});

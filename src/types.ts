@@ -57,16 +57,6 @@ export interface WasmCoreModule {
 		data: Uint8Array,
 		requestedFrames: Uint8Array,
 	) => Uint32Array;
-	encode_indexed_lzw: (
-		indexStream: Uint8Array,
-		minCodeSize: number,
-		colorCount: number,
-	) => Uint8Array;
-	encode_indexed_lzw_scratch: (
-		indexStream: Uint8Array,
-		minCodeSize: number,
-		colorCount: number,
-	) => number;
 	encode_indexed_literal_lzw_scratch: (
 		indexStream: Uint8Array,
 		minCodeSize: number,
@@ -77,28 +67,9 @@ export interface WasmCoreModule {
 		length: number,
 		minCodeSize: number,
 		colorCount: number,
-		literal: boolean,
 	) => number;
 	indexed_lzw_scratch_ptr: () => number;
 	wasm_memory: () => WebAssembly.Memory;
-	encode_indexed_gif: (
-		indexStream: Uint8Array,
-		width: number,
-		height: number,
-		frameCount: number,
-		paletteRgb: Uint32Array,
-		delay: number,
-		loopCount: number,
-	) => Uint8Array;
-	encode_indexed_gif_with_delays: (
-		indexStream: Uint8Array,
-		width: number,
-		height: number,
-		frameCount: number,
-		paletteRgb: Uint32Array,
-		delays: Uint16Array,
-		loopCount: number,
-	) => Uint8Array;
 	encode_indexed_literal_gif: (
 		indexStream: Uint8Array,
 		width: number,
@@ -143,45 +114,6 @@ export interface WasmCoreModule {
 		paletteRgb: Uint32Array,
 		delays: Uint16Array,
 		loopCount: number,
-	) => Uint8Array;
-	encode_indexed_delta_gif: (
-		indexStream: Uint8Array,
-		width: number,
-		height: number,
-		frameCount: number,
-		paletteRgb: Uint32Array,
-		delay: number,
-		loopCount: number,
-	) => Uint8Array;
-	encode_indexed_delta_gif_with_delays: (
-		indexStream: Uint8Array,
-		width: number,
-		height: number,
-		frameCount: number,
-		paletteRgb: Uint32Array,
-		delays: Uint16Array,
-		loopCount: number,
-	) => Uint8Array;
-	encode_rgba_gif: (
-		rgbaStream: Uint8Array,
-		width: number,
-		height: number,
-		frameCount: number,
-		paletteRgb: Uint32Array,
-		delay: number,
-		loopCount: number,
-		deltas: boolean,
-	) => Uint8Array;
-	encode_rgba_gif_with_options: (
-		rgbaStream: Uint8Array,
-		width: number,
-		height: number,
-		frameCount: number,
-		paletteRgb: Uint32Array,
-		delays: Uint16Array,
-		loopCount: number,
-		deltas: boolean,
-		alphaThreshold: number,
 	) => Uint8Array;
 	encode_rgba_literal_gif: (
 		rgbaStream: Uint8Array,
@@ -231,7 +163,6 @@ export interface WasmCoreModule {
 		loopCount: number,
 		deltas: boolean,
 		alphaThreshold: number,
-		literal: boolean,
 		quantization: number,
 		paletteMode: number,
 	) => Uint8Array;
@@ -245,7 +176,6 @@ export interface WasmCoreModule {
 		loopCount: number,
 		deltas: boolean,
 		alphaThreshold: number,
-		literal: boolean,
 		quantization: number,
 		paletteMode: number,
 	) => Uint8Array;
@@ -259,7 +189,6 @@ export interface WasmCoreModule {
 		loopCount: number,
 		deltas: boolean,
 		alphaThreshold: number,
-		literal: boolean,
 		quantization: number,
 		paletteMode: number,
 	) => number;
@@ -301,24 +230,16 @@ export interface WasmCoreModule {
 export type WasmEncodeCoreModule = Pick<
 	WasmCoreModule,
 	| "core_version"
-	| "encode_indexed_lzw"
-	| "encode_indexed_lzw_scratch"
 	| "encode_indexed_literal_lzw_scratch"
 	| "indexed_lzw_input_scratch_reserve"
 	| "encode_indexed_lzw_scratch_from_input"
 	| "indexed_lzw_scratch_ptr"
 	| "wasm_memory"
-	| "encode_indexed_gif"
-	| "encode_indexed_gif_with_delays"
 	| "encode_indexed_literal_gif"
 	| "encode_indexed_literal_gif_scratch_from_input"
 	| "encode_indexed_literal_gif_with_delays"
 	| "encode_indexed_literal_delta_gif"
 	| "encode_indexed_literal_delta_gif_with_delays"
-	| "encode_indexed_delta_gif"
-	| "encode_indexed_delta_gif_with_delays"
-	| "encode_rgba_gif"
-	| "encode_rgba_gif_with_options"
 	| "encode_rgba_literal_gif"
 	| "encode_rgba_literal_gif_with_options"
 	| "encode_rgba_literal_delta_gif"
@@ -387,7 +308,6 @@ export type PaletteRGB = number[]; // array of 24-bit 0xRRGGBB
 
 export interface GifOptions {
 	background?: number;
-	compression?: "balanced" | "fast";
 	loop?: number | null;
 	palette?: PaletteRGB | null;
 }

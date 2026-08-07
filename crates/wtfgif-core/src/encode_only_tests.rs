@@ -10,7 +10,7 @@ fn indexed_encoder_produces_a_complete_gif() {
 
 #[test]
 fn rgba_encoder_produces_a_complete_gif() {
-    let encoded = encode_rgba_gif(
+    let encoded = encode_rgba_literal_gif(
         &[0, 0, 0, 255, 255, 255, 255, 255],
         2,
         1,
@@ -18,7 +18,6 @@ fn rgba_encoder_produces_a_complete_gif() {
         &[0x000000, 0xffffff],
         3,
         0,
-        false,
     )
     .expect("RGBA encode");
     assert!(encoded.starts_with(b"GIF89a"));

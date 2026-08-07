@@ -312,13 +312,6 @@ const COMPOSITED_DELTA_VERSION: u32 = 1;
 const COMPOSITED_DELTA_HEADER_LEN: usize = 4;
 #[cfg(not(feature = "encode-only"))]
 const COMPOSITED_DELTA_ENTRY_LEN: usize = 9;
-// The dictionary key is `(previous_code * color_count) + next_pixel`. The
-// previous code can grow to 4095, so the full 256-color table needs 2^20
-// slots; smaller palettes can use a proportionally smaller direct table.
-const LZW_DIRECT_ENTRY_COUNT: usize = 1 << 20;
-const LZW_ENTRY_CODE_MASK: u32 = 0x0fff;
-const LZW_ENTRY_EPOCH_SHIFT: u32 = 12;
-const LZW_ENTRY_EPOCH_MAX: u32 = (1 << (32 - LZW_ENTRY_EPOCH_SHIFT)) - 1;
 const COLOR_INDEX_CAP: usize = 512;
 const TRANSPARENT_ALPHA_THRESHOLD: u8 = 128;
 
@@ -381,6 +374,11 @@ struct FrameDecodeScratch {
 }
 
 mod wasm_api;
+
+#[cfg(feature = "fuzzing")]
+mod fuzzing;
+#[cfg(feature = "fuzzing")]
+pub use fuzzing::{fuzz_decode, fuzz_encode};
 pub use wasm_api::*;
 
 #[cfg(not(feature = "encode-only"))]
@@ -4102,7 +4100,6 @@ fn encode_rgba_gif_advanced_inner(
     loop_count: i32,
     deltas: bool,
     alpha_threshold: u8,
-    literal: bool,
     quantization: RgbaQuantization,
     palette_mode: RgbaPaletteMode,
 ) -> Result<Vec<u8>, String> {
@@ -4116,7 +4113,6 @@ fn encode_rgba_gif_advanced_inner(
         loop_count,
         deltas,
         alpha_threshold,
-        literal,
         quantization,
         palette_mode,
         Vec::new(),
@@ -4134,7 +4130,6 @@ fn encode_rgba_gif_advanced_inner_with_output(
     loop_count: i32,
     deltas: bool,
     alpha_threshold: u8,
-    literal: bool,
     quantization: RgbaQuantization,
     palette_mode: RgbaPaletteMode,
     output: Vec<u8>,
@@ -4158,7 +4153,6 @@ fn encode_rgba_gif_advanced_inner_with_output(
             delays,
             loop_count,
             alpha_threshold,
-            literal,
             quantization,
         );
     }
@@ -4178,7 +4172,6 @@ fn encode_rgba_gif_advanced_inner_with_output(
             palette_rgb,
             delays,
             loop_count,
-            literal,
             alpha_threshold,
             quantization == RgbaQuantization::Exact,
             false,
@@ -4195,7 +4188,7 @@ fn encode_rgba_gif_advanced_inner_with_output(
         alpha_threshold,
         quantization,
     )?;
-    if literal && !deltas {
+    if !deltas {
         let encoded = encode_indexed_literal_gif_inner_with_output(
             output,
             &indexed,
@@ -4210,7 +4203,7 @@ fn encode_rgba_gif_advanced_inner_with_output(
         recycle_quantized_indexed(indexed);
         return encoded;
     }
-    let encoded = encode_indexed_gif_inner_with_rects(
+    let encoded = encode_indexed_literal_delta_gif_inner(
         &indexed,
         width,
         height,
@@ -4218,9 +4211,7 @@ fn encode_rgba_gif_advanced_inner_with_output(
         &palette,
         delays,
         loop_count,
-        deltas,
         transparent_index,
-        literal,
     );
     recycle_quantized_indexed(indexed);
     encoded
@@ -4850,7 +4841,6 @@ fn encode_rgba_local_palette_gif_inner(
     delays: DelaySource<'_>,
     loop_count: i32,
     alpha_threshold: u8,
-    literal: bool,
     quantization: RgbaQuantization,
 ) -> Result<Vec<u8>, String> {
     let frame_pixels = usize::from(width)
@@ -4868,7 +4858,6 @@ fn encode_rgba_local_palette_gif_inner(
     output.extend_from_slice(&[0, 0, 0]);
     write_loop_extension(&mut output, loop_count);
 
-    let mut lzw_tables = (!literal).then(LzwEncodeTables::new);
     for (frame_index, frame) in rgba_stream.chunks_exact(frame_bytes).enumerate() {
         let (palette, indexed, transparent_index) =
             index_rgba_frames_with_quantization(frame, &[], alpha_threshold, quantization)?;
@@ -4883,26 +4872,10 @@ fn encode_rgba_local_palette_gif_inner(
             color_count,
         );
         let min_code_size = (log2_pow2(color_count) as u8).max(2);
-        if literal {
-            let result = encode_indexed_literal_lzw_direct_to(
-                &mut output,
-                &indexed,
-                min_code_size,
-                color_count,
-            );
-            recycle_quantized_indexed(indexed);
-            result?;
-        } else {
-            let result = encode_indexed_lzw_to_with_tables(
-                &mut output,
-                &indexed,
-                min_code_size,
-                color_count,
-                lzw_tables.as_mut().unwrap(),
-            );
-            recycle_quantized_indexed(indexed);
-            result?;
-        }
+        let result =
+            encode_indexed_literal_lzw_direct_to(&mut output, &indexed, min_code_size, color_count);
+        recycle_quantized_indexed(indexed);
+        result?;
     }
     output.push(0x3b);
     Ok(output)
@@ -4955,7 +4928,6 @@ fn encode_rgba_gif_inner(
     loop_count: i32,
     deltas: bool,
     alpha_threshold: u8,
-    literal: bool,
 ) -> Result<Vec<u8>, String> {
     if width == 0 || height == 0 {
         return Err("Width/Height invalid".to_string());
@@ -4983,7 +4955,7 @@ fn encode_rgba_gif_inner(
     // palette path. Map directly into the literal LZW stream so we do not
     // materialize an intermediate indexed frame and then scan it again.
     // This preserves the exact-palette contract of the existing literal path.
-    if literal && !deltas && palette_rgb.len() == 256 && rgba_stream_is_opaque(rgba_stream) {
+    if !deltas && palette_rgb.len() == 256 && rgba_stream_is_opaque(rgba_stream) {
         return encode_rgba_literal_gif_to_palette_inner(
             rgba_stream,
             width,
@@ -4995,7 +4967,7 @@ fn encode_rgba_gif_inner(
         );
     }
 
-    if literal && !deltas && (9..=16).contains(&palette_rgb.len()) {
+    if !deltas && (9..=16).contains(&palette_rgb.len()) {
         match encode_rgba_sixteen_color_literal_gif_inner(
             rgba_stream,
             width,
@@ -5021,7 +4993,6 @@ fn encode_rgba_gif_inner(
             palette_rgb,
             delays,
             loop_count,
-            literal,
             alpha_threshold,
             true,
             true,
@@ -5033,8 +5004,8 @@ fn encode_rgba_gif_inner(
     }
 
     let (palette, indexed, transparent_index) =
-        index_rgba_frames(rgba_stream, palette_rgb, alpha_threshold, literal)?;
-    if literal && !deltas {
+        index_rgba_frames(rgba_stream, palette_rgb, alpha_threshold, true)?;
+    if !deltas {
         return encode_indexed_literal_gif_inner(
             &indexed,
             width,
@@ -5046,7 +5017,7 @@ fn encode_rgba_gif_inner(
             transparent_index,
         );
     }
-    encode_indexed_gif_inner_with_rects(
+    encode_indexed_literal_delta_gif_inner(
         &indexed,
         width,
         height,
@@ -5054,9 +5025,7 @@ fn encode_rgba_gif_inner(
         &palette,
         delays,
         loop_count,
-        deltas,
         transparent_index,
-        literal,
     )
 }
 
@@ -5229,7 +5198,6 @@ fn encode_rgba_delta_gif_to_palette_inner(
     palette_rgb: &[u32],
     delays: DelaySource<'_>,
     loop_count: i32,
-    literal: bool,
     alpha_threshold: u8,
     exact_alpha: bool,
     exact_palette: bool,
@@ -5253,13 +5221,7 @@ fn encode_rgba_delta_gif_to_palette_inner(
         13 + palette_bytes + 20 + frame_count.saturating_mul(estimated_frame_bytes) + 1,
     );
     let mapper = PaletteMapper::new(palette_rgb);
-    let literal_small_palette = !literal && palette_rgb.len() <= 16;
-    let mut lzw_tables = (!literal && !literal_small_palette).then(LzwEncodeTables::new);
-    let mut mapped = if literal || literal_small_palette {
-        Vec::with_capacity(frame_pixels)
-    } else {
-        Vec::new()
-    };
+    let mut mapped = Vec::with_capacity(frame_pixels);
 
     write_indexed_gif_header(&mut output, width, height, palette_rgb, color_count);
     write_loop_extension(&mut output, loop_count);
@@ -5271,7 +5233,7 @@ fn encode_rgba_delta_gif_to_palette_inner(
             if let Some(rect) =
                 find_changed_rect_rgba_bytes(previous, frame, canvas_width, canvas_height)
             {
-                let direct_two_bit = literal_small_palette && color_count <= 4;
+                let direct_two_bit = color_count <= 4;
                 if !direct_two_bit
                     && rgba_rect_alpha_invalid(
                         frame,
@@ -5293,49 +5255,25 @@ fn encode_rgba_delta_gif_to_palette_inner(
                     None,
                     0,
                 );
-                if literal || literal_small_palette {
-                    if direct_two_bit {
-                        encode_rgba_two_bit_literal_rect_to(
-                            &mut output,
-                            frame,
-                            canvas_width,
-                            rect,
-                            &mapper,
-                            alpha_threshold,
-                            exact_alpha,
-                            exact_palette,
-                        )?;
-                    } else {
-                        map_rgba_rect_to_palette(frame, canvas_width, rect, &mapper, &mut mapped);
-                        encode_indexed_literal_lzw_direct_to(
-                            &mut output,
-                            &mapped,
-                            min_code_size,
-                            color_count,
-                        )?;
-                    }
+                if direct_two_bit {
+                    encode_rgba_two_bit_literal_rect_to(
+                        &mut output,
+                        frame,
+                        canvas_width,
+                        rect,
+                        &mapper,
+                        alpha_threshold,
+                        exact_alpha,
+                        exact_palette,
+                    )?;
                 } else {
-                    let rect_pixels = rect.width * rect.height;
-                    if rect_pixels <= 1024 {
-                        map_rgba_rect_to_palette(frame, canvas_width, rect, &mapper, &mut mapped);
-                        encode_indexed_literal_lzw_direct_to(
-                            &mut output,
-                            &mapped,
-                            min_code_size,
-                            color_count,
-                        )?;
-                    } else {
-                        encode_rgba_lzw_rect_to_palette(
-                            &mut output,
-                            frame,
-                            canvas_width,
-                            rect,
-                            &mapper,
-                            min_code_size,
-                            color_count,
-                            lzw_tables.as_mut().unwrap(),
-                        )?;
-                    }
+                    map_rgba_rect_to_palette(frame, canvas_width, rect, &mapper, &mut mapped);
+                    encode_indexed_literal_lzw_direct_to(
+                        &mut output,
+                        &mapped,
+                        min_code_size,
+                        color_count,
+                    )?;
                 }
             } else {
                 write_indexed_gif_frame_header(&mut output, 0, 0, 1, 1, delay, None, 0);
@@ -5348,38 +5286,27 @@ fn encode_rgba_delta_gif_to_palette_inner(
                 )?;
             }
         } else {
-            let direct_two_bit = literal_small_palette && color_count <= 4;
+            let direct_two_bit = color_count <= 4;
             if !direct_two_bit && rgba_alpha_invalid(frame, alpha_threshold, exact_alpha) {
                 return Err(RGBA_DELTA_FALLBACK.to_string());
             }
             write_indexed_gif_frame_header(&mut output, 0, 0, width, height, delay, None, 0);
-            if literal || literal_small_palette {
-                if direct_two_bit {
-                    encode_rgba_two_bit_literal_frame_to(
-                        &mut output,
-                        frame,
-                        &mapper,
-                        alpha_threshold,
-                        exact_alpha,
-                        exact_palette,
-                    )?;
-                } else {
-                    map_rgba_frame_to_palette(frame, &mapper, &mut mapped);
-                    encode_indexed_literal_lzw_direct_to(
-                        &mut output,
-                        &mapped,
-                        min_code_size,
-                        color_count,
-                    )?;
-                }
+            if direct_two_bit {
+                encode_rgba_two_bit_literal_frame_to(
+                    &mut output,
+                    frame,
+                    &mapper,
+                    alpha_threshold,
+                    exact_alpha,
+                    exact_palette,
+                )?;
             } else {
                 map_rgba_frame_to_palette(frame, &mapper, &mut mapped);
-                encode_indexed_lzw_to_with_tables(
+                encode_indexed_literal_lzw_direct_to(
                     &mut output,
                     &mapped,
                     min_code_size,
                     color_count,
-                    lzw_tables.as_mut().unwrap(),
                 )?;
             }
         }
@@ -9551,99 +9478,6 @@ impl PaletteKdTree {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn encode_indexed_gif_inner(
-    index_stream: &[u8],
-    width: u16,
-    height: u16,
-    frame_count: usize,
-    palette_rgb: &[u32],
-    delays: DelaySource<'_>,
-    loop_count: i32,
-    transparent_index: Option<u8>,
-) -> Result<Vec<u8>, String> {
-    if width == 0 || height == 0 {
-        return Err("Width/Height invalid".to_string());
-    }
-    if frame_count == 0 {
-        return Err("Frame count must be greater than zero".to_string());
-    }
-    if loop_count < -1 || loop_count > i32::from(u16::MAX) {
-        return Err("Loop count invalid".to_string());
-    }
-    delays.validate(frame_count)?;
-
-    let color_count = checked_palette_color_count(palette_rgb.len())?;
-    let color_table_size_bits = (log2_pow2(color_count) as u8 - 1) & 7;
-    let min_code_size = (log2_pow2(color_count) as u8).max(2);
-    let frame_len = usize::from(width)
-        .checked_mul(usize::from(height))
-        .ok_or_else(|| "Frame size overflow".to_string())?;
-    let expected_len = frame_len
-        .checked_mul(frame_count)
-        .ok_or_else(|| "Frame stream overflow".to_string())?;
-    if index_stream.len() != expected_len {
-        return Err("Indexed frame stream length does not match dimensions".to_string());
-    }
-
-    let palette_bytes = color_count
-        .checked_mul(3)
-        .ok_or_else(|| "Palette size overflow".to_string())?;
-    let estimated_frame_bytes = frame_len / 2 + 32;
-    let mut output = Vec::with_capacity(
-        13 + palette_bytes + 20 + frame_count.saturating_mul(estimated_frame_bytes) + 1,
-    );
-    output.extend_from_slice(b"GIF89a");
-    push_u16_le(&mut output, width);
-    push_u16_le(&mut output, height);
-    output.push(0x80 | color_table_size_bits);
-    output.push(0);
-    output.push(0);
-
-    for index in 0..color_count {
-        let rgb = palette_rgb.get(index).copied().unwrap_or(0);
-        output.push(((rgb >> 16) & 0xff) as u8);
-        output.push(((rgb >> 8) & 0xff) as u8);
-        output.push((rgb & 0xff) as u8);
-    }
-
-    if loop_count >= 0 {
-        output.extend_from_slice(&[
-            0x21, 0xff, 0x0b, b'N', b'E', b'T', b'S', b'C', b'A', b'P', b'E', b'2', b'.', b'0',
-            0x03, 0x01,
-        ]);
-        push_u16_le(&mut output, loop_count as u16);
-        output.push(0);
-    }
-
-    REUSABLE_LZW_TABLES.with(|tables| {
-        let mut tables = tables.borrow_mut();
-        for (frame_index, frame) in index_stream.chunks_exact(frame_len).enumerate() {
-            write_indexed_gif_frame_header(
-                &mut output,
-                0,
-                0,
-                width,
-                height,
-                delays.get(frame_index),
-                transparent_index,
-                if transparent_index.is_some() { 2 } else { 0 },
-            );
-            encode_indexed_lzw_to_with_tables(
-                &mut output,
-                frame,
-                min_code_size,
-                color_count,
-                &mut tables,
-            )?;
-        }
-        Ok::<(), String>(())
-    })?;
-
-    output.push(0x3b);
-    Ok(output)
-}
-
-#[allow(clippy::too_many_arguments)]
 fn encode_indexed_literal_gif_inner(
     index_stream: &[u8],
     width: u16,
@@ -10494,29 +10328,7 @@ fn write_reencoded_frame_header(
     });
 }
 
-fn encode_indexed_delta_gif_inner(
-    index_stream: &[u8],
-    width: u16,
-    height: u16,
-    frame_count: usize,
-    palette_rgb: &[u32],
-    delays: DelaySource<'_>,
-    loop_count: i32,
-) -> Result<Vec<u8>, String> {
-    encode_indexed_gif_inner_with_rects(
-        index_stream,
-        width,
-        height,
-        frame_count,
-        palette_rgb,
-        delays,
-        loop_count,
-        true,
-        None,
-        false,
-    )
-}
-
+#[allow(clippy::too_many_arguments)]
 fn encode_indexed_literal_delta_gif_inner(
     index_stream: &[u8],
     width: u16,
@@ -10525,60 +10337,8 @@ fn encode_indexed_literal_delta_gif_inner(
     palette_rgb: &[u32],
     delays: DelaySource<'_>,
     loop_count: i32,
-) -> Result<Vec<u8>, String> {
-    encode_indexed_gif_inner_with_rects(
-        index_stream,
-        width,
-        height,
-        frame_count,
-        palette_rgb,
-        delays,
-        loop_count,
-        true,
-        None,
-        true,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn encode_indexed_gif_inner_with_rects(
-    index_stream: &[u8],
-    width: u16,
-    height: u16,
-    frame_count: usize,
-    palette_rgb: &[u32],
-    delays: DelaySource<'_>,
-    loop_count: i32,
-    deltas: bool,
     transparent_index: Option<u8>,
-    literal: bool,
 ) -> Result<Vec<u8>, String> {
-    if !deltas {
-        return if literal {
-            encode_indexed_literal_gif_inner(
-                index_stream,
-                width,
-                height,
-                frame_count,
-                palette_rgb,
-                delays,
-                loop_count,
-                transparent_index,
-            )
-        } else {
-            encode_indexed_gif_inner(
-                index_stream,
-                width,
-                height,
-                frame_count,
-                palette_rgb,
-                delays,
-                loop_count,
-                transparent_index,
-            )
-        };
-    }
-
     if width == 0 || height == 0 {
         return Err("Width/Height invalid".to_string());
     }
@@ -10611,7 +10371,6 @@ fn encode_indexed_gif_inner_with_rects(
     let mut output = Vec::with_capacity(
         13 + palette_bytes + 20 + frame_count.saturating_mul(estimated_frame_bytes) + 1,
     );
-    let mut lzw_tables = (!literal).then(LzwEncodeTables::new);
     let mut rect_scratch = Vec::new();
 
     write_indexed_gif_header(&mut output, width, height, palette_rgb, color_count);
@@ -10633,34 +10392,20 @@ fn encode_indexed_gif_inner_with_rects(
                     0,
                 );
                 let rect_length = rect.width * rect.height;
-                if literal {
-                    rect_scratch.clear();
-                    if rect_scratch.capacity() < rect_length {
-                        rect_scratch.reserve(rect_length - rect_scratch.capacity());
-                    }
-                    for row in 0..rect.height {
-                        let start = (rect.y + row) * canvas_width + rect.x;
-                        rect_scratch.extend_from_slice(&frame[start..start + rect.width]);
-                    }
-                    encode_indexed_literal_lzw_direct_to(
-                        &mut output,
-                        &rect_scratch,
-                        min_code_size,
-                        color_count,
-                    )?;
-                } else {
-                    encode_indexed_lzw_rect_to(
-                        &mut output,
-                        frame,
-                        rect.y * canvas_width + rect.x,
-                        rect.width,
-                        rect.height,
-                        canvas_width,
-                        min_code_size,
-                        color_count,
-                        lzw_tables.as_mut().unwrap(),
-                    )?;
+                rect_scratch.clear();
+                if rect_scratch.capacity() < rect_length {
+                    rect_scratch.reserve(rect_length - rect_scratch.capacity());
                 }
+                for row in 0..rect.height {
+                    let start = (rect.y + row) * canvas_width + rect.x;
+                    rect_scratch.extend_from_slice(&frame[start..start + rect.width]);
+                }
+                encode_indexed_literal_lzw_direct_to(
+                    &mut output,
+                    &rect_scratch,
+                    min_code_size,
+                    color_count,
+                )?;
             } else {
                 write_indexed_gif_frame_header(
                     &mut output,
@@ -10693,22 +10438,7 @@ fn encode_indexed_gif_inner_with_rects(
                 transparent_index,
                 0,
             );
-            if literal {
-                encode_indexed_literal_lzw_direct_to(
-                    &mut output,
-                    frame,
-                    min_code_size,
-                    color_count,
-                )?;
-            } else {
-                encode_indexed_lzw_to_with_tables(
-                    &mut output,
-                    frame,
-                    min_code_size,
-                    color_count,
-                    lzw_tables.as_mut().unwrap(),
-                )?;
-            }
+            encode_indexed_literal_lzw_direct_to(&mut output, frame, min_code_size, color_count)?;
         }
         previous_frame = Some(frame);
     }
@@ -10812,38 +10542,6 @@ fn push_u16_le(output: &mut Vec<u8>, value: u16) {
     output.push((value >> 8) as u8);
 }
 
-struct LzwEncodeTables {
-    entries: Vec<u32>,
-    epoch: u32,
-}
-
-impl LzwEncodeTables {
-    const fn new() -> Self {
-        Self {
-            entries: Vec::new(),
-            epoch: 0,
-        }
-    }
-
-    #[inline]
-    fn ensure_capacity(&mut self, color_count: usize) {
-        let required = (1usize << 12).saturating_mul(color_count);
-        debug_assert!(required <= LZW_DIRECT_ENTRY_COUNT);
-        if self.entries.len() < required {
-            self.entries.resize(required, 0);
-        }
-    }
-
-    fn reset(&mut self) -> u32 {
-        self.epoch = self.epoch.wrapping_add(1);
-        if self.epoch == 0 || self.epoch > LZW_ENTRY_EPOCH_MAX {
-            self.entries.fill(0);
-            self.epoch = 1;
-        }
-        self.epoch
-    }
-}
-
 struct LzwEncodeScratch {
     // JavaScript overwrites the complete requested byte range before any
     // encoder reads it. Keep the reusable input allocation uninitialized so
@@ -10852,19 +10550,13 @@ struct LzwEncodeScratch {
     // RGBA loads.
     input: Vec<std::mem::MaybeUninit<u32>>,
     output: Vec<u8>,
-    // Literal LZW, including the default arbitrary-RGBA path, never needs
-    // the 4 MiB dictionary. Allocate it only when a caller explicitly asks
-    // for dictionary compression.
-    tables: Option<LzwEncodeTables>,
 }
 
 reusable_cells! {
     static REUSABLE_LZW_SCRATCH: LzwEncodeScratch = LzwEncodeScratch {
             input: Vec::new(),
             output: Vec::new(),
-            tables: None,
         };
-    static REUSABLE_LZW_TABLES: LzwEncodeTables = LzwEncodeTables::new();
     static REUSABLE_GIF_OUTPUT: Vec<u8> = Vec::new();
     static REUSABLE_QUALITY_HISTOGRAM_U32: Vec<RgbHistogramBin32> = Vec::new();
     static REUSABLE_QUALITY_HISTOGRAM_U32_CLEAN: bool = true;
@@ -10878,55 +10570,29 @@ reusable_cells! {
     static REUSABLE_QUANTIZED_BYTES: Vec<u8> = Vec::new();
 }
 
-fn encode_indexed_lzw_inner(
+fn encode_indexed_literal_lzw_scratch_inner(
     index_stream: &[u8],
     min_code_size: u8,
     color_count: usize,
-) -> Result<Vec<u8>, String> {
-    encode_indexed_lzw_scratch_inner(index_stream, min_code_size, color_count, false)?;
-    Ok(REUSABLE_LZW_SCRATCH.with(|scratch| scratch.borrow().output.clone()))
-}
-
-fn encode_indexed_lzw_scratch_inner(
-    index_stream: &[u8],
-    min_code_size: u8,
-    color_count: usize,
-    literal: bool,
 ) -> Result<usize, String> {
     REUSABLE_LZW_SCRATCH.with(|scratch| {
         let mut scratch = scratch.borrow_mut();
-        let LzwEncodeScratch { output, tables, .. } = &mut *scratch;
+        let output = &mut scratch.output;
         output.clear();
         output.reserve(index_stream.len() / 2 + 16);
-        if literal {
-            encode_indexed_literal_lzw_direct_to(output, index_stream, min_code_size, color_count)?;
-        } else {
-            let tables = tables.get_or_insert_with(LzwEncodeTables::new);
-            encode_indexed_lzw_to_with_tables(
-                output,
-                index_stream,
-                min_code_size,
-                color_count,
-                tables,
-            )?;
-        }
+        encode_indexed_literal_lzw_direct_to(output, index_stream, min_code_size, color_count)?;
         Ok(output.len())
     })
 }
 
-fn encode_indexed_lzw_scratch_from_input_inner(
+fn encode_indexed_literal_lzw_scratch_from_input_inner(
     length: usize,
     min_code_size: u8,
     color_count: usize,
-    literal: bool,
 ) -> Result<usize, String> {
     REUSABLE_LZW_SCRATCH.with(|scratch| {
         let mut scratch = scratch.borrow_mut();
-        let LzwEncodeScratch {
-            input,
-            output,
-            tables,
-        } = &mut *scratch;
+        let LzwEncodeScratch { input, output } = &mut *scratch;
         if length > input.len() * std::mem::size_of::<u32>() {
             return Err("Indexed input scratch length exceeds capacity".to_string());
         }
@@ -10934,18 +10600,7 @@ fn encode_indexed_lzw_scratch_from_input_inner(
             unsafe { std::slice::from_raw_parts(input.as_ptr().cast::<u8>(), length) };
         output.clear();
         output.reserve(index_stream.len() / 2 + 16);
-        if literal {
-            encode_indexed_literal_lzw_direct_to(output, index_stream, min_code_size, color_count)?;
-        } else {
-            let tables = tables.get_or_insert_with(LzwEncodeTables::new);
-            encode_indexed_lzw_to_with_tables(
-                output,
-                index_stream,
-                min_code_size,
-                color_count,
-                tables,
-            )?;
-        }
+        encode_indexed_literal_lzw_direct_to(output, index_stream, min_code_size, color_count)?;
         Ok(output.len())
     })
 }
@@ -13348,564 +13003,6 @@ fn emit_raw_lzw_code(
         output.extend_from_slice(&(*bits as u32).to_le_bytes());
         *bits >>= 32;
         *bit_count -= 32;
-    }
-}
-
-fn encode_indexed_lzw_to_with_tables(
-    output: &mut Vec<u8>,
-    index_stream: &[u8],
-    min_code_size: u8,
-    color_count: usize,
-    tables: &mut LzwEncodeTables,
-) -> Result<(), String> {
-    encode_indexed_lzw_slice_to(output, index_stream, min_code_size, color_count, tables)
-}
-
-#[inline(always)]
-fn encode_indexed_lzw_slice_to(
-    output: &mut Vec<u8>,
-    index_stream: &[u8],
-    min_code_size: u8,
-    color_count: usize,
-    tables: &mut LzwEncodeTables,
-) -> Result<(), String> {
-    if min_code_size == 0 || min_code_size > 8 {
-        return Err(format!("Invalid LZW minimum code size {min_code_size}"));
-    }
-    if color_count == 0 || color_count > 256 {
-        return Err("Invalid color count".to_string());
-    }
-    if index_stream.is_empty() {
-        return Err("Indexed pixel stream is empty".to_string());
-    }
-    tables.ensure_capacity(color_count);
-    if min_code_size == 8 && color_count == 256 {
-        return encode_indexed_lzw_256_to(output, index_stream, tables);
-    }
-
-    output.push(min_code_size);
-    let mut sub_len_pos = output.len();
-    output.push(0);
-    let mut sub_len = 0u8;
-
-    let clear = 1usize << min_code_size;
-    let eoi = clear + 1;
-    let mut next_code = eoi + 1;
-    let mut code_size = usize::from(min_code_size) + 1;
-    let mut code_mask = (1usize << code_size) - 1;
-    let mut bits = 0u32;
-    let mut bit_count = 0usize;
-    let mut epoch = tables.reset();
-    let mut epoch_base = epoch << LZW_ENTRY_EPOCH_SHIFT;
-
-    emit_lzw_code(
-        output,
-        &mut sub_len_pos,
-        &mut sub_len,
-        &mut bits,
-        &mut bit_count,
-        code_size,
-        clear,
-    );
-
-    let mut ib = usize::from(index_stream[0]);
-    if ib >= color_count {
-        return Err("Pixel index out of range".to_string());
-    }
-
-    for &pixel in &index_stream[1..] {
-        let k = usize::from(pixel);
-        if k >= color_count {
-            return Err("Pixel index out of range".to_string());
-        }
-        let slot = ib * color_count + k;
-        let entry = tables.entries[slot];
-        if entry >= epoch_base {
-            ib = (entry & LZW_ENTRY_CODE_MASK) as usize;
-            continue;
-        }
-
-        emit_lzw_code(
-            output,
-            &mut sub_len_pos,
-            &mut sub_len,
-            &mut bits,
-            &mut bit_count,
-            code_size,
-            ib,
-        );
-        if next_code == 4096 {
-            emit_lzw_code(
-                output,
-                &mut sub_len_pos,
-                &mut sub_len,
-                &mut bits,
-                &mut bit_count,
-                code_size,
-                clear,
-            );
-            next_code = eoi + 1;
-            code_size = usize::from(min_code_size) + 1;
-            code_mask = (1usize << code_size) - 1;
-            epoch = tables.reset();
-            epoch_base = epoch << LZW_ENTRY_EPOCH_SHIFT;
-        } else {
-            if next_code > code_mask && code_size < 12 {
-                code_size += 1;
-                code_mask = (1usize << code_size) - 1;
-            }
-            tables.entries[slot] = epoch_base | next_code as u32;
-            next_code += 1;
-        }
-        ib = k;
-    }
-
-    emit_lzw_code(
-        output,
-        &mut sub_len_pos,
-        &mut sub_len,
-        &mut bits,
-        &mut bit_count,
-        code_size,
-        ib,
-    );
-    emit_lzw_code(
-        output,
-        &mut sub_len_pos,
-        &mut sub_len,
-        &mut bits,
-        &mut bit_count,
-        code_size,
-        eoi,
-    );
-    if bit_count > 0 {
-        push_lzw_byte(output, &mut sub_len_pos, &mut sub_len, (bits & 0xff) as u8);
-    }
-    output[sub_len_pos] = sub_len;
-    if sub_len > 0 {
-        output.push(0);
-    }
-    Ok(())
-}
-
-fn encode_indexed_lzw_256_to(
-    output: &mut Vec<u8>,
-    index_stream: &[u8],
-    tables: &mut LzwEncodeTables,
-) -> Result<(), String> {
-    tables.ensure_capacity(256);
-    output.push(8);
-    let mut sub_len_pos = output.len();
-    output.push(0);
-    let mut sub_len = 0u8;
-    let clear = 256usize;
-    let eoi = 257usize;
-    let mut next_code = 258usize;
-    let mut code_size = 9usize;
-    let mut bits = 0u32;
-    let mut bit_count = 0usize;
-    let mut epoch = tables.reset();
-    let mut epoch_base = epoch << LZW_ENTRY_EPOCH_SHIFT;
-
-    emit_lzw_code(
-        output,
-        &mut sub_len_pos,
-        &mut sub_len,
-        &mut bits,
-        &mut bit_count,
-        code_size,
-        clear,
-    );
-
-    let mut ib = usize::from(index_stream[0]);
-    for &pixel in &index_stream[1..] {
-        let k = usize::from(pixel);
-        let slot = (ib << 8) | k;
-        let entry = unsafe { *tables.entries.get_unchecked(slot) };
-        if entry >= epoch_base {
-            ib = (entry & LZW_ENTRY_CODE_MASK) as usize;
-            continue;
-        }
-
-        emit_lzw_code(
-            output,
-            &mut sub_len_pos,
-            &mut sub_len,
-            &mut bits,
-            &mut bit_count,
-            code_size,
-            ib,
-        );
-        if next_code == 4096 {
-            emit_lzw_code(
-                output,
-                &mut sub_len_pos,
-                &mut sub_len,
-                &mut bits,
-                &mut bit_count,
-                code_size,
-                clear,
-            );
-            next_code = 258;
-            code_size = 9;
-            epoch = tables.reset();
-            epoch_base = epoch << LZW_ENTRY_EPOCH_SHIFT;
-        } else {
-            if next_code == 512 || next_code == 1024 || next_code == 2048 {
-                code_size += 1;
-            }
-            unsafe {
-                *tables.entries.get_unchecked_mut(slot) = epoch_base | next_code as u32;
-            }
-            next_code += 1;
-        }
-        ib = k;
-    }
-
-    emit_lzw_code(
-        output,
-        &mut sub_len_pos,
-        &mut sub_len,
-        &mut bits,
-        &mut bit_count,
-        code_size,
-        ib,
-    );
-    emit_lzw_code(
-        output,
-        &mut sub_len_pos,
-        &mut sub_len,
-        &mut bits,
-        &mut bit_count,
-        code_size,
-        eoi,
-    );
-    if bit_count > 0 {
-        push_lzw_byte(output, &mut sub_len_pos, &mut sub_len, (bits & 0xff) as u8);
-    }
-    output[sub_len_pos] = sub_len;
-    if sub_len > 0 {
-        output.push(0);
-    }
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn encode_indexed_lzw_rect_to(
-    output: &mut Vec<u8>,
-    source: &[u8],
-    offset: usize,
-    width: usize,
-    height: usize,
-    stride: usize,
-    min_code_size: u8,
-    color_count: usize,
-    tables: &mut LzwEncodeTables,
-) -> Result<(), String> {
-    if width == 0 || height == 0 || stride < width {
-        return Err("Indexed pixel stream is empty".to_string());
-    }
-    let last_pixel_end = offset
-        .checked_add(
-            height
-                .saturating_sub(1)
-                .checked_mul(stride)
-                .and_then(|start| start.checked_add(width))
-                .ok_or_else(|| "Frame size overflow".to_string())?,
-        )
-        .ok_or_else(|| "Frame size overflow".to_string())?;
-    if last_pixel_end > source.len() {
-        return Err("Indexed pixel stream is empty".to_string());
-    }
-
-    let mut remaining = width * height;
-    let mut source_index = offset;
-    let mut row_remaining = width;
-    let row_skip = stride - width;
-    encode_indexed_lzw_source_to(
-        output,
-        remaining,
-        min_code_size,
-        color_count,
-        tables,
-        || {
-            if remaining == 0 {
-                return None;
-            }
-            let pixel = source.get(source_index).copied();
-            source_index += 1;
-            row_remaining -= 1;
-            remaining -= 1;
-            if row_remaining == 0 {
-                source_index += row_skip;
-                row_remaining = width;
-            }
-            pixel
-        },
-    )
-}
-
-fn encode_indexed_lzw_source_to<F>(
-    output: &mut Vec<u8>,
-    index_count: usize,
-    min_code_size: u8,
-    color_count: usize,
-    tables: &mut LzwEncodeTables,
-    mut next_pixel: F,
-) -> Result<(), String>
-where
-    F: FnMut() -> Option<u8>,
-{
-    if min_code_size == 0 || min_code_size > 8 {
-        return Err(format!("Invalid LZW minimum code size {min_code_size}"));
-    }
-    if color_count == 0 || color_count > 256 {
-        return Err("Invalid color count".to_string());
-    }
-    if index_count == 0 {
-        return Err("Indexed pixel stream is empty".to_string());
-    }
-    tables.ensure_capacity(color_count);
-
-    output.push(min_code_size);
-    let mut sub_len_pos = output.len();
-    output.push(0);
-    let mut sub_len = 0u8;
-
-    let clear = 1usize << min_code_size;
-    let eoi = clear + 1;
-    let mut next_code = eoi + 1;
-    let mut code_size = usize::from(min_code_size) + 1;
-    let mut code_mask = (1usize << code_size) - 1;
-    let mut bits = 0u32;
-    let mut bit_count = 0usize;
-
-    let mut epoch = tables.reset();
-
-    emit_lzw_code(
-        output,
-        &mut sub_len_pos,
-        &mut sub_len,
-        &mut bits,
-        &mut bit_count,
-        code_size,
-        clear,
-    );
-
-    let mut ib =
-        usize::from(next_pixel().ok_or_else(|| "Indexed pixel stream is empty".to_string())?);
-    if ib >= color_count {
-        return Err("Pixel index out of range".to_string());
-    }
-
-    for _ in 1..index_count {
-        let pixel = next_pixel().ok_or_else(|| "Indexed pixel stream is empty".to_string())?;
-        let k = usize::from(pixel);
-        if k >= color_count {
-            return Err("Pixel index out of range".to_string());
-        }
-
-        let slot = ib * color_count + k;
-        let entry = tables.entries[slot];
-        let found = (entry >> LZW_ENTRY_EPOCH_SHIFT == epoch)
-            .then_some((entry & LZW_ENTRY_CODE_MASK) as usize);
-
-        if let Some(code) = found {
-            if code < next_code {
-                ib = code;
-                continue;
-            }
-        }
-
-        emit_lzw_code(
-            output,
-            &mut sub_len_pos,
-            &mut sub_len,
-            &mut bits,
-            &mut bit_count,
-            code_size,
-            ib,
-        );
-
-        if next_code == 4096 {
-            emit_lzw_code(
-                output,
-                &mut sub_len_pos,
-                &mut sub_len,
-                &mut bits,
-                &mut bit_count,
-                code_size,
-                clear,
-            );
-            next_code = eoi + 1;
-            code_size = usize::from(min_code_size) + 1;
-            code_mask = (1usize << code_size) - 1;
-            epoch = tables.reset();
-        } else if min_code_size == 1 {
-            tables.entries[slot] = (epoch << LZW_ENTRY_EPOCH_SHIFT) | next_code as u32;
-            next_code += 1;
-            if next_code > code_mask && code_size < 12 {
-                code_size += 1;
-                code_mask = (1usize << code_size) - 1;
-            }
-        } else {
-            if next_code > code_mask && code_size < 12 {
-                code_size += 1;
-                code_mask = (1usize << code_size) - 1;
-            }
-            tables.entries[slot] = (epoch << LZW_ENTRY_EPOCH_SHIFT) | next_code as u32;
-            next_code += 1;
-        }
-
-        ib = k;
-    }
-
-    emit_lzw_code(
-        output,
-        &mut sub_len_pos,
-        &mut sub_len,
-        &mut bits,
-        &mut bit_count,
-        code_size,
-        ib,
-    );
-    emit_lzw_code(
-        output,
-        &mut sub_len_pos,
-        &mut sub_len,
-        &mut bits,
-        &mut bit_count,
-        code_size,
-        eoi,
-    );
-
-    if bit_count > 0 {
-        push_lzw_byte(output, &mut sub_len_pos, &mut sub_len, (bits & 0xff) as u8);
-    }
-
-    output[sub_len_pos] = sub_len;
-    if sub_len > 0 {
-        output.push(0);
-    }
-
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn encode_rgba_lzw_rect_to_palette(
-    output: &mut Vec<u8>,
-    rgba_stream: &[u8],
-    canvas_width: usize,
-    rect: ChangedRectU32,
-    mapper: &PaletteMapper<'_>,
-    min_code_size: u8,
-    color_count: usize,
-    tables: &mut LzwEncodeTables,
-) -> Result<(), String> {
-    let pixel_count = rect.width * rect.height;
-    let row_skip = (canvas_width - rect.width) * 4;
-    let pointer = rgba_stream.as_ptr();
-    let start = (rect.y * canvas_width + rect.x) * 4;
-    if mapper.palette_rgb.len() <= 16 {
-        let mut offset = start;
-        let mut row_remaining = rect.width;
-        let mut cache_keys = [u32::MAX; 16];
-        let mut cache_values = [0u8; 16];
-        return encode_indexed_lzw_source_to(
-            output,
-            pixel_count,
-            min_code_size,
-            color_count,
-            tables,
-            || {
-                let packed = unsafe {
-                    u32::from_le(std::ptr::read_unaligned(pointer.add(offset).cast::<u32>()))
-                };
-                offset += 4;
-                row_remaining -= 1;
-                if row_remaining == 0 {
-                    offset += row_skip;
-                    row_remaining = rect.width;
-                }
-                let rgb = packed & 0x00ff_ffff;
-                let slot = (rgb as usize).wrapping_mul(2_654_435_761) & 15;
-                let index = if cache_keys[slot] == rgb {
-                    cache_values[slot]
-                } else {
-                    let index =
-                        mapper.index_pixel(packed as u8, (packed >> 8) as u8, (packed >> 16) as u8);
-                    cache_keys[slot] = rgb;
-                    cache_values[slot] = index;
-                    index
-                };
-                Some(index)
-            },
-        );
-    }
-
-    let mut offset = start;
-    let mut row_remaining = rect.width;
-    let mut cached_rgb = u32::MAX;
-    let mut cached_index = 0u8;
-    encode_indexed_lzw_source_to(
-        output,
-        pixel_count,
-        min_code_size,
-        color_count,
-        tables,
-        || {
-            let packed = unsafe {
-                u32::from_le(std::ptr::read_unaligned(pointer.add(offset).cast::<u32>()))
-            };
-            offset += 4;
-            row_remaining -= 1;
-            if row_remaining == 0 {
-                offset += row_skip;
-                row_remaining = rect.width;
-            }
-            let rgb = packed & 0x00ff_ffff;
-            let index = if rgb == cached_rgb {
-                cached_index
-            } else {
-                let index =
-                    mapper.index_pixel(packed as u8, (packed >> 8) as u8, (packed >> 16) as u8);
-                cached_rgb = rgb;
-                cached_index = index;
-                index
-            };
-            Some(index)
-        },
-    )
-}
-
-#[inline(always)]
-fn emit_lzw_code(
-    output: &mut Vec<u8>,
-    sub_len_pos: &mut usize,
-    sub_len: &mut u8,
-    bits: &mut u32,
-    bit_count: &mut usize,
-    code_size: usize,
-    code: usize,
-) {
-    *bits |= ((code & 0xffff) as u32) << *bit_count;
-    *bit_count += code_size;
-    while *bit_count >= 8 {
-        push_lzw_byte(output, sub_len_pos, sub_len, (*bits & 0xff) as u8);
-        *bits >>= 8;
-        *bit_count -= 8;
-    }
-}
-
-#[inline(always)]
-fn push_lzw_byte(output: &mut Vec<u8>, sub_len_pos: &mut usize, sub_len: &mut u8, byte: u8) {
-    output.push(byte);
-    *sub_len = sub_len.wrapping_add(1);
-    if *sub_len == 255 {
-        output[*sub_len_pos] = 255;
-        *sub_len_pos = output.len();
-        output.push(0);
-        *sub_len = 0;
     }
 }
 

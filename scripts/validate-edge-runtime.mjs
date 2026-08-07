@@ -31,7 +31,6 @@ const source = `
 				frames: new Uint8Array([0, 1, 1, 0]),
 				palette: [0, 0xffffff],
 				backend: "wasm",
-				compression: "fast",
 			});
 			const remuxed = remuxGifPixelPerfect(sourceGif);
 			const retimed = compileGif(sourceGif)
@@ -64,7 +63,6 @@ const source = `
 					height: 17,
 					frames: rgba,
 					backend: "wasm",
-					compression: "fast",
 					quantization: "quality",
 					paletteMode: "local",
 				}),

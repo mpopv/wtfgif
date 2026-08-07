@@ -122,34 +122,12 @@ pub fn prepare_composited_delta_bgra(
 
 #[cfg(not(feature = "quality-only"))]
 #[wasm_bindgen]
-pub fn encode_indexed_lzw(
-    index_stream: &[u8],
-    min_code_size: u8,
-    color_count: usize,
-) -> Result<Vec<u8>, JsValue> {
-    encode_indexed_lzw_inner(index_stream, min_code_size, color_count)
-        .map_err(|message| JsValue::from_str(&message))
-}
-
-#[cfg(not(feature = "quality-only"))]
-#[wasm_bindgen]
-pub fn encode_indexed_lzw_scratch(
-    index_stream: &[u8],
-    min_code_size: u8,
-    color_count: usize,
-) -> Result<usize, JsValue> {
-    encode_indexed_lzw_scratch_inner(index_stream, min_code_size, color_count, false)
-        .map_err(|message| JsValue::from_str(&message))
-}
-
-#[cfg(not(feature = "quality-only"))]
-#[wasm_bindgen]
 pub fn encode_indexed_literal_lzw_scratch(
     index_stream: &[u8],
     min_code_size: u8,
     color_count: usize,
 ) -> Result<usize, JsValue> {
-    encode_indexed_lzw_scratch_inner(index_stream, min_code_size, color_count, true)
+    encode_indexed_literal_lzw_scratch_inner(index_stream, min_code_size, color_count)
         .map_err(|message| JsValue::from_str(&message))
 }
 
@@ -177,9 +155,8 @@ pub fn encode_indexed_lzw_scratch_from_input(
     length: usize,
     min_code_size: u8,
     color_count: usize,
-    literal: bool,
 ) -> Result<usize, JsValue> {
-    encode_indexed_lzw_scratch_from_input_inner(length, min_code_size, color_count, literal)
+    encode_indexed_literal_lzw_scratch_from_input_inner(length, min_code_size, color_count)
         .map_err(|message| JsValue::from_str(&message))
 }
 
@@ -193,30 +170,6 @@ pub fn indexed_lzw_scratch_ptr() -> usize {
 #[wasm_bindgen]
 pub fn wasm_memory() -> JsValue {
     wasm_bindgen::memory()
-}
-
-#[cfg(not(feature = "quality-only"))]
-#[wasm_bindgen]
-pub fn encode_indexed_gif(
-    index_stream: &[u8],
-    width: u16,
-    height: u16,
-    frame_count: usize,
-    palette_rgb: &[u32],
-    delay: u16,
-    loop_count: i32,
-) -> Result<Vec<u8>, JsValue> {
-    encode_indexed_gif_inner(
-        index_stream,
-        width,
-        height,
-        frame_count,
-        palette_rgb,
-        DelaySource::Constant(delay),
-        loop_count,
-        None,
-    )
-    .map_err(|message| JsValue::from_str(&message))
 }
 
 #[cfg(not(feature = "quality-only"))]
@@ -313,76 +266,6 @@ pub fn encode_indexed_literal_gif_with_delays(
 
 #[cfg(not(feature = "quality-only"))]
 #[wasm_bindgen]
-pub fn encode_indexed_gif_with_delays(
-    index_stream: &[u8],
-    width: u16,
-    height: u16,
-    frame_count: usize,
-    palette_rgb: &[u32],
-    delays: &[u16],
-    loop_count: i32,
-) -> Result<Vec<u8>, JsValue> {
-    encode_indexed_gif_inner(
-        index_stream,
-        width,
-        height,
-        frame_count,
-        palette_rgb,
-        DelaySource::PerFrame(delays),
-        loop_count,
-        None,
-    )
-    .map_err(|message| JsValue::from_str(&message))
-}
-
-#[cfg(not(feature = "quality-only"))]
-#[wasm_bindgen]
-pub fn encode_indexed_delta_gif(
-    index_stream: &[u8],
-    width: u16,
-    height: u16,
-    frame_count: usize,
-    palette_rgb: &[u32],
-    delay: u16,
-    loop_count: i32,
-) -> Result<Vec<u8>, JsValue> {
-    encode_indexed_delta_gif_inner(
-        index_stream,
-        width,
-        height,
-        frame_count,
-        palette_rgb,
-        DelaySource::Constant(delay),
-        loop_count,
-    )
-    .map_err(|message| JsValue::from_str(&message))
-}
-
-#[cfg(not(feature = "quality-only"))]
-#[wasm_bindgen]
-pub fn encode_indexed_delta_gif_with_delays(
-    index_stream: &[u8],
-    width: u16,
-    height: u16,
-    frame_count: usize,
-    palette_rgb: &[u32],
-    delays: &[u16],
-    loop_count: i32,
-) -> Result<Vec<u8>, JsValue> {
-    encode_indexed_delta_gif_inner(
-        index_stream,
-        width,
-        height,
-        frame_count,
-        palette_rgb,
-        DelaySource::PerFrame(delays),
-        loop_count,
-    )
-    .map_err(|message| JsValue::from_str(&message))
-}
-
-#[cfg(not(feature = "quality-only"))]
-#[wasm_bindgen]
 pub fn encode_indexed_literal_delta_gif(
     index_stream: &[u8],
     width: u16,
@@ -400,6 +283,7 @@ pub fn encode_indexed_literal_delta_gif(
         palette_rgb,
         DelaySource::Constant(delay),
         loop_count,
+        None,
     )
     .map_err(|message| JsValue::from_str(&message))
 }
@@ -423,33 +307,7 @@ pub fn encode_indexed_literal_delta_gif_with_delays(
         palette_rgb,
         DelaySource::PerFrame(delays),
         loop_count,
-    )
-    .map_err(|message| JsValue::from_str(&message))
-}
-
-#[cfg(not(feature = "quality-only"))]
-#[wasm_bindgen]
-pub fn encode_rgba_gif(
-    rgba_stream: &[u8],
-    width: u16,
-    height: u16,
-    frame_count: usize,
-    palette_rgb: &[u32],
-    delay: u16,
-    loop_count: i32,
-    deltas: bool,
-) -> Result<Vec<u8>, JsValue> {
-    encode_rgba_gif_inner(
-        rgba_stream,
-        width,
-        height,
-        frame_count,
-        palette_rgb,
-        DelaySource::Constant(delay),
-        loop_count,
-        deltas,
-        TRANSPARENT_ALPHA_THRESHOLD,
-        false,
+        None,
     )
     .map_err(|message| JsValue::from_str(&message))
 }
@@ -475,7 +333,6 @@ pub fn encode_rgba_literal_gif(
         loop_count,
         false,
         TRANSPARENT_ALPHA_THRESHOLD,
-        true,
     )
     .map_err(|message| JsValue::from_str(&message))
 }
@@ -502,7 +359,6 @@ pub fn encode_rgba_literal_gif_with_options(
         loop_count,
         false,
         alpha_threshold,
-        true,
     )
     .map_err(|message| JsValue::from_str(&message))
 }
@@ -528,7 +384,6 @@ pub fn encode_rgba_literal_delta_gif(
         loop_count,
         true,
         TRANSPARENT_ALPHA_THRESHOLD,
-        true,
     )
     .map_err(|message| JsValue::from_str(&message))
 }
@@ -555,35 +410,6 @@ pub fn encode_rgba_literal_delta_gif_with_options(
         loop_count,
         true,
         alpha_threshold,
-        true,
-    )
-    .map_err(|message| JsValue::from_str(&message))
-}
-
-#[cfg(not(feature = "quality-only"))]
-#[wasm_bindgen]
-pub fn encode_rgba_gif_with_options(
-    rgba_stream: &[u8],
-    width: u16,
-    height: u16,
-    frame_count: usize,
-    palette_rgb: &[u32],
-    delays: &[u16],
-    loop_count: i32,
-    deltas: bool,
-    alpha_threshold: u8,
-) -> Result<Vec<u8>, JsValue> {
-    encode_rgba_gif_inner(
-        rgba_stream,
-        width,
-        height,
-        frame_count,
-        palette_rgb,
-        DelaySource::PerFrame(delays),
-        loop_count,
-        deltas,
-        alpha_threshold,
-        false,
     )
     .map_err(|message| JsValue::from_str(&message))
 }
@@ -600,7 +426,6 @@ pub fn encode_rgba_gif_advanced(
     loop_count: i32,
     deltas: bool,
     alpha_threshold: u8,
-    literal: bool,
     quantization: u8,
     palette_mode: u8,
 ) -> Result<Vec<u8>, JsValue> {
@@ -618,7 +443,6 @@ pub fn encode_rgba_gif_advanced(
         loop_count,
         deltas,
         alpha_threshold,
-        literal,
         quantization,
         palette_mode,
     )
@@ -637,7 +461,6 @@ pub fn encode_rgba_gif_advanced_from_input(
     loop_count: i32,
     deltas: bool,
     alpha_threshold: u8,
-    literal: bool,
     quantization: u8,
     palette_mode: u8,
 ) -> Result<Vec<u8>, JsValue> {
@@ -668,7 +491,6 @@ pub fn encode_rgba_gif_advanced_from_input(
             loop_count,
             deltas,
             alpha_threshold,
-            literal,
             quantization,
             palette_mode,
         )
@@ -691,7 +513,6 @@ pub fn encode_rgba_gif_advanced_scratch_from_input(
     loop_count: i32,
     deltas: bool,
     alpha_threshold: u8,
-    literal: bool,
     quantization: u8,
     palette_mode: u8,
 ) -> Result<usize, JsValue> {
@@ -718,7 +539,6 @@ pub fn encode_rgba_gif_advanced_scratch_from_input(
         loop_count,
         deltas,
         alpha_threshold,
-        literal,
         quantization,
         palette_mode,
         output,

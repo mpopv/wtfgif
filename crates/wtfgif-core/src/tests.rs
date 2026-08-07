@@ -124,7 +124,7 @@ fn prepares_composited_rgba_and_bgra_frames() {
 fn direct_full_opaque_compositing_matches_per_frame_decode() {
     let palette = [0x000000, 0xff0000];
     let frames = [0, 1, 1, 0];
-    let gif = encode_indexed_gif_inner(
+    let gif = encode_indexed_literal_gif_inner(
         &frames,
         2,
         1,
@@ -179,10 +179,10 @@ fn prepares_composited_delta_stream() {
 
 #[test]
 fn encodes_indexed_lzw_code_stream() {
-    let encoded = encode_indexed_lzw_inner(&[1], 1, 2).unwrap();
-    assert_eq!(encoded, vec![1, 1, 0x36, 0]);
+    let encoded_length = encode_indexed_literal_lzw_scratch_inner(&[1], 2, 2).unwrap();
+    assert!(encoded_length > 0);
 
-    assert!(encode_indexed_lzw_inner(&[2], 1, 2)
+    assert!(encode_indexed_literal_lzw_scratch_inner(&[2], 2, 2)
         .unwrap_err()
         .contains("Pixel index out of range"));
 }
@@ -190,7 +190,7 @@ fn encodes_indexed_lzw_code_stream() {
 #[test]
 fn encodes_indexed_gif_frames() {
     let palette = [0x000000, 0xff0000, 0x00ff00];
-    let encoded = encode_indexed_gif_inner(
+    let encoded = encode_indexed_literal_gif_inner(
         &[1, 1, 1, 1, 2, 0, 0, 2],
         2,
         2,
@@ -220,12 +220,12 @@ fn encodes_indexed_gif_frames() {
 }
 
 #[test]
-fn encodes_full_256_color_lzw_stream() {
+fn encodes_full_256_color_literal_stream() {
     let palette: Vec<u32> = (0..256u32)
         .map(|value| (value << 16) | (value << 8) | value)
         .collect();
     let indices: Vec<u8> = (0..4096u32).map(|value| (value & 0xff) as u8).collect();
-    let encoded = encode_indexed_gif_inner(
+    let encoded = encode_indexed_literal_gif_inner(
         &indices,
         64,
         64,
@@ -385,7 +385,7 @@ fn direct_lzw_color_decoder_matches_palette_mapping() {
 }
 
 #[test]
-fn direct_lzw_color_decoder_matches_dictionary_stream() {
+fn direct_lzw_color_decoder_matches_literal_stream() {
     let indices: Vec<u8> = (0..8192u32)
         .map(|index| ((index * 17 + (index >> 3) * 5) & 255) as u8)
         .collect();
@@ -393,8 +393,7 @@ fn direct_lzw_color_decoder_matches_dictionary_stream() {
         .map(|index| 0xff00_0000 | (index << 16) | (index << 8) | index)
         .collect();
     let mut image_data = Vec::new();
-    let mut tables = LzwEncodeTables::new();
-    encode_indexed_lzw_to_with_tables(&mut image_data, &indices, 8, 256, &mut tables).unwrap();
+    encode_indexed_literal_lzw_direct_to(&mut image_data, &indices, 8, 256).unwrap();
     let mut payload = Vec::new();
     collect_image_data_into(&image_data, 0, &mut payload).unwrap();
 
@@ -421,7 +420,7 @@ fn direct_lzw_color_decoder_matches_dictionary_stream() {
 #[test]
 fn encodes_indexed_delta_gif_frames() {
     let palette = [0x000000, 0xff0000, 0x00ff00];
-    let encoded = encode_indexed_delta_gif_inner(
+    let encoded = encode_indexed_literal_delta_gif_inner(
         &[
             1, 1, 1, 1, //
             1, 2, 1, 1, //
@@ -433,6 +432,7 @@ fn encodes_indexed_delta_gif_frames() {
         &palette,
         DelaySource::Constant(4),
         0,
+        None,
     )
     .unwrap();
     let metadata = parse_metadata(&encoded).unwrap();
@@ -469,7 +469,6 @@ fn encodes_rgba_gif_frames_with_generated_exact_palette() {
         0,
         false,
         TRANSPARENT_ALPHA_THRESHOLD,
-        false,
     )
     .unwrap();
     let metadata = parse_metadata(&encoded).unwrap();
@@ -502,7 +501,6 @@ fn transparent_rgba_frames_restore_the_canvas() {
         0,
         false,
         TRANSPARENT_ALPHA_THRESHOLD,
-        true,
         RgbaQuantization::Fast,
         RgbaPaletteMode::Global,
     )
@@ -528,7 +526,6 @@ fn encodes_rgba_delta_gif_frames_with_provided_palette() {
         0,
         true,
         TRANSPARENT_ALPHA_THRESHOLD,
-        false,
     )
     .unwrap();
     let metadata = parse_metadata(&encoded).unwrap();
@@ -554,7 +551,7 @@ fn quantizes_rgba_gif_frames_when_exact_palette_overflows() {
         rgba.push(255);
     }
 
-    let encoded = encode_rgba_gif_inner(
+    let encoded = encode_rgba_gif_advanced_inner(
         &rgba,
         257,
         1,
@@ -564,7 +561,8 @@ fn quantizes_rgba_gif_frames_when_exact_palette_overflows() {
         -1,
         false,
         TRANSPARENT_ALPHA_THRESHOLD,
-        false,
+        RgbaQuantization::Fast,
+        RgbaPaletteMode::Global,
     )
     .unwrap();
     let metadata = parse_metadata(&encoded).unwrap();
@@ -580,7 +578,7 @@ fn quantizes_rgba_gif_frames_when_exact_palette_overflows() {
 }
 
 #[test]
-fn advanced_fast_compression_quantizes_arbitrary_rgba() {
+fn advanced_encoder_quantizes_arbitrary_rgba() {
     let mut rgba = Vec::new();
     for value in 0..1024u16 {
         rgba.extend_from_slice(&[
@@ -601,7 +599,6 @@ fn advanced_fast_compression_quantizes_arbitrary_rgba() {
         0,
         false,
         TRANSPARENT_ALPHA_THRESHOLD,
-        true,
         RgbaQuantization::Fast,
         RgbaPaletteMode::Global,
     )
@@ -1211,7 +1208,6 @@ fn local_palette_mode_preserves_independent_exact_frame_colors() {
         0,
         false,
         TRANSPARENT_ALPHA_THRESHOLD,
-        true,
         RgbaQuantization::Exact,
         RgbaPaletteMode::Local,
     )

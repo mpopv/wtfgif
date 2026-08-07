@@ -19,9 +19,6 @@ const targetSampleMs = Number(process.env.BENCH_TARGET_SAMPLE_MS ?? 10);
 const benchmark = process.argv[2] ?? "all";
 const outputKind =
 	process.env.BENCH_OUTPUT ?? (benchmark === "encode" ? "typed" : "array");
-const compression =
-	process.env.BENCH_COMPRESSION ??
-	(benchmark === "encode" ? "fast" : "balanced");
 const gifFilter = process.env.BENCH_GIF_FILTER;
 const encodeColorCounts = (process.env.BENCH_COLOR_COUNTS ?? "256")
 	.split(",")
@@ -33,9 +30,6 @@ if (!["all", "decode", "encode"].includes(benchmark)) {
 }
 if (!["array", "typed"].includes(outputKind)) {
 	throw new Error('BENCH_OUTPUT must be "array" or "typed"');
-}
-if (!["balanced", "fast"].includes(compression)) {
-	throw new Error('BENCH_COMPRESSION must be "balanced" or "fast"');
 }
 if (
 	encodeColorCounts.some(
@@ -193,7 +187,6 @@ function encodeAll(Writer, fixture) {
 				)
 			: [];
 	const writer = new Writer(output, fixture.width, fixture.height, {
-		compression,
 		loop: 0,
 		palette: fixture.palette,
 	});
@@ -270,7 +263,7 @@ if (benchmark === "all" || benchmark === "decode") {
 if (benchmark === "all" || benchmark === "encode") {
 	const encodeRatios = [];
 	printHeader(
-		`GifWriter: indexed frames -> GIF (${outputKind === "typed" ? "Uint8Array" : "number[]"} output, ${compression})`,
+		`GifWriter: indexed frames -> GIF (${outputKind === "typed" ? "Uint8Array" : "number[]"} output)`,
 		"fixture",
 	);
 	for (const colorCount of encodeColorCounts) {

@@ -547,7 +547,7 @@ function validateNativeIndexedGifEncoding() {
 	const width = 2;
 	const height = 2;
 	const encoded = toByteArray(
-		wasmCore.encode_indexed_gif(
+		wasmCore.encode_indexed_literal_gif(
 			new Uint8Array([1, 1, 1, 1, 2, 0, 0, 2]),
 			width,
 			height,
@@ -582,7 +582,7 @@ function validateNativeIndexedGifEncoding() {
 
 function validateNativeIndexedGifPerFrameDelays() {
 	const encoded = toByteArray(
-		wasmCore.encode_indexed_gif_with_delays(
+		wasmCore.encode_indexed_literal_gif_with_delays(
 			new Uint8Array([0, 1, 0]),
 			1,
 			1,
@@ -613,7 +613,7 @@ function validateNativeIndexedDeltaGifEncoding() {
 	frames.set(frame1, width * height * 2);
 
 	const encoded = toByteArray(
-		wasmCore.encode_indexed_delta_gif(
+		wasmCore.encode_indexed_literal_delta_gif(
 			frames,
 			width,
 			height,
@@ -649,7 +649,7 @@ function validateNativeIndexedDeltaGifPerFrameDelays() {
 	const width = 2;
 	const height = 2;
 	const encoded = toByteArray(
-		wasmCore.encode_indexed_delta_gif_with_delays(
+		wasmCore.encode_indexed_literal_delta_gif_with_delays(
 			new Uint8Array([
 				1,
 				1,
@@ -690,7 +690,7 @@ function validateNativeRgbaGifEncoding() {
 		255, 0, 0, 255, 255, 255, 0, 0, 255, 255, 0, 0, 255,
 	]);
 	const encoded = toByteArray(
-		wasmCore.encode_rgba_gif(
+		wasmCore.encode_rgba_literal_gif(
 			frames,
 			width,
 			height,
@@ -698,7 +698,6 @@ function validateNativeRgbaGifEncoding() {
 			new Uint32Array(),
 			5,
 			0,
-			false,
 		),
 	);
 	const omg = new OmgGifReader(encoded);
@@ -725,10 +724,10 @@ function validateNativeRgbaGifOptionsEncoding() {
 	const width = 2;
 	const height = 1;
 	const frames = new Uint8Array([
-		255, 0, 0, 64, 0, 0, 255, 255, 255, 0, 0, 255, 0, 0, 255, 255,
+		255, 0, 0, 255, 0, 0, 255, 255, 255, 0, 0, 255, 0, 0, 255, 255,
 	]);
 	const encoded = toByteArray(
-		wasmCore.encode_rgba_gif_with_options(
+		wasmCore.encode_rgba_literal_gif_with_options(
 			frames,
 			width,
 			height,
@@ -736,7 +735,6 @@ function validateNativeRgbaGifOptionsEncoding() {
 			new Uint32Array([0xff0000, 0x0000ff]),
 			new Uint16Array([4, 9]),
 			0,
-			false,
 			32,
 		),
 	);
@@ -775,7 +773,7 @@ function validateNativeRgbaDeltaGifEncoding() {
 	frames.set(frame1, frame0.length);
 
 	const encoded = toByteArray(
-		wasmCore.encode_rgba_gif(
+		wasmCore.encode_rgba_literal_delta_gif(
 			frames,
 			width,
 			height,
@@ -783,7 +781,6 @@ function validateNativeRgbaDeltaGifEncoding() {
 			new Uint32Array([0xff0000, 0x00ff00]),
 			0,
 			0,
-			true,
 		),
 	);
 	const omg = new OmgGifReader(encoded);

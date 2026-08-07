@@ -1,11 +1,79 @@
 # Benchmarks
 
-The headline benchmark measures the job an image-stitching app actually does:
-ordinary decoded images in, GIF bytes out.
+The default benchmark measures complete RGBA-to-GIF encoding across 10 real and
+synthetic workloads:
 
 ```bash
 npm run bench
 ```
+
+## Representative corpus
+
+Both implementations receive the same contiguous RGBA frames and must build a
+global adaptive palette of up to 256 colors, map every pixel, encode the same
+animation shape and delays, and return a complete GIF. Both use an alpha
+threshold of 179. The nearly-static fixture enables equivalent changed-frame
+rectangles on both implementations; the other fixtures encode full frames.
+
+The timed boundary is one synchronous encode after package loading and wtfgif
+Wasm initialization. Fifteen measured calls follow three warmups, and encoder
+order alternates by fixture and sample. Validation and quality measurement are
+outside the clock. Results below are medians on an Apple M3 Pro with Node.js
+22.23.2.
+
+| Fixture | Shape | wtfgif | image-q + omggif | Speedup | File-size ratio |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| MakeEmoji production sample | 128×128×8 | 0.528 ms | 96.471 ms | **182.81×** | 3.80× |
+| Photographic animation | 128×96×8 | 0.317 ms | 41.097 ms | **129.56×** | 1.84× |
+| Pixel art | 64×64×12 | 0.191 ms | 12.559 ms | **65.71×** | 6.35× |
+| Smooth gradients | 128×128×8 | 0.557 ms | 94.398 ms | **169.46×** | 8.00× |
+| Random noise | 128×128×8 | 0.599 ms | 72.663 ms | **121.36×** | 7.28× |
+| Transparency | 128×128×8 | 0.182 ms | 26.087 ms | **143.60×** | 20.85× |
+| Disjoint frame palettes | 128×128×8 | 0.379 ms | 38.548 ms | **101.79×** | 7.64× |
+| Nearly static animation | 128×128×12 | 0.688 ms | 48.406 ms | **70.34×** | 7.93× |
+| Tiny animation | 16×16×6 | 0.269 ms | 33.876 ms | **126.01×** | 1.17× |
+| One-megapixel animation | 512×512×4 | 1.869 ms | 492.747 ms | **263.68×** | 22.74× |
+
+The observed range is 65.71×–263.68×, with a 127.02× geometric-mean speedup.
+The corresponding files are 1.17×–22.74× larger, with a 6.23× geometric mean.
+This is the library's intended tradeoff: encode latency takes priority over
+compression ratio.
+
+The baseline uses image-q `rgbquant` palette generation and nearest-color
+mapping followed by omggif LZW. wtfgif uses its global quality quantizer and
+literal LZW. The algorithms can select different indexed pixels, so the receipt
+reports output bytes, opaque-source RGB PSNR, and per-frame SSIM after binary
+alpha compositing against black. Every output is decoded and checked for shape,
+frame count, delays, and exact binary alpha before it is accepted.
+
+[`benchmarks/corpus.json`](benchmarks/corpus.json) records all raw samples,
+medians, p95 values, output hashes, quality values, fixture hashes and
+provenance, package-lock hash, commit, dirty state, and runtime environment.
+The corpus covers real small images, photographic content, flat pixel art,
+gradients, noise, transparency, disjoint frame palettes, changed rectangles,
+tiny animations, and a one-megapixel workload. Add the optional three-megapixel
+fixture with `npm run bench:corpus:stress`.
+
+## Independent correctness checks
+
+```bash
+npm run test:conformance:independent
+npm run test:conformance:browsers
+npm run fuzz:smoke
+```
+
+The independent conformance check encodes every corpus fixture with scalar and
+SIMD Wasm, requires byte-for-byte agreement between them, and validates the
+results through both omggif and Sharp/libvips. The browser check compares the
+first rendered frame from Chromium, Firefox, and WebKit with the independent
+decoder pixels. Property tests cover 200 deterministic arbitrary indexed and
+RGBA animations. Bounded libFuzzer targets exercise malformed decoding and
+encode-then-decode round trips; the local smoke check runs 500 cases per target.
+
+CI is configured for Node 20 and 22 on Linux, Node 22 on macOS and Windows, all
+three browser engines on Linux, and weekly 10,000-case fuzz runs. These checks
+support file validity and rendering compatibility; they do not make the two
+quantizers pixel-identical.
 
 ## Browser encoder race
 
@@ -61,7 +129,7 @@ The raw gif.js outputs contain their package's normal zero padding after the
 GIF trailer. The benchmark reports those bytes as emitted and validates them
 with omggif, which accepts that widely tolerated padding.
 
-## Default: arbitrary RGBA images
+## Earlier single-workload measurements
 
 The committed workload is eight real images from MakeEmoji. Each image was
 aspect-fitted into a transparent 128×128 canvas, then stored as one contiguous
@@ -151,7 +219,7 @@ BENCH_COLOR_COUNTS=2,4,8,16,32,64,128,256 npm run bench:encode
 ```
 
 This is the direct `GifWriter` contract: 12 full 128×128 frames, a normal
-256-color global palette, typed output, and wtfgif `compression: "fast"`.
+256-color global palette, and typed output. wtfgif always uses literal LZW.
 
 | Implementation | Median | Bytes |
 | --- | ---: | ---: |

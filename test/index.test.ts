@@ -11,6 +11,40 @@ import type { Frame } from "../src/types";
 const gifsDir = join(__dirname, "gifs");
 const gifFiles = readdirSync(gifsDir).filter((file) => file.endsWith(".gif"));
 
+function expectGifSemanticsEqual(
+	actualGif: Uint8Array,
+	expectedGif: Uint8Array,
+) {
+	const actual = new OmgGifReader(actualGif);
+	const expected = new OmgGifReader(expectedGif);
+	expect(actual.width).toBe(expected.width);
+	expect(actual.height).toBe(expected.height);
+	expect(actual.numFrames()).toBe(expected.numFrames());
+	expect(actual.loopCount()).toBe(expected.loopCount());
+
+	const actualPixels = new Uint8Array(actual.width * actual.height * 4);
+	const expectedPixels = new Uint8Array(expected.width * expected.height * 4);
+	for (let frame = 0; frame < actual.numFrames(); frame += 1) {
+		const actualInfo = actual.frameInfo(frame);
+		const expectedInfo = expected.frameInfo(frame);
+		for (const field of [
+			"x",
+			"y",
+			"width",
+			"height",
+			"transparent_index",
+			"interlaced",
+			"delay",
+			"disposal",
+		] as const) {
+			expect(actualInfo[field]).toBe(expectedInfo[field]);
+		}
+		actual.decodeAndBlitFrameRGBA(frame, actualPixels);
+		expected.decodeAndBlitFrameRGBA(frame, expectedPixels);
+		expect(actualPixels).toStrictEqual(expectedPixels);
+	}
+}
+
 describe("GIF file inventory", () => {
 	test("discovers all GIF files in test directory", () => {
 		expect(gifFiles.length).toBeGreaterThan(0);
@@ -36,8 +70,7 @@ describe("Palette edge cases", () => {
 		});
 		wtfWriter.addFrame(0, 0, width, height, frame);
 		const wtfLen = wtfWriter.end();
-		expect(wtfLen).toBe(omgLen);
-		expect(bufWtf.slice(0, wtfLen)).toStrictEqual(bufOmg.slice(0, omgLen));
+		expectGifSemanticsEqual(bufWtf.slice(0, wtfLen), bufOmg.slice(0, omgLen));
 	});
 
 	test("two-color palette decodes correctly", () => {
@@ -197,8 +230,8 @@ describe("Pixel-perfect decoding compatibility", () => {
 	}
 });
 
-describe("GifWriter parity with omggif", () => {
-	test("encodes identical bytes", () => {
+describe("GifWriter compatibility with omggif", () => {
+	test("encodes equivalent pixels and metadata", () => {
 		const width = 2;
 		const height = 2;
 		const palette = [0x000000, 0xffffff, 0xff0000, 0x00ff00];
@@ -211,22 +244,12 @@ describe("GifWriter parity with omggif", () => {
 		const wtfWriter = new WtfGifWriter(bufWtf, width, height, { palette });
 		wtfWriter.addFrame(0, 0, width, height, frame);
 		const wtfLen = wtfWriter.end();
-		expect(wtfLen).toBe(omgLen);
 		const omgGif = bufOmg.slice(0, omgLen);
 		const wtfGif = bufWtf.slice(0, wtfLen);
-		expect(wtfGif).toStrictEqual(omgGif);
-
-		const omgReader = new OmgGifReader(omgGif);
-		const wtfReader = new WtfGifReader(wtfGif);
-		const len = width * height * 4;
-		const omgPixels = new Uint8Array(len);
-		const wtfPixels = new Uint8Array(len);
-		omgReader.decodeAndBlitFrameRGBA(0, omgPixels);
-		wtfReader.decodeAndBlitFrameRGBA(0, wtfPixels);
-		expect(wtfPixels).toStrictEqual(omgPixels);
+		expectGifSemanticsEqual(wtfGif, omgGif);
 	});
 
-	test("clears dictionary between frames", () => {
+	test("starts each literal frame with a fresh code stream", () => {
 		const width = 2;
 		const height = 2;
 		const palette = [0x000000, 0xffffff, 0xff0000, 0x00ff00];
@@ -248,7 +271,7 @@ describe("GifWriter parity with omggif", () => {
 		expect(wtfPixels).toStrictEqual(omgPixels);
 	});
 
-	test("encodes many small frames without stale dictionary entries", () => {
+	test("encodes many small literal frames", () => {
 		const width = 2;
 		const height = 2;
 		const palette = [0x000000, 0xffffff, 0xff0000, 0x00ff00];
@@ -307,8 +330,7 @@ describe("GifWriter parity with omggif", () => {
 		const wtfWriter = new WtfGifWriter(bufWtf, width, height);
 		wtfWriter.addFrame(0, 0, width, height, frame, { palette });
 		const wtfLen = wtfWriter.end();
-		expect(wtfLen).toBe(omgLen);
-		expect(bufWtf.slice(0, wtfLen)).toStrictEqual(bufOmg.slice(0, omgLen));
+		expectGifSemanticsEqual(bufWtf.slice(0, wtfLen), bufOmg.slice(0, omgLen));
 	});
 
 	test("supports explicit background index 0", () => {
@@ -355,8 +377,10 @@ describe("GifWriter parity with omggif", () => {
 		});
 		wtfWriter.addFrame(0, 0, width, height, frame);
 		const wtfLen = wtfWriter.end();
-		expect(wtfLen).toBe(omgLen);
-		expect(bufWtf.slice(0, wtfLen)).toStrictEqual(bufOmg.slice(0, omgLen));
+		const omgGif = bufOmg.slice(0, omgLen);
+		const wtfGif = bufWtf.slice(0, wtfLen);
+		expect(wtfGif[11]).toBe(1);
+		expectGifSemanticsEqual(wtfGif, omgGif);
 	});
 
 	test("multi-frame parity with transparency and looping", () => {
@@ -394,14 +418,9 @@ describe("GifWriter parity with omggif", () => {
 			transparent: 2,
 		});
 		const wtfLen = wtfWriter.end();
-		expect(wtfLen).toBe(omgLen);
 		const omgGif = bufOmg.slice(0, omgLen);
 		const wtfGif = bufWtf.slice(0, wtfLen);
-		expect(wtfGif).toStrictEqual(omgGif);
-
-		const omgReader = new OmgGifReader(omgGif);
-		const wtfReader = new WtfGifReader(wtfGif);
-		expect(wtfReader.loopCount()).toBe(omgReader.loopCount());
+		expectGifSemanticsEqual(wtfGif, omgGif);
 	});
 });
 

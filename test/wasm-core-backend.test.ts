@@ -200,7 +200,6 @@ describe("Rust/Wasm core decode backend", () => {
 			delay: 3,
 			backend: "wasm",
 			delta: true,
-			compression: "fast",
 		});
 		const reader = new GifReader(encoded);
 
@@ -322,7 +321,6 @@ describe("Rust/Wasm core decode backend", () => {
 			frames: indexedFrames,
 			palette,
 			delay: [3, 7],
-			compression: "fast",
 			backend: "wasm",
 		});
 		const rgbaFrames = new Uint8Array([
@@ -335,7 +333,6 @@ describe("Rust/Wasm core decode backend", () => {
 			frames: rgbaFrames,
 			palette,
 			delay: [3, 7],
-			compression: "fast",
 			backend: "wasm",
 		});
 
@@ -354,7 +351,7 @@ describe("Rust/Wasm core decode backend", () => {
 	});
 
 	maybeTest(
-		"quantizes arbitrary RGBA with independent compression and palette modes",
+		"quantizes arbitrary RGBA with independent quantization and palette modes",
 		() => {
 			const width = 16;
 			const height = 16;
@@ -375,7 +372,6 @@ describe("Rust/Wasm core decode backend", () => {
 				width,
 				height,
 				frames,
-				compression: "fast",
 				quantization: "fast",
 				backend: "wasm",
 			});
@@ -383,7 +379,6 @@ describe("Rust/Wasm core decode backend", () => {
 				width,
 				height,
 				frames,
-				compression: "fast",
 				quantization: "quality",
 				backend: "wasm",
 			});
@@ -391,7 +386,6 @@ describe("Rust/Wasm core decode backend", () => {
 				width,
 				height,
 				frames,
-				compression: "fast",
 				quantization: "exact",
 				paletteMode: "local",
 				backend: "wasm",
@@ -420,7 +414,6 @@ describe("Rust/Wasm core decode backend", () => {
 					width: 1,
 					height: 1,
 					frames: new Uint8Array([1, 2, 3, 128]),
-					compression: "fast",
 					quantization: "exact",
 					backend: "wasm",
 				}),
@@ -431,7 +424,6 @@ describe("Rust/Wasm core decode backend", () => {
 					height: 1,
 					palette: [0x000000, 0xffffff],
 					frames: new Uint8Array([1, 2, 3, 255]),
-					compression: "fast",
 					quantization: "exact",
 					backend: "wasm",
 				}),
@@ -498,7 +490,6 @@ describe("Rust/Wasm core decode backend", () => {
 			palette: [0xff0000, 0x00ff00],
 			backend: "wasm",
 			delta: true,
-			compression: "fast",
 		});
 		const reader = new GifReader(encoded);
 		const decoded = new Uint8Array(width * height * 4);

@@ -2,6 +2,20 @@
 
 All notable changes to wtfgif are documented here.
 
+## Unreleased
+
+- Make encoding latency the only compression policy. Remove the public
+  `compression` option and delete the balanced dictionary encoder from the
+  JavaScript, Rust, Wasm, and native paths; all encoders now use literal LZW.
+- Replace the default single-fixture benchmark with a reproducible 10-fixture
+  corpus covering real images, photographic content, pixel art, gradients,
+  noise, transparency, disjoint palettes, changed rectangles, tiny animations,
+  and a one-megapixel workload. Record raw samples, p95, output hashes, file
+  sizes, PSNR, SSIM, provenance, and environment metadata.
+- Add independent omggif and Sharp/libvips conformance checks, Chromium,
+  Firefox, and WebKit rendering checks, deterministic property tests, bounded
+  decoder and encoder fuzz targets, and macOS/Windows/browser/fuzz CI jobs.
+
 ## 3.0.6 - 2026-08-07
 
 - Reduce quality-encoder overhead by claiming the embedded Wasm allocator
