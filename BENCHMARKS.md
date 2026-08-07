@@ -203,16 +203,5 @@ animations whose frames are all full-canvas and opaque. On the same tenor GIF,
 wtfgif (**24.41×**).
 That optimization does not change the drop-in reader's frame-by-frame contract.
 
-## Browser racer
-
-The [live racer](https://mpopv.github.io/wtfgif/) uses the same eight-image
-workload by default and also accepts multiple PNG, JPEG, or WebP uploads. Its
-Encode and Decode modes keep arbitrary-image encoding separate from GIF
-decoding.
-
-Browser results vary with device, browser, thermal state, and background load.
-Speedup ratios are generally more useful than raw milliseconds, but neither is
-universal.
-
 The old process-startup diagnostic remains available as `npm run bench:cold`.
 It measures a different contract and is intentionally not the headline race.

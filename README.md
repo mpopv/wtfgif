@@ -125,5 +125,4 @@ Full conditions and additional results are in [BENCHMARKS.md](BENCHMARKS.md).
 - `GifReader` and `GifWriter` are compatible with the equivalent `omggif` APIs
   if you need lower-level palette and frame control.
 
-[Try the browser demo](https://mpopv.github.io/wtfgif/) ·
 [Benchmarks](BENCHMARKS.md) · [MIT license](LICENSE)

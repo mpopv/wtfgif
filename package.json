@@ -78,7 +78,6 @@
 	},
 	"scripts": {
 		"build": "tsup && tsc -p tsconfig.json --emitDeclarationOnly && node scripts/copy-wasm-core.mjs",
-		"build:site": "node scripts/build-site.mjs",
 		"build:wasm": "npm run build:wasm:node && npm run build:wasm:web && npm run build:wasm:quality && npm run build:wasm:simd && npm run build:wasm:simd:quality",
 		"build:wasm:node": "wasm-pack build crates/wtfgif-core --target nodejs --out-dir pkg --release",
 		"build:wasm:web": "wasm-pack build crates/wtfgif-core --target web --out-dir pkg-web --release",
