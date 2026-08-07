@@ -2,6 +2,7 @@ import type { WasmQualityCoreModule } from "../types";
 import { getWasmQualityCoreModule } from "../wasm/qualityRuntime";
 
 const DEFAULT_ALPHA_THRESHOLD = 128;
+const QUALITY_LOW_RES_BYTE_LIMIT = 1_000_000 * 4;
 
 let scratchModule: WasmQualityCoreModule | null = null;
 let scratchMemory: WebAssembly.Memory | null = null;
@@ -23,17 +24,27 @@ export interface EncodeRgbaGifFramesOptions {
 	alphaThreshold?: number;
 }
 
+export let encodeRgbaGifFrames: (
+	options: EncodeRgbaGifFramesOptions,
+) => Uint8Array = encodeRgbaGifFramesUnprepared;
+
 export function prepareQualityWasmEncoderModule(
 	module: WasmQualityCoreModule | null,
 ): void {
-	if (module === scratchModule && scratchMemory) return;
+	if (module === scratchModule && scratchMemory) {
+		encodeRgbaGifFrames = encodeRgbaGifFramesPrepared;
+		return;
+	}
 	scratchModule = module;
 	scratchMemory = module?.wasm_memory() ?? null;
 	scratchPointer = 0;
 	scratchCapacity = 0;
+	encodeRgbaGifFrames = scratchMemory
+		? encodeRgbaGifFramesPrepared
+		: encodeRgbaGifFramesUnprepared;
 }
 
-export function encodeRgbaGifFrames(
+function encodeRgbaGifFramesUnprepared(
 	options: EncodeRgbaGifFramesOptions,
 ): Uint8Array {
 	const module = getWasmQualityCoreModule();
@@ -41,14 +52,136 @@ export function encodeRgbaGifFrames(
 		throw new Error("The wtfgif WebAssembly encoder is not initialized.");
 	}
 	prepareQualityWasmEncoderModule(module);
+	return encodeRgbaGifFramesPrepared(options);
+}
+
+function encodeRgbaGifFramesPrepared(
+	options: EncodeRgbaGifFramesOptions,
+): Uint8Array {
+	const module = scratchModule!;
 
 	const width = options.width | 0;
 	const height = options.height | 0;
+	const frameByteSize = width * height * 4;
+	const frames = options.frames;
+	const requestedDelay = options.delay;
+	const framesAreUint8 = frames instanceof Uint8Array;
+	if (
+		(framesAreUint8 || frames instanceof Uint8ClampedArray) &&
+		(requestedDelay === undefined || typeof requestedDelay === "number")
+	) {
+		const frameCount =
+			(options.frameCount === undefined
+				? frames.length / frameByteSize
+				: options.frameCount) | 0;
+		const inputLength = frameByteSize * frameCount;
+		const delay = (requestedDelay ?? 0) | 0;
+		const loop = (options.loop ?? -1) | 0;
+		const alphaThreshold =
+			(options.alphaThreshold ?? DEFAULT_ALPHA_THRESHOLD) | 0;
+		if (
+			(width - 1) >>> 0 >= 65535 ||
+			(height - 1) >>> 0 >= 65535 ||
+			frameCount <= 0 ||
+			frames.length !== inputLength ||
+			delay >>> 0 > 65535 ||
+			(loop !== -1 && loop >>> 0 > 65535) ||
+			alphaThreshold >>> 0 > 255
+		) {
+			throwInvalidContiguousOptions(
+				width,
+				height,
+				frames.length,
+				inputLength,
+				frameCount,
+				delay,
+				loop,
+				alphaThreshold,
+			);
+		}
+		const memory = scratchMemory!;
+		if (scratchCapacity < inputLength) {
+			scratchPointer = module.indexed_lzw_input_scratch_reserve(inputLength);
+			scratchCapacity = inputLength;
+		}
+		new Uint8Array(memory.buffer, scratchPointer, inputLength).set(
+			framesAreUint8
+				? frames
+				: new Uint8Array(frames.buffer, frames.byteOffset, frames.byteLength),
+		);
+		const outputLength =
+			inputLength <= QUALITY_LOW_RES_BYTE_LIMIT
+				? module.encode_rgba_quality_low_res_constant_delay_scratch_from_input(
+						inputLength,
+						width,
+						height,
+						frameCount,
+						delay,
+						loop,
+						alphaThreshold,
+					)
+				: module.encode_rgba_quality_gif_constant_delay_scratch_from_input(
+						inputLength,
+						width,
+						height,
+						frameCount,
+						delay,
+						loop,
+						alphaThreshold,
+					);
+		if (outputLength === 0) throw new Error("Wasm quality encoding failed.");
+		return new Uint8Array(
+			memory.buffer,
+			module.gif_output_scratch_ptr(),
+			outputLength,
+		).slice();
+	}
 	if (width <= 0 || height <= 0 || width > 65535 || height > 65535) {
 		throw new Error("Width/Height invalid.");
 	}
 
-	const frameByteSize = width * height * 4;
+	return encodeRgbaGifFramesFallback(
+		options,
+		module,
+		width,
+		height,
+		frameByteSize,
+	);
+}
+
+function throwInvalidContiguousOptions(
+	width: number,
+	height: number,
+	frameBytes: number,
+	inputLength: number,
+	frameCount: number,
+	delay: number,
+	loop: number,
+	alphaThreshold: number,
+): never {
+	if (width <= 0 || height <= 0 || width > 65535 || height > 65535) {
+		throw new Error("Width/Height invalid.");
+	}
+	if (frameCount <= 0 || frameBytes !== inputLength) {
+		throw new Error("RGBA frame stream length does not match dimensions.");
+	}
+	if (delay < 0 || delay > 65535) throw new Error("Delay invalid.");
+	if ((loop < 0 && loop !== -1) || loop > 65535) {
+		throw new Error("Loop count invalid.");
+	}
+	if (alphaThreshold < 0 || alphaThreshold > 255) {
+		throw new Error("Alpha threshold invalid.");
+	}
+	throw new Error("Invalid encode options.");
+}
+
+function encodeRgbaGifFramesFallback(
+	options: EncodeRgbaGifFramesOptions,
+	module: WasmQualityCoreModule,
+	width: number,
+	height: number,
+	frameByteSize: number,
+): Uint8Array {
 	const frameCount = getFrameCount(
 		options.frames,
 		frameByteSize,
@@ -65,18 +198,15 @@ export function encodeRgbaGifFrames(
 		"Alpha threshold invalid.",
 	);
 
-	if (!scratchMemory) {
+	const memory = scratchMemory;
+	if (!memory) {
 		throw new Error("The wtfgif WebAssembly encoder has no memory export.");
 	}
 	if (scratchCapacity < inputLength) {
 		scratchPointer = module.indexed_lzw_input_scratch_reserve(inputLength);
 		scratchCapacity = inputLength;
 	}
-	const input = new Uint8Array(
-		scratchMemory.buffer,
-		scratchPointer,
-		inputLength,
-	);
+	const input = new Uint8Array(memory.buffer, scratchPointer, inputLength);
 	copyFrames(input, options.frames, frameByteSize, frameCount);
 	let delayCount = 0;
 	if (typeof delay !== "number") {
@@ -85,20 +215,30 @@ export function encodeRgbaGifFrames(
 			inputLength,
 			delayCount,
 		);
-		new Uint16Array(scratchMemory.buffer, delayPointer, delayCount).set(delay);
+		new Uint16Array(memory.buffer, delayPointer, delayCount).set(delay);
 	}
 
 	const outputLength =
 		typeof delay === "number"
-			? module.encode_rgba_quality_gif_constant_delay_scratch_from_input(
-					inputLength,
-					width,
-					height,
-					frameCount,
-					delay,
-					loop,
-					alphaThreshold,
-				)
+			? inputLength <= QUALITY_LOW_RES_BYTE_LIMIT
+				? module.encode_rgba_quality_low_res_constant_delay_scratch_from_input(
+						inputLength,
+						width,
+						height,
+						frameCount,
+						delay,
+						loop,
+						alphaThreshold,
+					)
+				: module.encode_rgba_quality_gif_constant_delay_scratch_from_input(
+						inputLength,
+						width,
+						height,
+						frameCount,
+						delay,
+						loop,
+						alphaThreshold,
+					)
 			: module.encode_rgba_quality_gif_scratch_from_input(
 					inputLength,
 					width,
@@ -110,7 +250,7 @@ export function encodeRgbaGifFrames(
 				);
 	if (outputLength === 0) throw new Error("Wasm quality encoding failed.");
 	return new Uint8Array(
-		scratchMemory.buffer,
+		memory.buffer,
 		module.gif_output_scratch_ptr(),
 		outputLength,
 	).slice();

@@ -739,6 +739,62 @@ pub fn encode_rgba_gif_advanced_scratch_from_input(
 /// scalar delay scalar across the Wasm boundary avoids allocating a temporary
 /// per-frame delay array for the common animation API.
 #[wasm_bindgen]
+pub fn encode_rgba_quality_low_res_constant_delay_scratch_from_input(
+    length: usize,
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    delay: u16,
+    loop_count: i32,
+    alpha_threshold: u8,
+) -> usize {
+    let input_ptr = REUSABLE_LZW_SCRATCH.with(|scratch| {
+        let scratch = scratch.borrow();
+        (length <= scratch.input.len() * std::mem::size_of::<u32>())
+            .then(|| scratch.input.as_ptr().cast::<u8>())
+    });
+    let Some(input_ptr) = input_ptr else {
+        return 0;
+    };
+    let rgba_stream = unsafe { std::slice::from_raw_parts(input_ptr, length) };
+    debug_assert!(rgba_stream.len() % 4 == 0);
+    debug_assert!(rgba_stream.len() / 4 <= QUALITY_LOW_RES_PIXEL_LIMIT);
+    let output = REUSABLE_GIF_OUTPUT.with(|scratch| std::mem::take(&mut *scratch.borrow_mut()));
+    let encoded = if quality_low_res_exact_is_impossible(rgba_stream, alpha_threshold) {
+        encode_rgba_quality_low_res_quantized_gif_inner_with_output::<true>(
+            rgba_stream,
+            width,
+            height,
+            frame_count,
+            DelaySource::Constant(delay),
+            delay,
+            loop_count,
+            alpha_threshold,
+            output,
+        )
+    } else {
+        encode_rgba_quality_low_res_exact_gif_inner_with_output(
+            rgba_stream,
+            width,
+            height,
+            frame_count,
+            DelaySource::Constant(delay),
+            loop_count,
+            alpha_threshold,
+            output,
+        )
+    };
+    let Ok(encoded) = encoded else {
+        return 0;
+    };
+    let length = encoded.len();
+    REUSABLE_GIF_OUTPUT.with(|scratch| {
+        *scratch.borrow_mut() = encoded;
+    });
+    length
+}
+
+#[wasm_bindgen]
 pub fn encode_rgba_quality_gif_constant_delay_scratch_from_input(
     length: usize,
     width: u16,
@@ -762,12 +818,13 @@ pub fn encode_rgba_quality_gif_constant_delay_scratch_from_input(
         rgba_stream.len() % 4 == 0 && rgba_stream.len() / 4 <= QUALITY_LOW_RES_PIXEL_LIMIT;
     let encoded = if low_res {
         if quality_low_res_exact_is_impossible(rgba_stream, alpha_threshold) {
-            encode_rgba_quality_low_res_quantized_gif_inner_with_output(
+            encode_rgba_quality_low_res_quantized_gif_inner_with_output::<true>(
                 rgba_stream,
                 width,
                 height,
                 frame_count,
                 DelaySource::Constant(delay),
+                delay,
                 loop_count,
                 alpha_threshold,
                 output,
@@ -861,12 +918,13 @@ pub fn encode_rgba_quality_gif_scratch_from_input(
         rgba_stream.len() % 4 == 0 && rgba_stream.len() / 4 <= QUALITY_LOW_RES_PIXEL_LIMIT;
     let encoded = if low_res {
         if quality_low_res_exact_is_impossible(rgba_stream, alpha_threshold) {
-            encode_rgba_quality_low_res_quantized_gif_inner_with_output(
+            encode_rgba_quality_low_res_quantized_gif_inner_with_output::<false>(
                 rgba_stream,
                 width,
                 height,
                 frame_count,
                 DelaySource::PerFrame(delays),
+                0,
                 loop_count,
                 alpha_threshold,
                 output,

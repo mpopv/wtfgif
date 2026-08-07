@@ -28,6 +28,9 @@ if (feature) {
 }
 
 const env = { ...process.env };
+if (feature === "quality-only") {
+	env.CARGO_PROFILE_RELEASE_OPT_LEVEL = "2";
+}
 if (variant === "simd") {
 	const currentFlags = env.RUSTFLAGS?.trim();
 	env.RUSTFLAGS = [

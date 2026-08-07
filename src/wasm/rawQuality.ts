@@ -22,7 +22,18 @@ const nodeRequire = (() => {
 
 type RawQualityExports = WebAssembly.Exports & {
 	memory: WebAssembly.Memory;
+	__wbindgen_externrefs: WebAssembly.Table;
+	__wbindgen_start: () => void;
 	indexed_lzw_input_scratch_reserve: (length: number) => number;
+	encode_rgba_quality_low_res_constant_delay_scratch_from_input: (
+		length: number,
+		width: number,
+		height: number,
+		frameCount: number,
+		delay: number,
+		loopCount: number,
+		alphaThreshold: number,
+	) => number;
 	quality_delay_scratch_reserve: (
 		inputLength: number,
 		delayCount: number,
@@ -57,8 +68,16 @@ function isMissing(error: unknown): boolean {
 function wasmImports(getRaw: () => RawQualityExports | undefined) {
 	return {
 		"./wtfgif_core_bg.js": {
-			__wbg___wbindgen_memory_fbc4c3e30b409f08: () => getRaw()?.memory,
-			__wbindgen_cast_0000000000000001: (value: unknown) => value,
+			__wbindgen_init_externref_table: () => {
+				const table = getRaw()?.__wbindgen_externrefs;
+				if (!table) throw new Error("Wasm externref table is unavailable.");
+				const offset = table.grow(4);
+				table.set(0, undefined);
+				table.set(offset, undefined);
+				table.set(offset + 1, null);
+				table.set(offset + 2, true);
+				table.set(offset + 3, false);
+			},
 		},
 	};
 }
@@ -67,28 +86,14 @@ function createRawQualityModule(raw: RawQualityExports): WasmQualityCoreModule {
 	const memory = raw.memory;
 	return {
 		indexed_lzw_input_scratch_reserve: raw.indexed_lzw_input_scratch_reserve,
+		encode_rgba_quality_low_res_constant_delay_scratch_from_input:
+			raw.encode_rgba_quality_low_res_constant_delay_scratch_from_input,
 		quality_delay_scratch_reserve: raw.quality_delay_scratch_reserve,
 		wasm_memory: () => memory,
 		encode_rgba_quality_gif_scratch_from_input:
 			raw.encode_rgba_quality_gif_scratch_from_input,
-		encode_rgba_quality_gif_constant_delay_scratch_from_input: (
-			length: number,
-			width: number,
-			height: number,
-			frameCount: number,
-			delay: number,
-			loopCount: number,
-			alphaThreshold: number,
-		) =>
-			raw.encode_rgba_quality_gif_constant_delay_scratch_from_input(
-				length,
-				width,
-				height,
-				frameCount,
-				delay,
-				loopCount,
-				alphaThreshold,
-			),
+		encode_rgba_quality_gif_constant_delay_scratch_from_input:
+			raw.encode_rgba_quality_gif_constant_delay_scratch_from_input,
 		gif_output_scratch_ptr: raw.gif_output_scratch_ptr,
 	};
 }
@@ -100,6 +105,7 @@ function loadRawNode(path: string): WasmQualityCoreModule {
 		new WebAssembly.Module(bytes),
 		wasmImports(() => raw),
 	).exports as RawQualityExports;
+	raw.__wbindgen_start();
 	return createRawQualityModule(raw);
 }
 

@@ -2,6 +2,23 @@
 
 All notable changes to wtfgif are documented here.
 
+## 3.0.4 - 2026-08-06
+
+- Make the first real arbitrary-RGBA encode after initialized Wasm **100.26x**
+  faster than image-q + omggif (123.448 ms vs 1.231 ms) across 500 fresh
+  processes with zero encode warmups. The initialized path is **298.94x**
+  faster (94.302 ms vs 0.315 ms).
+- Reduce first-call work with single-thread Wasm scratch cells, a specialized
+  constant-delay low-resolution path, tighter JavaScript validation, converged
+  Wasm optimization, and faster literal GIF packetization. Decoded pixels,
+  palette quality, transparency, and frame delays are unchanged; the new packet
+  layout adds 72 bytes (0.048%) to the eight-frame fixture.
+- Refresh the six-library browser race: wtfgif encodes the same eight real
+  images in 1.545 ms, making the alternatives **62.05x to 85.13x slower**.
+  Full validation passes 144 JavaScript/Wasm tests, 44 core Rust tests, both
+  encode-only Rust tests, every Wasm variant, edge-runtime validation, and
+  packaged ESM, CommonJS, browser-global, and browser-Wasm checks.
+
 ## 3.0.3 - 2026-08-06
 
 - Reduce the first real arbitrary-RGBA encode by simplifying the quality-only

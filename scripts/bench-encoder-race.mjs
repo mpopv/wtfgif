@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { createRequire } from "node:module";
 import { cpus, platform, release, tmpdir } from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
@@ -13,6 +14,9 @@ import { renderEncoderRaceChart } from "./render-encoder-race-chart.mjs";
 
 const execFileAsync = promisify(execFile);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const biomeCli = createRequire(import.meta.url).resolve(
+	"@biomejs/biome/bin/biome",
+);
 const iterations = Number(process.env.BENCH_RACE_ITERATIONS ?? 15);
 const timeoutMs = Number(process.env.BENCH_RACE_TIMEOUT_MS ?? 60_000);
 const saveOutputs = process.env.BENCH_RACE_SAVE_GIFS === "1";
@@ -392,15 +396,19 @@ try {
 		mkdir(benchmarksDirectory, { recursive: true }),
 		mkdir(docsDirectory, { recursive: true }),
 	]);
+	const receiptPath = path.join(benchmarksDirectory, "encoder-race.json");
 	await Promise.all([
-		writeFile(
-			path.join(benchmarksDirectory, "encoder-race.json"),
-			`${JSON.stringify(receipt, null, "\t")}\n`,
-		),
+		writeFile(receiptPath, `${JSON.stringify(receipt, null, "\t")}\n`),
 		writeFile(
 			path.join(docsDirectory, "encoder-race.svg"),
 			renderEncoderRaceChart(receipt),
 		),
+	]);
+	await execFileAsync(process.execPath, [
+		biomeCli,
+		"format",
+		"--write",
+		receiptPath,
 	]);
 
 	console.log(

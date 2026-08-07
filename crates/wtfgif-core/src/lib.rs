@@ -2,6 +2,114 @@
 
 use wasm_bindgen::prelude::*;
 
+#[cfg(all(
+    feature = "quality-only",
+    target_arch = "wasm32",
+    not(target_feature = "atomics")
+))]
+struct WasmSingleThreadCell<T>(std::cell::UnsafeCell<T>);
+
+#[cfg(all(
+    feature = "quality-only",
+    target_arch = "wasm32",
+    not(target_feature = "atomics")
+))]
+struct WasmSingleThreadBorrowMut<'a, T>(&'a mut T);
+
+#[cfg(all(
+    feature = "quality-only",
+    target_arch = "wasm32",
+    not(target_feature = "atomics")
+))]
+impl<T> std::ops::Deref for WasmSingleThreadBorrowMut<'_, T> {
+    type Target = T;
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        self.0
+    }
+}
+
+#[cfg(all(
+    feature = "quality-only",
+    target_arch = "wasm32",
+    not(target_feature = "atomics")
+))]
+impl<T> std::ops::DerefMut for WasmSingleThreadBorrowMut<'_, T> {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0
+    }
+}
+
+#[cfg(all(
+    feature = "quality-only",
+    target_arch = "wasm32",
+    not(target_feature = "atomics")
+))]
+unsafe impl<T> Sync for WasmSingleThreadCell<T> {}
+
+#[cfg(all(
+    feature = "quality-only",
+    target_arch = "wasm32",
+    not(target_feature = "atomics")
+))]
+impl<T> WasmSingleThreadCell<T> {
+    const fn new(value: T) -> Self {
+        Self(std::cell::UnsafeCell::new(value))
+    }
+
+    #[inline(always)]
+    fn with<R>(&self, callback: impl FnOnce(&Self) -> R) -> R {
+        callback(self)
+    }
+
+    #[inline(always)]
+    fn borrow(&self) -> &T {
+        // The quality-only Wasm build has neither threads nor callbacks into
+        // JavaScript while a scratch value is borrowed.
+        unsafe { &*self.0.get() }
+    }
+
+    #[inline(always)]
+    fn borrow_mut(&self) -> WasmSingleThreadBorrowMut<'_, T> {
+        // See `borrow`: exports use each scratch cell synchronously and never
+        // retain a reference across another access to the same cell.
+        WasmSingleThreadBorrowMut(unsafe { &mut *self.0.get() })
+    }
+
+    #[inline(always)]
+    fn replace(&self, value: T) -> T {
+        std::mem::replace(&mut *self.borrow_mut(), value)
+    }
+}
+
+#[cfg(all(
+    feature = "quality-only",
+    target_arch = "wasm32",
+    not(target_feature = "atomics")
+))]
+macro_rules! reusable_cells {
+    ($(static $name:ident: $value_type:ty = $value:expr;)+) => {
+        $(static $name: WasmSingleThreadCell<$value_type> =
+            WasmSingleThreadCell::new($value);)+
+    };
+}
+
+#[cfg(not(all(
+    feature = "quality-only",
+    target_arch = "wasm32",
+    not(target_feature = "atomics")
+)))]
+macro_rules! reusable_cells {
+    ($(static $name:ident: $value_type:ty = $value:expr;)+) => {
+        std::thread_local! {
+            $(static $name: std::cell::RefCell<$value_type> =
+                const { std::cell::RefCell::new($value) };)+
+        }
+    };
+}
+
 #[cfg(all(not(target_feature = "atomics"), target_family = "wasm"))]
 const WASM_ALLOCATOR_ARENA_BYTES: usize = 1024 * 1024;
 
@@ -23,7 +131,7 @@ unsafe impl talc::source::Source for WasmArenaThenGrow {
     ) -> Result<(), ()> {
         if talc.source.arena_available {
             talc.source.arena_available = false;
-            let arena = unsafe { std::ptr::addr_of_mut!(WASM_ALLOCATOR_ARENA).cast::<u8>() };
+            let arena = std::ptr::addr_of_mut!(WASM_ALLOCATOR_ARENA).cast::<u8>();
             if unsafe { talc.claim(arena, WASM_ALLOCATOR_ARENA_BYTES) }.is_some() {
                 return Ok(());
             }
@@ -3803,7 +3911,7 @@ struct ColorIndexTable {
 const COLOR_INDEX_EMPTY: u32 = 0x00ff_01fe;
 
 impl ColorIndexTable {
-    fn empty() -> Self {
+    const fn empty() -> Self {
         Self {
             entries: Vec::new(),
             mask: 0,
@@ -4108,13 +4216,14 @@ fn encode_rgba_quality_gif_inner_with_output(
                 && plan.histogram_bits == 4
                 && plan.mapping_bits == 4 =>
         {
-            encode_quality_four_bit_index_plan_literal_gif(
+            encode_quality_four_bit_index_plan_literal_gif::<false>(
                 output,
                 rgba_stream,
                 width,
                 height,
                 frame_count,
                 delays,
+                0,
                 loop_count,
                 alpha_threshold,
                 plan,
@@ -4140,12 +4249,13 @@ fn encode_rgba_quality_gif_inner_with_output(
 /// before entering here; less common inputs stay on the complete dispatcher.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-fn encode_rgba_quality_low_res_quantized_gif_inner_with_output(
+fn encode_rgba_quality_low_res_quantized_gif_inner_with_output<const CONSTANT_DELAY: bool>(
     rgba_stream: &[u8],
     width: u16,
     height: u16,
     frame_count: usize,
     delays: DelaySource<'_>,
+    constant_delay: u16,
     loop_count: i32,
     alpha_threshold: u8,
     output: Vec<u8>,
@@ -4168,13 +4278,14 @@ fn encode_rgba_quality_low_res_quantized_gif_inner_with_output(
         && plan.histogram_bits == 4
         && plan.mapping_bits == 4
     {
-        encode_quality_four_bit_index_plan_literal_gif(
+        encode_quality_four_bit_index_plan_literal_gif::<CONSTANT_DELAY>(
             output,
             rgba_stream,
             width,
             height,
             frame_count,
             delays,
+            constant_delay,
             loop_count,
             alpha_threshold,
             plan,
@@ -4252,13 +4363,14 @@ fn encode_rgba_quality_low_res_exact_gif_inner_with_output(
 /// for retained 5-bit cells and short palettes into the first-call graph.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-fn encode_quality_four_bit_index_plan_literal_gif(
+fn encode_quality_four_bit_index_plan_literal_gif<const CONSTANT_DELAY: bool>(
     mut output: Vec<u8>,
     rgba_stream: &[u8],
     width: u16,
     height: u16,
     frame_count: usize,
     delays: DelaySource<'_>,
+    constant_delay: u16,
     loop_count: i32,
     alpha_threshold: u8,
     plan: QualityIndexPlan,
@@ -4276,26 +4388,71 @@ fn encode_quality_four_bit_index_plan_literal_gif(
     debug_assert_eq!(histogram_bits, 4);
     debug_assert_eq!(mapping_bits, 4);
 
+    #[cfg(target_arch = "wasm32")]
+    let frame_len = usize::from(width) * usize::from(height);
+    #[cfg(not(target_arch = "wasm32"))]
     let frame_len = usize::from(width)
         .checked_mul(usize::from(height))
         .ok_or_else(|| "Frame size overflow".to_string())?;
+    #[cfg(not(target_arch = "wasm32"))]
     let expected_len = frame_len
         .checked_mul(frame_count)
         .and_then(|pixels| pixels.checked_mul(4))
         .ok_or_else(|| "RGBA frame stream overflow".to_string())?;
+    #[cfg(target_arch = "wasm32")]
+    debug_assert_eq!(rgba_stream.len(), frame_len * frame_count * 4);
+    #[cfg(not(target_arch = "wasm32"))]
     if rgba_stream.len() != expected_len {
         return Err("RGBA frame stream length does not match dimensions".to_string());
     }
+    #[cfg(target_arch = "wasm32")]
+    let lzw_length = {
+        const LITERALS_PER_BLOCK: usize = 223;
+        const FULL_BLOCK_BYTES: usize = 252;
+        let full_blocks = frame_len / LITERALS_PER_BLOCK;
+        let remainder = frame_len % LITERALS_PER_BLOCK;
+        let tail_code_count = remainder + 1 + usize::from(full_blocks == 0 || remainder != 0);
+        full_blocks * (FULL_BLOCK_BYTES + 1) + (tail_code_count * 9).div_ceil(8) + 3
+    };
+    #[cfg(not(target_arch = "wasm32"))]
     let lzw_length = mapped_quality_literal_lzw_block_size(frame_len)?;
-    let frame_capacity = (0..frame_count).try_fold(0usize, |capacity, frame_index| {
+    #[cfg(target_arch = "wasm32")]
+    let frame_capacity = if CONSTANT_DELAY {
         let graphic_control_length =
-            usize::from(delays.get(frame_index) != 0 || transparent_index.is_some()) * 8;
+            usize::from(constant_delay != 0 || transparent_index.is_some()) * 8;
+        frame_count * (10 + graphic_control_length + lzw_length)
+    } else {
+        let mut capacity = 0usize;
+        for frame_index in 0..frame_count {
+            let graphic_control_length =
+                usize::from(delays.get(frame_index) != 0 || transparent_index.is_some()) * 8;
+            capacity += 10 + graphic_control_length + lzw_length;
+        }
         capacity
-            .checked_add(10)
-            .and_then(|length| length.checked_add(graphic_control_length))
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    let frame_capacity = if CONSTANT_DELAY {
+        let graphic_control_length =
+            usize::from(constant_delay != 0 || transparent_index.is_some()) * 8;
+        10usize
+            .checked_add(graphic_control_length)
             .and_then(|length| length.checked_add(lzw_length))
-            .ok_or_else(|| "Encoded GIF size overflow".to_string())
-    })?;
+            .and_then(|length| length.checked_mul(frame_count))
+            .ok_or_else(|| "Encoded GIF size overflow".to_string())?
+    } else {
+        (0..frame_count).try_fold(0usize, |capacity, frame_index| {
+            let graphic_control_length =
+                usize::from(delays.get(frame_index) != 0 || transparent_index.is_some()) * 8;
+            capacity
+                .checked_add(10)
+                .and_then(|length| length.checked_add(graphic_control_length))
+                .and_then(|length| length.checked_add(lzw_length))
+                .ok_or_else(|| "Encoded GIF size overflow".to_string())
+        })?
+    };
+    #[cfg(target_arch = "wasm32")]
+    let output_capacity = 13 + 256 * 3 + usize::from(loop_count >= 0) * 19 + frame_capacity + 1;
+    #[cfg(not(target_arch = "wasm32"))]
     let output_capacity = 13usize
         .checked_add(256 * 3)
         .and_then(|length| length.checked_add(usize::from(loop_count >= 0) * 19))
@@ -4310,14 +4467,24 @@ fn encode_quality_four_bit_index_plan_literal_gif(
     write_loop_extension(&mut output, loop_count);
     for frame_index in 0..frame_count {
         let frame_start = frame_index * frame_len * 4;
+        #[cfg(target_arch = "wasm32")]
+        let frame = unsafe {
+            std::slice::from_raw_parts(rgba_stream.as_ptr().add(frame_start), frame_len * 4)
+        };
+        #[cfg(not(target_arch = "wasm32"))]
         let frame = &rgba_stream[frame_start..frame_start + frame_len * 4];
+        let frame_delay = if CONSTANT_DELAY {
+            constant_delay
+        } else {
+            delays.get(frame_index)
+        };
         write_indexed_gif_frame_header(
             &mut output,
             0,
             0,
             width,
             height,
-            delays.get(frame_index),
+            frame_delay,
             transparent_index,
             if transparent_index.is_some() { 2 } else { 0 },
         );
@@ -5037,9 +5204,11 @@ fn encode_rgba_delta_gif_to_palette_inner(
     let mapper = PaletteMapper::new(palette_rgb);
     let literal_small_palette = !literal && palette_rgb.len() <= 16;
     let mut lzw_tables = (!literal && !literal_small_palette).then(LzwEncodeTables::new);
-    let mut mapped = (literal || literal_small_palette)
-        .then(|| Vec::with_capacity(frame_pixels))
-        .unwrap_or_default();
+    let mut mapped = if literal || literal_small_palette {
+        Vec::with_capacity(frame_pixels)
+    } else {
+        Vec::new()
+    };
 
     write_indexed_gif_header(&mut output, width, height, palette_rgb, color_count);
     write_loop_extension(&mut output, loop_count);
@@ -5406,7 +5575,7 @@ impl QuantizedColorBox {
         } else {
             2
         };
-        let midpoint = (self.weight + 1) / 2;
+        let midpoint = self.weight.div_ceil(2);
         let split_index = weighted_axis_split_index(&mut self.colors, axis, midpoint);
         let (left_stats, right_stats) = quantized_color_split_stats(&self.colors, split_index);
         let right = self.colors.split_off(split_index);
@@ -5521,10 +5690,8 @@ struct QuantizedColorArenaBox {
     blue_range: u8,
 }
 
-thread_local! {
-    static REUSABLE_QUANTIZED_COLOR_BOXES:
-        std::cell::RefCell<Vec<QuantizedColorArenaBox>> =
-        const { std::cell::RefCell::new(Vec::new()) };
+reusable_cells! {
+    static REUSABLE_QUANTIZED_COLOR_BOXES: Vec<QuantizedColorArenaBox> = Vec::new();
 }
 
 impl QuantizedColorArenaBox {
@@ -5571,7 +5738,7 @@ impl QuantizedColorArenaBox {
         } else {
             2
         };
-        let midpoint = (self.weight + 1) / 2;
+        let midpoint = self.weight.div_ceil(2);
         let (relative_split, left_stats, right_stats) =
             weighted_axis_split_index_with_stats(&mut colors[self.start..self.end], axis, midpoint);
         let split = self.start + relative_split;
@@ -6056,7 +6223,9 @@ fn quality_colors_from_histogram_u32<const SAFE_SUMS: bool>(
         });
         *bin_slot = RgbHistogramBin32::default();
     }
-    REUSABLE_QUALITY_HISTOGRAM_U32_CLEAN.with(|clean| clean.set(true));
+    REUSABLE_QUALITY_HISTOGRAM_U32_CLEAN.with(|clean| {
+        clean.replace(true);
+    });
     colors
 }
 
@@ -6098,7 +6267,9 @@ fn quality_colors_from_histogram_u64(histogram: &mut [RgbHistogramBin]) -> Vec<Q
         });
         *bin_slot = RgbHistogramBin::default();
     }
-    REUSABLE_QUALITY_HISTOGRAM_U64_CLEAN.with(|clean| clean.set(true));
+    REUSABLE_QUALITY_HISTOGRAM_U64_CLEAN.with(|clean| {
+        clean.replace(true);
+    });
     colors
 }
 
@@ -6454,8 +6625,7 @@ fn take_quality_histogram_u32(length: usize) -> Vec<RgbHistogramBin32> {
         let mut histogram = std::mem::take(&mut *scratch.borrow_mut());
         if histogram.len() != length {
             histogram.resize(length, RgbHistogramBin32::default());
-        }
-        if !clean {
+        } else if !clean {
             histogram.fill(RgbHistogramBin32::default());
         }
         histogram
@@ -6467,7 +6637,9 @@ fn recycle_quality_histogram_u32(mut histogram: Vec<RgbHistogramBin32>) {
     if !clean {
         histogram.fill(RgbHistogramBin32::default());
     }
-    REUSABLE_QUALITY_HISTOGRAM_U32_CLEAN.with(|clean| clean.set(true));
+    REUSABLE_QUALITY_HISTOGRAM_U32_CLEAN.with(|clean| {
+        clean.replace(true);
+    });
     REUSABLE_QUALITY_HISTOGRAM_U32.with(|scratch| {
         *scratch.borrow_mut() = histogram;
     });
@@ -6479,8 +6651,7 @@ fn take_quality_histogram_u64(length: usize) -> Vec<RgbHistogramBin> {
         let mut histogram = std::mem::take(&mut *scratch.borrow_mut());
         if histogram.len() != length {
             histogram.resize(length, RgbHistogramBin::default());
-        }
-        if !clean {
+        } else if !clean {
             histogram.fill(RgbHistogramBin::default());
         }
         histogram
@@ -6492,7 +6663,9 @@ fn recycle_quality_histogram_u64(mut histogram: Vec<RgbHistogramBin>) {
     if !clean {
         histogram.fill(RgbHistogramBin::default());
     }
-    REUSABLE_QUALITY_HISTOGRAM_U64_CLEAN.with(|clean| clean.set(true));
+    REUSABLE_QUALITY_HISTOGRAM_U64_CLEAN.with(|clean| {
+        clean.replace(true);
+    });
     REUSABLE_QUALITY_HISTOGRAM_U64.with(|scratch| {
         *scratch.borrow_mut() = histogram;
     });
@@ -8928,9 +9101,8 @@ struct PaletteKdTree {
     root: u16,
 }
 
-thread_local! {
-    static REUSABLE_PALETTE_KD_NODES: std::cell::RefCell<Vec<PaletteKdNode>> =
-        const { std::cell::RefCell::new(Vec::new()) };
+reusable_cells! {
+    static REUSABLE_PALETTE_KD_NODES: Vec<PaletteKdNode> = Vec::new();
 }
 
 impl PaletteKdTree {
@@ -10028,7 +10200,25 @@ fn literal_lzw_block_size(pixel_count: usize, min_code_size: u8) -> Result<usize
 }
 
 fn mapped_quality_literal_lzw_block_size(pixel_count: usize) -> Result<usize, String> {
-    literal_lzw_block_size_with_interval(pixel_count, 9, 247)
+    const LITERALS_PER_BLOCK: usize = 223;
+    const FULL_BLOCK_BYTES: usize = 252;
+    let full_blocks = pixel_count / LITERALS_PER_BLOCK;
+    let remainder = pixel_count % LITERALS_PER_BLOCK;
+    let tail_codes = remainder
+        .checked_add(1)
+        .and_then(|codes| codes.checked_add(usize::from(full_blocks == 0 || remainder != 0)))
+        .ok_or_else(|| "Reencoded GIF size overflow".to_string())?;
+    let tail_bytes = tail_codes
+        .checked_mul(9)
+        .and_then(|bits| bits.checked_add(7))
+        .map(|bits| bits / 8)
+        .ok_or_else(|| "Reencoded GIF size overflow".to_string())?;
+    full_blocks
+        .checked_mul(FULL_BLOCK_BYTES + 1)
+        .and_then(|length| length.checked_add(tail_bytes))
+        // Minimum code size, tail sub-block length, and zero terminator.
+        .and_then(|length| length.checked_add(3))
+        .ok_or_else(|| "Reencoded GIF size overflow".to_string())
 }
 
 fn literal_lzw_block_size_with_interval(
@@ -10556,7 +10746,7 @@ struct LzwEncodeTables {
 }
 
 impl LzwEncodeTables {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             entries: Vec::new(),
             epoch: 0,
@@ -10596,37 +10786,24 @@ struct LzwEncodeScratch {
     tables: Option<LzwEncodeTables>,
 }
 
-std::thread_local! {
-    static REUSABLE_LZW_SCRATCH: std::cell::RefCell<LzwEncodeScratch> =
-        std::cell::RefCell::new(LzwEncodeScratch {
+reusable_cells! {
+    static REUSABLE_LZW_SCRATCH: LzwEncodeScratch = LzwEncodeScratch {
             input: Vec::new(),
             output: Vec::new(),
             tables: None,
-        });
-    static REUSABLE_LZW_TABLES: std::cell::RefCell<LzwEncodeTables> =
-        std::cell::RefCell::new(LzwEncodeTables::new());
-    static REUSABLE_GIF_OUTPUT: std::cell::RefCell<Vec<u8>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-    static REUSABLE_QUALITY_HISTOGRAM_U32: std::cell::RefCell<Vec<RgbHistogramBin32>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-    static REUSABLE_QUALITY_HISTOGRAM_U32_CLEAN: std::cell::Cell<bool> =
-        const { std::cell::Cell::new(true) };
-    static REUSABLE_QUALITY_HISTOGRAM_U64: std::cell::RefCell<Vec<RgbHistogramBin>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-    static REUSABLE_QUALITY_HISTOGRAM_U64_CLEAN: std::cell::Cell<bool> =
-        const { std::cell::Cell::new(true) };
-    static REUSABLE_QUALITY_HISTOGRAM_TO_PALETTE: std::cell::RefCell<Vec<u8>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-    static REUSABLE_QUALITY_COLORS: std::cell::RefCell<Vec<QuantizedColor>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-    static REUSABLE_QUALITY_PALETTE: std::cell::RefCell<Vec<u32>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-    static REUSABLE_QUALITY_COLOR_INDEX: std::cell::RefCell<ColorIndexTable> =
-        std::cell::RefCell::new(ColorIndexTable::empty());
-    static REUSABLE_QUANTIZED_INDEXED: std::cell::RefCell<Vec<u16>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-    static REUSABLE_QUANTIZED_BYTES: std::cell::RefCell<Vec<u8>> =
-        const { std::cell::RefCell::new(Vec::new()) };
+        };
+    static REUSABLE_LZW_TABLES: LzwEncodeTables = LzwEncodeTables::new();
+    static REUSABLE_GIF_OUTPUT: Vec<u8> = Vec::new();
+    static REUSABLE_QUALITY_HISTOGRAM_U32: Vec<RgbHistogramBin32> = Vec::new();
+    static REUSABLE_QUALITY_HISTOGRAM_U32_CLEAN: bool = true;
+    static REUSABLE_QUALITY_HISTOGRAM_U64: Vec<RgbHistogramBin> = Vec::new();
+    static REUSABLE_QUALITY_HISTOGRAM_U64_CLEAN: bool = true;
+    static REUSABLE_QUALITY_HISTOGRAM_TO_PALETTE: Vec<u8> = Vec::new();
+    static REUSABLE_QUALITY_COLORS: Vec<QuantizedColor> = Vec::new();
+    static REUSABLE_QUALITY_PALETTE: Vec<u32> = Vec::new();
+    static REUSABLE_QUALITY_COLOR_INDEX: ColorIndexTable = ColorIndexTable::empty();
+    static REUSABLE_QUANTIZED_INDEXED: Vec<u16> = Vec::new();
+    static REUSABLE_QUANTIZED_BYTES: Vec<u8> = Vec::new();
 }
 
 fn encode_indexed_lzw_inner(
@@ -11135,25 +11312,6 @@ impl DirectGifSubblockWriter<'_> {
     }
 
     #[inline(always)]
-    fn write_fixed_nine(&mut self, low: u64, high: u8) {
-        if self.block_remaining < 9 {
-            self.write_fixed_u64(low, 8);
-            self.write_byte(high);
-            return;
-        }
-        unsafe {
-            std::ptr::write_unaligned(
-                self.output.as_mut_ptr().add(self.position).cast::<u64>(),
-                low.to_le(),
-            );
-            self.output.as_mut_ptr().add(self.position + 8).write(high);
-        }
-        self.position += 9;
-        self.block_remaining -= 9;
-        self.raw_position += 9;
-    }
-
-    #[inline(always)]
     fn write_slice(&mut self, mut bytes: &[u8]) {
         while !bytes.is_empty() {
             if self.block_remaining == 0 {
@@ -11364,7 +11522,7 @@ fn encode_nine_bit_literal_lzw_palette_mapped_to(
     rgba_stream: &[u8],
     mapper: &PaletteMapper<'_>,
 ) -> Result<(), String> {
-    if rgba_stream.is_empty() || rgba_stream.len() % 4 != 0 {
+    if rgba_stream.is_empty() || !rgba_stream.len().is_multiple_of(4) {
         return Err("RGBA frame stream is empty or misaligned".to_string());
     }
     let pixel_count = rgba_stream.len() / 4;
@@ -11641,125 +11799,34 @@ fn expand_eight_literal_codes_to_nine_bits(packed_codes: u64) -> (u64, u8) {
 }
 
 #[inline(always)]
-fn write_eight_nine_bit_literal_codes(writer: &mut DirectGifSubblockWriter, packed_codes: u64) {
+unsafe fn write_eight_nine_bit_literal_codes_raw(output: *mut u8, packed_codes: u64) {
     let (low, high) = expand_eight_literal_codes_to_nine_bits(packed_codes);
-    writer.write_fixed_nine(low, high);
+    std::ptr::write_unaligned(output.cast::<u64>(), low.to_le());
+    output.add(8).write(high);
 }
 
 #[inline(always)]
-fn write_clear_and_seven_nine_bit_literal_codes(
-    writer: &mut DirectGifSubblockWriter,
-    packed_codes: u64,
-) {
+unsafe fn write_clear_and_seven_nine_bit_literal_codes_raw(output: *mut u8, packed_codes: u64) {
     let (low, high) = expand_eight_literal_codes_to_nine_bits(packed_codes << 8);
-    writer.write_fixed_nine(low | 256, high);
+    std::ptr::write_unaligned(output.cast::<u64>(), (low | 256).to_le());
+    output.add(8).write(high);
 }
 
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
-fn append_nine_bit_mapped_quality_group<const BITS: usize, const HAS_TRANSPARENT: bool>(
-    writer: &mut DirectGifSubblockWriter,
+unsafe fn append_nine_bit_literal_code_raw(
+    output: *mut u8,
+    position: &mut usize,
     bits: &mut u64,
     bit_count: &mut usize,
-    rgba_pointer: *const u8,
-    pixel_index: usize,
-    alpha_threshold: u8,
-    transparent_index: u8,
-    histogram_to_palette_pointer: *const u8,
+    code: u16,
 ) {
-    let rgba_offset = pixel_index * 4;
-    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
-    let (packed0, packed1) = unsafe { read_rgba_pair(rgba_pointer, rgba_offset) };
-    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
-    let (packed2, packed3) = unsafe { read_rgba_pair(rgba_pointer, rgba_offset + 8) };
-    let (packed4, packed5) = unsafe { read_rgba_pair(rgba_pointer, rgba_offset + 16) };
-    let packed6 = u32::from_le(unsafe {
-        std::ptr::read_unaligned(rgba_pointer.add(rgba_offset + 24).cast())
-    });
-    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-    let packed_codes03 = unsafe {
-        mapped_quality_four_pixels_simd::<BITS, HAS_TRANSPARENT>(
-            rgba_pointer.add(rgba_offset),
-            alpha_threshold,
-            histogram_to_palette_pointer,
-        )
-    };
-    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-    let code0 = packed_codes03 as u8;
-    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-    let code1 = (packed_codes03 >> 8) as u8;
-    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-    let code2 = (packed_codes03 >> 16) as u8;
-    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-    let code3 = (packed_codes03 >> 24) as u8;
-    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
-    let code0 = mapped_quality_pixel::<BITS, HAS_TRANSPARENT>(
-        packed0,
-        alpha_threshold,
-        transparent_index,
-        histogram_to_palette_pointer,
-    );
-    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
-    let code1 = mapped_quality_pixel::<BITS, HAS_TRANSPARENT>(
-        packed1,
-        alpha_threshold,
-        transparent_index,
-        histogram_to_palette_pointer,
-    );
-    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
-    let code2 = mapped_quality_pixel::<BITS, HAS_TRANSPARENT>(
-        packed2,
-        alpha_threshold,
-        transparent_index,
-        histogram_to_palette_pointer,
-    );
-    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
-    let code3 = mapped_quality_pixel::<BITS, HAS_TRANSPARENT>(
-        packed3,
-        alpha_threshold,
-        transparent_index,
-        histogram_to_palette_pointer,
-    );
-    let code4 = mapped_quality_pixel::<BITS, HAS_TRANSPARENT>(
-        packed4,
-        alpha_threshold,
-        transparent_index,
-        histogram_to_palette_pointer,
-    );
-    let code5 = mapped_quality_pixel::<BITS, HAS_TRANSPARENT>(
-        packed5,
-        alpha_threshold,
-        transparent_index,
-        histogram_to_palette_pointer,
-    );
-    let code6 = mapped_quality_pixel::<BITS, HAS_TRANSPARENT>(
-        packed6,
-        alpha_threshold,
-        transparent_index,
-        histogram_to_palette_pointer,
-    );
-    let packed_codes = u64::from(code0)
-        | (u64::from(code1) << 9)
-        | (u64::from(code2) << 18)
-        | (u64::from(code3) << 27)
-        | (u64::from(code4) << 36)
-        | (u64::from(code5) << 45)
-        | (u64::from(code6) << 54);
-    let combined = *bits | (packed_codes << *bit_count);
-    let total_bits = *bit_count + 63;
-    if total_bits >= 64 {
-        writer.write_fixed_u64(combined, 8);
-        *bits = if *bit_count == 0 {
-            0
-        } else {
-            packed_codes >> (64 - *bit_count)
-        };
-        *bit_count = total_bits - 64;
-    } else {
-        debug_assert_eq!(*bit_count, 0);
-        writer.write_fixed_u64(combined, 7);
-        *bits = combined >> 56;
-        *bit_count = total_bits - 56;
+    *bits |= u64::from(code) << *bit_count;
+    *bit_count += 9;
+    while *bit_count >= 8 {
+        output.add(*position).write(*bits as u8);
+        *position += 1;
+        *bits >>= 8;
+        *bit_count -= 8;
     }
 }
 
@@ -11773,39 +11840,46 @@ fn encode_nine_bit_literal_lzw_mapped_to<const BITS: usize, const HAS_TRANSPAREN
     transparent_index: u8,
     histogram_to_palette: &[u8],
 ) -> Result<(), String> {
-    if rgba_stream.is_empty() || rgba_stream.len() % 4 != 0 {
+    if rgba_stream.is_empty() || !rgba_stream.len().is_multiple_of(4) {
         return Err("RGBA frame stream is empty or misaligned".to_string());
     }
     let pixel_count = rgba_stream.len() / 4;
-    // 247 literals plus CLEAR are exactly 248 nine-bit codes, or 31
-    // byte-aligned groups of eight. This removes the rolling bit accumulator
-    // and scalar tail from every full reset interval while staying below the
-    // first LZW code-width transition.
-    const LITERALS_PER_CLEAR: usize = 247;
-    let clear_count = pixel_count.div_ceil(LITERALS_PER_CLEAR);
-    let raw_length = pixel_count
-        .checked_add(clear_count)
-        .and_then(|codes| codes.checked_add(1))
-        .and_then(|codes| codes.checked_mul(9))
+    // CLEAR plus 223 literals is exactly 224 nine-bit codes, or 252 bytes.
+    // Make each reset interval its own GIF sub-block so the hot group writer
+    // never checks or crosses a 255-byte boundary.
+    const LITERALS_PER_BLOCK: usize = 223;
+    const FULL_BLOCK_BYTES: usize = 252;
+    let full_blocks = pixel_count / LITERALS_PER_BLOCK;
+    let remainder = pixel_count % LITERALS_PER_BLOCK;
+    let tail_has_clear = full_blocks == 0 || remainder != 0;
+    let tail_code_count = remainder
+        .checked_add(1)
+        .and_then(|codes| codes.checked_add(usize::from(tail_has_clear)))
+        .ok_or_else(|| "Encoded GIF size overflow".to_string())?;
+    let tail_length = tail_code_count
+        .checked_mul(9)
         .ok_or_else(|| "Encoded GIF size overflow".to_string())?
         .div_ceil(8);
-    let block_count = raw_length.div_ceil(255);
+    let encoded_length = full_blocks
+        .checked_mul(FULL_BLOCK_BYTES + 1)
+        .and_then(|length| length.checked_add(tail_length))
+        .and_then(|length| length.checked_add(3))
+        .ok_or_else(|| "Encoded GIF size overflow".to_string())?;
     let output_start = output.len();
-    resize_output_uninitialized(output, output_start + 2 + block_count + raw_length);
+    resize_output_uninitialized(output, output_start + encoded_length);
     output[output_start] = 8;
-    let mut writer = DirectGifSubblockWriter {
-        output: &mut output[output_start..],
-        position: 2,
-        block_remaining: 255,
-        raw_position: 0,
-    };
-    let mut bits = 0u64;
-    let mut bit_count = 0usize;
     let rgba_pointer = rgba_stream.as_ptr();
     let histogram_to_palette_pointer = histogram_to_palette.as_ptr();
-
-    let full_pixel_count = pixel_count / LITERALS_PER_CLEAR * LITERALS_PER_CLEAR;
-    for chunk_start in (0..full_pixel_count).step_by(LITERALS_PER_CLEAR) {
+    let output_pointer = unsafe { output.as_mut_ptr().add(output_start) };
+    let mut output_position = 1usize;
+    for block in 0..full_blocks {
+        unsafe {
+            output_pointer
+                .add(output_position)
+                .write(FULL_BLOCK_BYTES as u8)
+        };
+        output_position += 1;
+        let chunk_start = block * LITERALS_PER_BLOCK;
         let first_codes = unsafe {
             mapped_quality_eight_pixels::<BITS, HAS_TRANSPARENT>(
                 rgba_pointer.add(chunk_start * 4),
@@ -11814,8 +11888,14 @@ fn encode_nine_bit_literal_lzw_mapped_to<const BITS: usize, const HAS_TRANSPAREN
                 histogram_to_palette_pointer,
             )
         };
-        write_clear_and_seven_nine_bit_literal_codes(&mut writer, first_codes);
-        let chunk_end = chunk_start + LITERALS_PER_CLEAR;
+        unsafe {
+            write_clear_and_seven_nine_bit_literal_codes_raw(
+                output_pointer.add(output_position),
+                first_codes,
+            )
+        };
+        output_position += 9;
+        let chunk_end = chunk_start + LITERALS_PER_BLOCK;
         let mut pixel_index = chunk_start + 7;
         while pixel_index < chunk_end {
             let packed_codes = unsafe {
@@ -11826,65 +11906,73 @@ fn encode_nine_bit_literal_lzw_mapped_to<const BITS: usize, const HAS_TRANSPAREN
                     histogram_to_palette_pointer,
                 )
             };
-            write_eight_nine_bit_literal_codes(&mut writer, packed_codes);
+            unsafe {
+                write_eight_nine_bit_literal_codes_raw(
+                    output_pointer.add(output_position),
+                    packed_codes,
+                )
+            };
+            output_position += 9;
             pixel_index += 8;
         }
     }
 
-    if full_pixel_count < pixel_count {
-        append_nine_bit_literal_code_to_direct(&mut writer, &mut bits, &mut bit_count, 256);
-        let mut pixel_index = full_pixel_count;
-        while pixel_index + 7 <= pixel_count {
-            append_nine_bit_mapped_quality_group::<BITS, HAS_TRANSPARENT>(
-                &mut writer,
+    unsafe { output_pointer.add(output_position).write(tail_length as u8) };
+    output_position += 1;
+    let tail_start = output_position;
+    let mut bits = 0u64;
+    let mut bit_count = 0usize;
+    if tail_has_clear {
+        unsafe {
+            append_nine_bit_literal_code_raw(
+                output_pointer,
+                &mut output_position,
                 &mut bits,
                 &mut bit_count,
-                rgba_pointer,
-                pixel_index,
-                alpha_threshold,
-                transparent_index,
-                histogram_to_palette_pointer,
-            );
-            pixel_index += 7;
-        }
-        while pixel_index < pixel_count {
-            let packed = u32::from_le(unsafe {
-                std::ptr::read_unaligned(rgba_pointer.add(pixel_index * 4).cast())
-            });
-            let code = mapped_quality_pixel::<BITS, HAS_TRANSPARENT>(
-                packed,
-                alpha_threshold,
-                transparent_index,
-                histogram_to_palette_pointer,
-            );
-            append_nine_bit_literal_code_to_direct(
-                &mut writer,
+                256,
+            )
+        };
+    }
+    let mut pixel_index = full_blocks * LITERALS_PER_BLOCK;
+    while pixel_index < pixel_count {
+        let packed = u32::from_le(unsafe {
+            std::ptr::read_unaligned(rgba_pointer.add(pixel_index * 4).cast())
+        });
+        let code = mapped_quality_pixel::<BITS, HAS_TRANSPARENT>(
+            packed,
+            alpha_threshold,
+            transparent_index,
+            histogram_to_palette_pointer,
+        );
+        unsafe {
+            append_nine_bit_literal_code_raw(
+                output_pointer,
+                &mut output_position,
                 &mut bits,
                 &mut bit_count,
                 u16::from(code),
-            );
-            pixel_index += 1;
-        }
+            )
+        };
+        pixel_index += 1;
     }
-    append_nine_bit_literal_code_to_direct(&mut writer, &mut bits, &mut bit_count, 257);
+    unsafe {
+        append_nine_bit_literal_code_raw(
+            output_pointer,
+            &mut output_position,
+            &mut bits,
+            &mut bit_count,
+            257,
+        )
+    };
     while bit_count > 0 {
-        writer.write_byte(bits as u8);
+        unsafe { output_pointer.add(output_position).write(bits as u8) };
+        output_position += 1;
         bits >>= 8;
         bit_count = bit_count.saturating_sub(8);
     }
-    debug_assert_eq!(writer.raw_position, raw_length);
-    let mut raw_offset = 0usize;
-    for block in 0..block_count {
-        let length = (raw_length - raw_offset).min(255);
-        unsafe {
-            output
-                .as_mut_ptr()
-                .add(output_start + 1 + block * 256)
-                .write(length as u8);
-        }
-        raw_offset += length;
-    }
-    output[output_start + 1 + block_count + raw_length] = 0;
+    debug_assert_eq!(output_position - tail_start, tail_length);
+    unsafe { output_pointer.add(output_position).write(0) };
+    debug_assert_eq!(output_position + 1, encoded_length);
     Ok(())
 }
 
@@ -12733,7 +12821,7 @@ where
         return Err("Indexed pixel stream is empty".to_string());
     }
     let pair_count = pixel_count / 2;
-    let raw_bit_length = pair_count * 9 + usize::from(pixel_count % 2 != 0) * 6 + 3;
+    let raw_bit_length = pair_count * 9 + usize::from(!pixel_count.is_multiple_of(2)) * 6 + 3;
     let raw_length = raw_bit_length.div_ceil(8);
     let block_count = raw_length.div_ceil(255);
     let output_start = output.len();
@@ -12790,7 +12878,7 @@ where
         bit_count = total_bits - byte_count * 8;
         remaining_pairs -= 1;
     }
-    if pixel_count % 2 != 0 {
+    if !pixel_count.is_multiple_of(2) {
         let pixel =
             u64::from(next_index().ok_or_else(|| "Indexed pixel stream is empty".to_string())?);
         bits |= (4 | (pixel << 3)) << bit_count;
@@ -13085,7 +13173,8 @@ fn encode_two_bit_literal_codes(
     _color_count: usize,
 ) -> Result<(), String> {
     let pair_count = index_stream.len() / 2;
-    let raw_bit_length = pair_count * 9 + usize::from(index_stream.len() % 2 != 0) * 6 + 3;
+    let raw_bit_length =
+        pair_count * 9 + usize::from(!index_stream.len().is_multiple_of(2)) * 6 + 3;
     let raw_length = raw_bit_length.div_ceil(8);
     let output_start = output.len();
     resize_output_uninitialized(output, output_start + raw_length);

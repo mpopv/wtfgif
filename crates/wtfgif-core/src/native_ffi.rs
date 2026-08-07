@@ -203,7 +203,7 @@ unsafe fn wtfgif_decode_all_rgba_inner(
 /// `pixels` and `byte_len` must be the exact pair returned by a successful
 /// Rust-owned decode and must not have been released previously.
 pub unsafe extern "C" fn wtfgif_free_rgba(pixels: *mut u8, byte_len: usize) {
-    if pixels.is_null() || byte_len == 0 || byte_len % std::mem::size_of::<u32>() != 0 {
+    if pixels.is_null() || byte_len == 0 || !byte_len.is_multiple_of(std::mem::size_of::<u32>()) {
         return;
     }
     let pixel_len = byte_len / std::mem::size_of::<u32>();

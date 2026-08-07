@@ -7,6 +7,7 @@ import type {
 const QUALITY_EXPORTS = [
 	"indexed_lzw_input_scratch_reserve",
 	"wasm_memory",
+	"encode_rgba_quality_low_res_constant_delay_scratch_from_input",
 	"quality_delay_scratch_reserve",
 	"encode_rgba_quality_gif_scratch_from_input",
 	"encode_rgba_quality_gif_constant_delay_scratch_from_input",

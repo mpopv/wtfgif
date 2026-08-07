@@ -285,6 +285,15 @@ export interface WasmCoreModule {
 		loopCount: number,
 		alphaThreshold: number,
 	) => number;
+	encode_rgba_quality_low_res_constant_delay_scratch_from_input: (
+		length: number,
+		width: number,
+		height: number,
+		frameCount: number,
+		delay: number,
+		loopCount: number,
+		alphaThreshold: number,
+	) => number;
 	gif_output_scratch_ptr: () => number;
 }
 
@@ -320,6 +329,7 @@ export type WasmEncodeCoreModule = Pick<
 	| "quality_delay_scratch_reserve"
 	| "encode_rgba_quality_gif_scratch_from_input"
 	| "encode_rgba_quality_gif_constant_delay_scratch_from_input"
+	| "encode_rgba_quality_low_res_constant_delay_scratch_from_input"
 	| "gif_output_scratch_ptr"
 >;
 
@@ -327,6 +337,15 @@ export type WasmEncodeCoreModule = Pick<
 export interface WasmQualityCoreModule {
 	indexed_lzw_input_scratch_reserve: (length: number) => number;
 	wasm_memory: () => WebAssembly.Memory;
+	encode_rgba_quality_low_res_constant_delay_scratch_from_input: (
+		length: number,
+		width: number,
+		height: number,
+		frameCount: number,
+		delay: number,
+		loopCount: number,
+		alphaThreshold: number,
+	) => number;
 	quality_delay_scratch_reserve: (
 		inputLength: number,
 		delayCount: number,

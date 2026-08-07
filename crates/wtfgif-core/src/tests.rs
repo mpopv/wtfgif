@@ -709,7 +709,11 @@ fn weighted_median_partition_keeps_axis_order() {
             blue: 240,
         },
     ];
-    let midpoint = (colors.iter().map(|color| color.count).sum::<u64>() + 1) / 2;
+    let midpoint = colors
+        .iter()
+        .map(|color| color.count)
+        .sum::<u64>()
+        .div_ceil(2);
     for axis in 0..3 {
         let mut partitioned = colors.clone();
         let split = weighted_axis_split_index(&mut partitioned, axis, midpoint);
