@@ -15,8 +15,8 @@ All notable changes to wtfgif are documented here.
   pixel-art median improved from 0.507 ms to 0.457 ms in that change's paired
   receipt.
 - Refresh the 10-fixture first-encode receipt and six-library browser chart.
-  The corpus spans **47.29x to 135.16x** with an **86.37x geometric mean**;
-  the five browser alternatives are **67.23x to 94.27x slower** than wtfgif.
+  The corpus spans **47.27x to 126.62x** with a **78.38x geometric mean**;
+  the five browser alternatives are **64.17x to 95.59x slower** than wtfgif.
 - Make encoding latency the only compression policy. Remove the public
   `compression` option and delete the balanced dictionary encoder from the
   JavaScript, Rust, Wasm, and native paths; all encoders now use literal LZW.

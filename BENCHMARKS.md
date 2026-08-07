@@ -28,18 +28,18 @@ Node.js 22.23.2.
 
 | Fixture | Shape | wtfgif | image-q + omggif | Speedup | File-size ratio |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| MakeEmoji production sample | 128×128×8 | 1.773 ms | 170.120 ms | **95.96×** | 3.80× |
-| Photographic animation | 128×96×8 | 0.987 ms | 86.589 ms | **87.74×** | 1.84× |
-| Pixel art | 64×64×12 | 0.829 ms | 39.211 ms | **47.29×** | 6.35× |
-| Smooth gradients | 128×128×8 | 1.960 ms | 157.356 ms | **80.30×** | 8.00× |
-| Random noise | 128×128×8 | 1.569 ms | 128.579 ms | **81.96×** | 7.28× |
-| Transparency | 128×128×8 | 0.646 ms | 47.262 ms | **73.17×** | 20.85× |
-| Disjoint frame palettes | 128×128×8 | 0.682 ms | 61.446 ms | **90.04×** | 7.64× |
-| Nearly static animation | 128×128×12 | 0.921 ms | 77.486 ms | **84.09×** | 12.19× |
-| Tiny animation | 16×16×6 | 0.466 ms | 54.906 ms | **117.72×** | 1.17× |
-| One-megapixel animation | 512×512×4 | 4.632 ms | 626.128 ms | **135.16×** | 22.74× |
+| MakeEmoji production sample | 128×128×8 | 1.678 ms | 171.014 ms | **101.92×** | 3.80× |
+| Photographic animation | 128×96×8 | 1.271 ms | 86.863 ms | **68.34×** | 1.84× |
+| Pixel art | 64×64×12 | 0.852 ms | 40.248 ms | **47.27×** | 6.35× |
+| Smooth gradients | 128×128×8 | 2.798 ms | 163.838 ms | **58.56×** | 8.00× |
+| Random noise | 128×128×8 | 1.192 ms | 130.911 ms | **109.87×** | 7.28× |
+| Transparency | 128×128×8 | 0.901 ms | 63.393 ms | **70.33×** | 20.85× |
+| Disjoint frame palettes | 128×128×8 | 1.087 ms | 85.464 ms | **78.65×** | 7.64× |
+| Nearly static animation | 128×128×12 | 1.726 ms | 104.253 ms | **60.41×** | 12.19× |
+| Tiny animation | 16×16×6 | 0.867 ms | 84.675 ms | **97.69×** | 1.17× |
+| One-megapixel animation | 512×512×4 | 5.770 ms | 730.647 ms | **126.62×** | 22.74× |
 
-The observed range is 47.29×–135.16×, with an 86.37× geometric-mean speedup.
+The observed range is 47.27×–126.62×, with a 78.38× geometric-mean speedup.
 The corresponding files are 1.17×–22.74× larger, with a 6.50× geometric mean.
 This is the library's intended tradeoff: encode latency takes priority over
 compression ratio.
@@ -102,12 +102,12 @@ Apple M3 Pro in Google Chrome 151.0.7922.77.
 
 | Implementation | Version | Median | wtfgif advantage | Bytes | PSNR | Alpha match |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| **wtfgif** | 3.0.6 | **1.395 ms** | — | 149,689 | 34.12 dB | 100% |
-| image-q + omggif | 2.1.2 + 1.0.10 | 93.785 ms | **67.23×** | 39,350 | 31.84 dB | 100% |
-| gif.js | 0.2.0 | 94.705 ms | **67.89×** | 80,869 | 33.08 dB | 99.78% |
-| gif.js.optimized | 1.0.1 | 108.205 ms | **77.57×** | 80,304 | 32.20 dB | 99.76% |
-| gifenc | 1.0.3 | 124.420 ms | **89.19×** | 39,101 | 34.54 dB | 100% |
-| modern-gif | 2.1.0 | 131.505 ms | **94.27×** | 43,114 | 32.65 dB | 100% |
+| **wtfgif** | 3.0.6 | **1.330 ms** | — | 149,689 | 34.12 dB | 100% |
+| gif.js | 0.2.0 | 85.350 ms | **64.17×** | 80,869 | 33.08 dB | 99.78% |
+| image-q + omggif | 2.1.2 + 1.0.10 | 94.140 ms | **70.78×** | 39,350 | 31.84 dB | 100% |
+| gif.js.optimized | 1.0.1 | 98.210 ms | **73.84×** | 80,304 | 32.20 dB | 99.76% |
+| gifenc | 1.0.3 | 124.235 ms | **93.41×** | 39,101 | 34.54 dB | 100% |
+| modern-gif | 2.1.0 | 127.130 ms | **95.59×** | 43,114 | 32.65 dB | 100% |
 
 Every output must parse as an eight-frame 128×128 animation with exact 100 ms
 delays before its sample is accepted. The validator composites all frames,
