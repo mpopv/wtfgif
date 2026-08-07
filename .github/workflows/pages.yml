@@ -28,6 +28,7 @@ jobs:
       - run: rustup toolchain install stable --profile minimal --no-self-update
       - run: rustup default stable
       - run: cargo +stable install wasm-pack --version 0.15.0 --locked
+      - run: npm install --global binaryen@131.0.0
       - run: npm run build:wasm
       - run: npm run build
       - run: npm run build:site
