@@ -12496,16 +12496,17 @@ unsafe fn mapped_quality_eight_pixels<const BITS: usize, const HAS_TRANSPARENT: 
 }
 
 #[inline(always)]
+fn expand_four_literal_codes_to_nine_bits(packed_codes: u32) -> u64 {
+    let paired =
+        u64::from(packed_codes & 0x0000_ffff) | (u64::from(packed_codes & 0xffff_0000) << 2);
+    (paired & 0x0000_0000_03fc_00ff) | ((paired & 0x0000_0003_fc00_ff00) << 1)
+}
+
+#[inline(always)]
 fn expand_eight_literal_codes_to_nine_bits(packed_codes: u64) -> (u64, u8) {
-    let low = (packed_codes & 0x0000_0000_0000_00ff)
-        | ((packed_codes & 0x0000_0000_0000_ff00) << 1)
-        | ((packed_codes & 0x0000_0000_00ff_0000) << 2)
-        | ((packed_codes & 0x0000_0000_ff00_0000) << 3)
-        | ((packed_codes & 0x0000_00ff_0000_0000) << 4)
-        | ((packed_codes & 0x0000_ff00_0000_0000) << 5)
-        | ((packed_codes & 0x00ff_0000_0000_0000) << 6)
-        | ((packed_codes & 0x0100_0000_0000_0000) << 7);
-    (low, (packed_codes >> 57) as u8)
+    let low_codes = expand_four_literal_codes_to_nine_bits(packed_codes as u32);
+    let high_codes = expand_four_literal_codes_to_nine_bits((packed_codes >> 32) as u32);
+    (low_codes | (high_codes << 36), (high_codes >> 28) as u8)
 }
 
 #[inline(always)]
