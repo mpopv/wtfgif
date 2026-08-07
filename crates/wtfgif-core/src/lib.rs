@@ -4102,6 +4102,24 @@ fn encode_rgba_quality_gif_inner_with_output(
             recycle_quantized_indexed(indexed);
             encoded
         }
+        QualityIndexResult::Quantized(plan)
+            if plan.palette.len() == 256
+                && plan.histogram_indices.is_none()
+                && plan.histogram_bits == 4
+                && plan.mapping_bits == 4 =>
+        {
+            encode_quality_four_bit_index_plan_literal_gif(
+                output,
+                rgba_stream,
+                width,
+                height,
+                frame_count,
+                delays,
+                loop_count,
+                alpha_threshold,
+                plan,
+            )
+        }
         QualityIndexResult::Quantized(plan) => encode_quality_index_plan_literal_gif(
             output,
             rgba_stream,
@@ -4114,6 +4132,102 @@ fn encode_rgba_quality_gif_inner_with_output(
             plan,
         ),
     }
+}
+
+/// Emit the normal low-resolution quality plan without pulling the branches
+/// for retained 5-bit cells and short palettes into the first-call graph.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn encode_quality_four_bit_index_plan_literal_gif(
+    mut output: Vec<u8>,
+    rgba_stream: &[u8],
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    delays: DelaySource<'_>,
+    loop_count: i32,
+    alpha_threshold: u8,
+    plan: QualityIndexPlan,
+) -> Result<Vec<u8>, String> {
+    let QualityIndexPlan {
+        palette,
+        histogram_to_palette,
+        histogram_indices,
+        transparent_index,
+        histogram_bits,
+        mapping_bits,
+    } = plan;
+    debug_assert_eq!(palette.len(), 256);
+    debug_assert!(histogram_indices.is_none());
+    debug_assert_eq!(histogram_bits, 4);
+    debug_assert_eq!(mapping_bits, 4);
+
+    let frame_len = usize::from(width)
+        .checked_mul(usize::from(height))
+        .ok_or_else(|| "Frame size overflow".to_string())?;
+    let expected_len = frame_len
+        .checked_mul(frame_count)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| "RGBA frame stream overflow".to_string())?;
+    if rgba_stream.len() != expected_len {
+        return Err("RGBA frame stream length does not match dimensions".to_string());
+    }
+    let lzw_length = literal_lzw_block_size(frame_len, 8)?;
+    let frame_capacity = (0..frame_count).try_fold(0usize, |capacity, frame_index| {
+        let graphic_control_length =
+            usize::from(delays.get(frame_index) != 0 || transparent_index.is_some()) * 8;
+        capacity
+            .checked_add(10)
+            .and_then(|length| length.checked_add(graphic_control_length))
+            .and_then(|length| length.checked_add(lzw_length))
+            .ok_or_else(|| "Encoded GIF size overflow".to_string())
+    })?;
+    let output_capacity = 13usize
+        .checked_add(256 * 3)
+        .and_then(|length| length.checked_add(usize::from(loop_count >= 0) * 19))
+        .and_then(|length| length.checked_add(frame_capacity))
+        .and_then(|length| length.checked_add(1))
+        .ok_or_else(|| "Encoded GIF size overflow".to_string())?;
+    output.clear();
+    if output.capacity() < output_capacity {
+        output.reserve(output_capacity - output.capacity());
+    }
+    write_indexed_gif_header(&mut output, width, height, &palette, 256);
+    write_loop_extension(&mut output, loop_count);
+    for frame_index in 0..frame_count {
+        let frame_start = frame_index * frame_len * 4;
+        let frame = &rgba_stream[frame_start..frame_start + frame_len * 4];
+        write_indexed_gif_frame_header(
+            &mut output,
+            0,
+            0,
+            width,
+            height,
+            delays.get(frame_index),
+            transparent_index,
+            if transparent_index.is_some() { 2 } else { 0 },
+        );
+        match transparent_index {
+            Some(transparent_index) => encode_nine_bit_literal_lzw_mapped_to::<4, true>(
+                &mut output,
+                frame,
+                alpha_threshold,
+                transparent_index,
+                &histogram_to_palette,
+            )?,
+            None => encode_nine_bit_literal_lzw_mapped_to::<4, false>(
+                &mut output,
+                frame,
+                alpha_threshold,
+                0,
+                &histogram_to_palette,
+            )?,
+        }
+    }
+    output.push(0x3b);
+    recycle_quality_histogram_to_palette(histogram_to_palette);
+    recycle_quality_palette(palette);
+    Ok(output)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -5933,8 +6047,75 @@ fn index_rgba_frames_quality_low_res(
     rgba_stream: &[u8],
     alpha_threshold: u8,
 ) -> QualityIndexResult {
-    const HISTOGRAM_BITS: usize = 4;
-    const HISTOGRAM_LEN: usize = 1 << (HISTOGRAM_BITS * 3);
+    if quality_low_res_exact_is_impossible(rgba_stream, alpha_threshold) {
+        return QualityIndexResult::Quantized(index_rgba_frames_quality_low_res_quantized(
+            rgba_stream,
+            alpha_threshold,
+            take_quality_palette(256),
+        ));
+    }
+    index_rgba_frames_quality_low_res_exact(rgba_stream, alpha_threshold)
+}
+
+/// Prove that an image needs quantization before allocating the reusable
+/// palette and prefix-index buffers. The compact stack table stores keys only;
+/// exact inputs fall through to the full indexed pass, while normal photos
+/// stop as soon as their 257th RGB value is seen.
+#[inline(never)]
+fn quality_low_res_exact_is_impossible(rgba_stream: &[u8], alpha_threshold: u8) -> bool {
+    let mut entries = [COLOR_INDEX_EMPTY; COLOR_INDEX_CAP];
+    let mut has_sentinel = false;
+    let mut color_count = 0usize;
+    let mut opaque_color_limit = 256usize;
+    let rgba_pointer = rgba_stream.as_ptr();
+    for pixel_index in 0..rgba_stream.len() / 4 {
+        let packed = u32::from_le(unsafe {
+            std::ptr::read_unaligned(rgba_pointer.add(pixel_index * 4).cast())
+        });
+        if ((packed >> 24) as u8) < alpha_threshold {
+            opaque_color_limit = 255;
+            if color_count > opaque_color_limit {
+                return true;
+            }
+            continue;
+        }
+        let rgb = packed & 0x00ff_ffff;
+        let inserted = if rgb == COLOR_INDEX_EMPTY {
+            if has_sentinel {
+                false
+            } else {
+                has_sentinel = true;
+                true
+            }
+        } else {
+            let mut slot = (rgb as usize).wrapping_mul(2_654_435_761) & (COLOR_INDEX_CAP - 1);
+            loop {
+                let stored = entries[slot];
+                if stored == rgb {
+                    break false;
+                }
+                if stored == COLOR_INDEX_EMPTY {
+                    entries[slot] = rgb;
+                    break true;
+                }
+                slot = (slot + 1) & (COLOR_INDEX_CAP - 1);
+            }
+        };
+        if inserted {
+            color_count += 1;
+            if color_count > opaque_color_limit {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+#[inline(never)]
+fn index_rgba_frames_quality_low_res_exact(
+    rgba_stream: &[u8],
+    alpha_threshold: u8,
+) -> QualityIndexResult {
     let pixel_count = rgba_stream.len() / 4;
     let mut table = take_quality_color_index_table(COLOR_INDEX_CAP);
     let mut palette = take_quality_palette(256);
@@ -5985,24 +6166,12 @@ fn index_rgba_frames_quality_low_res(
     }
     if overflowed {
         recycle_quantized_indexed(indexed);
-        // Once the exact probe overflows, rebuild the complete histogram with
-        // the same packed loop regardless of where the 257th color appeared.
-        // This keeps the full scan aligned and avoids a scalar prefix replay.
-        let mut histogram = take_quality_histogram_u32(HISTOGRAM_LEN);
-        has_transparent_pixels = accumulate_quality_histogram_u32_bits_remaining::<
-            HISTOGRAM_BITS,
-            false,
-        >(&mut histogram, rgba_stream, 0, alpha_threshold, &mut []);
-        let colors = quality_colors_from_histogram_u32::<true>(&mut histogram);
         recycle_quality_color_index_table(table);
-        recycle_quality_histogram_u32(histogram);
-        let plan = build_quality_index_plan_from_colors::<true, HISTOGRAM_BITS>(
-            has_transparent_pixels,
-            colors,
+        QualityIndexResult::Quantized(index_rgba_frames_quality_low_res_quantized(
+            rgba_stream,
+            alpha_threshold,
             palette,
-            None,
-        );
-        QualityIndexResult::Quantized(plan)
+        ))
     } else {
         QualityIndexResult::Exact(finish_quality_exact_indexed(
             rgba_stream,
@@ -6013,6 +6182,29 @@ fn index_rgba_frames_quality_low_res(
             indexed,
         ))
     }
+}
+
+#[inline(never)]
+fn index_rgba_frames_quality_low_res_quantized(
+    rgba_stream: &[u8],
+    alpha_threshold: u8,
+    palette: Vec<u32>,
+) -> QualityIndexPlan {
+    const HISTOGRAM_BITS: usize = 4;
+    const HISTOGRAM_LEN: usize = 1 << (HISTOGRAM_BITS * 3);
+    let mut histogram = take_quality_histogram_u32(HISTOGRAM_LEN);
+    let has_transparent_pixels = accumulate_quality_histogram_u32_bits_remaining::<
+        HISTOGRAM_BITS,
+        false,
+    >(&mut histogram, rgba_stream, 0, alpha_threshold, &mut []);
+    let colors = quality_colors_from_histogram_u32::<true>(&mut histogram);
+    recycle_quality_histogram_u32(histogram);
+    build_quality_index_plan_from_colors::<true, HISTOGRAM_BITS>(
+        has_transparent_pixels,
+        colors,
+        palette,
+        None,
+    )
 }
 
 fn finish_quality_exact_indexed(
