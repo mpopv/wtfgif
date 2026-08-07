@@ -4286,7 +4286,7 @@ fn encode_quality_four_bit_index_plan_literal_gif(
     if rgba_stream.len() != expected_len {
         return Err("RGBA frame stream length does not match dimensions".to_string());
     }
-    let lzw_length = literal_lzw_block_size(frame_len, 8)?;
+    let lzw_length = mapped_quality_literal_lzw_block_size(frame_len)?;
     let frame_capacity = (0..frame_count).try_fold(0usize, |capacity, frame_index| {
         let graphic_control_length =
             usize::from(delays.get(frame_index) != 0 || transparent_index.is_some()) * 8;
@@ -4438,8 +4438,7 @@ fn encode_quality_index_plan_literal_gif(
         recycle_quantized_indexed(indexed);
         return encoded;
     }
-    let min_code_size = 8;
-    let lzw_length = literal_lzw_block_size(frame_len, min_code_size)?;
+    let lzw_length = mapped_quality_literal_lzw_block_size(frame_len)?;
     let frame_capacity = (0..frame_count).try_fold(0usize, |capacity, frame_index| {
         let graphic_control_length =
             usize::from(delays.get(frame_index) != 0 || transparent_index.is_some()) * 8;
@@ -6502,6 +6501,9 @@ fn recycle_quality_histogram_u64(mut histogram: Vec<RgbHistogramBin>) {
 fn take_quality_histogram_to_palette(length: usize) -> Vec<u8> {
     REUSABLE_QUALITY_HISTOGRAM_TO_PALETTE.with(|scratch| {
         let mut table = std::mem::take(&mut *scratch.borrow_mut());
+        if table.capacity() < length + 1 {
+            table.reserve(length + 1 - table.capacity());
+        }
         if table.len() != length {
             table.resize(length, 0);
         }
@@ -7550,7 +7552,7 @@ fn build_quality_index_plan_from_colors<
     let opaque_color_limit = if has_transparent_pixels { 255 } else { 256 };
 
     if colors.len() > QUALITY_DOMINANT_COLOR_LIMIT {
-        let (mut palette, histogram_to_palette) = if HISTOGRAM_BITS == 4 {
+        let (mut palette, mut histogram_to_palette) = if HISTOGRAM_BITS == 4 {
             build_quality_wu_palette(
                 has_transparent_pixels,
                 colors,
@@ -7571,6 +7573,7 @@ fn build_quality_index_plan_from_colors<
         let transparent_index = if has_transparent_pixels {
             let index = palette.len() as u8;
             palette.push(0);
+            histogram_to_palette.push(index);
             Some(index)
         } else {
             None
@@ -7588,7 +7591,7 @@ fn build_quality_index_plan_from_colors<
         };
     }
 
-    let (mut palette, histogram_to_palette) = {
+    let (mut palette, mut histogram_to_palette) = {
         let palette_len = colors.len().min(opaque_color_limit);
         // Histogram extraction already leaves colors in cell order. Select
         // the palette through compact positions so quickselect does not
@@ -7917,6 +7920,7 @@ fn build_quality_index_plan_from_colors<
     let transparent_index = if has_transparent_pixels {
         let index = palette.len() as u8;
         palette.push(0);
+        histogram_to_palette.push(index);
         Some(index)
     } else {
         None
@@ -8990,12 +8994,6 @@ impl PaletteKdTree {
             let mut max_red = 0u8;
             let mut max_green = 0u8;
             let mut max_blue = 0u8;
-            let mut sum_red = 0u32;
-            let mut sum_green = 0u32;
-            let mut sum_blue = 0u32;
-            let mut sum_red_squared = 0u32;
-            let mut sum_green_squared = 0u32;
-            let mut sum_blue_squared = 0u32;
             for &index in indices.iter() {
                 let color = palette_rgb[index];
                 let red = (color >> 16) as u8;
@@ -9007,23 +9005,13 @@ impl PaletteKdTree {
                 max_red = max_red.max(red);
                 max_green = max_green.max(green);
                 max_blue = max_blue.max(blue);
-                let red = u32::from(red);
-                let green = u32::from(green);
-                let blue = u32::from(blue);
-                sum_red += red;
-                sum_green += green;
-                sum_blue += blue;
-                sum_red_squared += red * red;
-                sum_green_squared += green * green;
-                sum_blue_squared += blue * blue;
             }
-            let count = indices.len() as u32;
-            let red_variance = count * sum_red_squared - sum_red * sum_red;
-            let green_variance = count * sum_green_squared - sum_green * sum_green;
-            let blue_variance = count * sum_blue_squared - sum_blue * sum_blue;
-            let axis = if red_variance >= green_variance && red_variance >= blue_variance {
+            let red_range = max_red - min_red;
+            let green_range = max_green - min_green;
+            let blue_range = max_blue - min_blue;
+            let axis = if red_range >= green_range && red_range >= blue_range {
                 0
-            } else if green_variance >= blue_variance {
+            } else if green_range >= blue_range {
                 1
             } else {
                 2
@@ -10036,6 +10024,18 @@ fn reencoded_frame_literal_size(
 fn literal_lzw_block_size(pixel_count: usize, min_code_size: u8) -> Result<usize, String> {
     let code_size = usize::from(min_code_size) + 1;
     let literals_per_clear = (1usize << min_code_size) - 2;
+    literal_lzw_block_size_with_interval(pixel_count, code_size, literals_per_clear)
+}
+
+fn mapped_quality_literal_lzw_block_size(pixel_count: usize) -> Result<usize, String> {
+    literal_lzw_block_size_with_interval(pixel_count, 9, 247)
+}
+
+fn literal_lzw_block_size_with_interval(
+    pixel_count: usize,
+    code_size: usize,
+    literals_per_clear: usize,
+) -> Result<usize, String> {
     let clear_count = pixel_count.div_ceil(literals_per_clear);
     let code_count = pixel_count
         .checked_add(clear_count)
@@ -11135,6 +11135,25 @@ impl DirectGifSubblockWriter<'_> {
     }
 
     #[inline(always)]
+    fn write_fixed_nine(&mut self, low: u64, high: u8) {
+        if self.block_remaining < 9 {
+            self.write_fixed_u64(low, 8);
+            self.write_byte(high);
+            return;
+        }
+        unsafe {
+            std::ptr::write_unaligned(
+                self.output.as_mut_ptr().add(self.position).cast::<u64>(),
+                low.to_le(),
+            );
+            self.output.as_mut_ptr().add(self.position + 8).write(high);
+        }
+        self.position += 9;
+        self.block_remaining -= 9;
+        self.raw_position += 9;
+    }
+
+    #[inline(always)]
     fn write_slice(&mut self, mut bytes: &[u8]) {
         while !bytes.is_empty() {
             if self.block_remaining == 0 {
@@ -11529,12 +11548,11 @@ fn exact_palette_index_packed_cached(
 unsafe fn mapped_quality_four_pixels_simd<const BITS: usize, const HAS_TRANSPARENT: bool>(
     rgba_pointer: *const u8,
     alpha_threshold: u8,
-    transparent_index: u8,
     histogram_to_palette_pointer: *const u8,
 ) -> u32 {
     use core::arch::wasm32::{
-        i32x4_extract_lane, u32x4_lt, u32x4_shl, u32x4_shr, u32x4_splat, v128_and, v128_load,
-        v128_or,
+        i32x4_extract_lane, u32x4_lt, u32x4_shl, u32x4_shr, u32x4_splat, v128_and, v128_bitselect,
+        v128_load, v128_or,
     };
 
     let pixels = v128_load(rgba_pointer.cast());
@@ -11555,31 +11573,86 @@ unsafe fn mapped_quality_four_pixels_simd<const BITS: usize, const HAS_TRANSPARE
             v128_and(u32x4_shr(pixels, 20), u32x4_splat(0x000f)),
         )
     };
-    let transparent = u32x4_lt(
-        u32x4_shr(pixels, 24),
-        u32x4_splat(u32::from(alpha_threshold)),
-    );
-    let code0 = if HAS_TRANSPARENT && i32x4_extract_lane::<0>(transparent) != 0 {
-        transparent_index
+    let indices = if HAS_TRANSPARENT {
+        let transparent = u32x4_lt(
+            u32x4_shr(pixels, 24),
+            u32x4_splat(u32::from(alpha_threshold)),
+        );
+        v128_bitselect(u32x4_splat(1 << (BITS * 3)), indices, transparent)
     } else {
-        *histogram_to_palette_pointer.add(i32x4_extract_lane::<0>(indices) as usize)
+        indices
     };
-    let code1 = if HAS_TRANSPARENT && i32x4_extract_lane::<1>(transparent) != 0 {
-        transparent_index
-    } else {
-        *histogram_to_palette_pointer.add(i32x4_extract_lane::<1>(indices) as usize)
-    };
-    let code2 = if HAS_TRANSPARENT && i32x4_extract_lane::<2>(transparent) != 0 {
-        transparent_index
-    } else {
-        *histogram_to_palette_pointer.add(i32x4_extract_lane::<2>(indices) as usize)
-    };
-    let code3 = if HAS_TRANSPARENT && i32x4_extract_lane::<3>(transparent) != 0 {
-        transparent_index
-    } else {
-        *histogram_to_palette_pointer.add(i32x4_extract_lane::<3>(indices) as usize)
-    };
+    let code0 = *histogram_to_palette_pointer.add(i32x4_extract_lane::<0>(indices) as usize);
+    let code1 = *histogram_to_palette_pointer.add(i32x4_extract_lane::<1>(indices) as usize);
+    let code2 = *histogram_to_palette_pointer.add(i32x4_extract_lane::<2>(indices) as usize);
+    let code3 = *histogram_to_palette_pointer.add(i32x4_extract_lane::<3>(indices) as usize);
     u32::from_le_bytes([code0, code1, code2, code3])
+}
+
+#[inline(always)]
+unsafe fn mapped_quality_eight_pixels<const BITS: usize, const HAS_TRANSPARENT: bool>(
+    rgba_pointer: *const u8,
+    alpha_threshold: u8,
+    _transparent_index: u8,
+    histogram_to_palette_pointer: *const u8,
+) -> u64 {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        let low = mapped_quality_four_pixels_simd::<BITS, HAS_TRANSPARENT>(
+            rgba_pointer,
+            alpha_threshold,
+            histogram_to_palette_pointer,
+        );
+        let high = mapped_quality_four_pixels_simd::<BITS, HAS_TRANSPARENT>(
+            rgba_pointer.add(16),
+            alpha_threshold,
+            histogram_to_palette_pointer,
+        );
+        u64::from(low) | (u64::from(high) << 32)
+    }
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+    {
+        let mut codes = 0u64;
+        for lane in 0..8 {
+            let packed = u32::from_le(std::ptr::read_unaligned(rgba_pointer.add(lane * 4).cast()));
+            let code = mapped_quality_pixel::<BITS, HAS_TRANSPARENT>(
+                packed,
+                alpha_threshold,
+                _transparent_index,
+                histogram_to_palette_pointer,
+            );
+            codes |= u64::from(code) << (lane * 8);
+        }
+        codes
+    }
+}
+
+#[inline(always)]
+fn expand_eight_literal_codes_to_nine_bits(packed_codes: u64) -> (u64, u8) {
+    let low = (packed_codes & 0x0000_0000_0000_00ff)
+        | ((packed_codes & 0x0000_0000_0000_ff00) << 1)
+        | ((packed_codes & 0x0000_0000_00ff_0000) << 2)
+        | ((packed_codes & 0x0000_0000_ff00_0000) << 3)
+        | ((packed_codes & 0x0000_00ff_0000_0000) << 4)
+        | ((packed_codes & 0x0000_ff00_0000_0000) << 5)
+        | ((packed_codes & 0x00ff_0000_0000_0000) << 6)
+        | ((packed_codes & 0x0100_0000_0000_0000) << 7);
+    (low, (packed_codes >> 57) as u8)
+}
+
+#[inline(always)]
+fn write_eight_nine_bit_literal_codes(writer: &mut DirectGifSubblockWriter, packed_codes: u64) {
+    let (low, high) = expand_eight_literal_codes_to_nine_bits(packed_codes);
+    writer.write_fixed_nine(low, high);
+}
+
+#[inline(always)]
+fn write_clear_and_seven_nine_bit_literal_codes(
+    writer: &mut DirectGifSubblockWriter,
+    packed_codes: u64,
+) {
+    let (low, high) = expand_eight_literal_codes_to_nine_bits(packed_codes << 8);
+    writer.write_fixed_nine(low | 256, high);
 }
 
 #[inline(always)]
@@ -11608,7 +11681,6 @@ fn append_nine_bit_mapped_quality_group<const BITS: usize, const HAS_TRANSPARENT
         mapped_quality_four_pixels_simd::<BITS, HAS_TRANSPARENT>(
             rgba_pointer.add(rgba_offset),
             alpha_threshold,
-            transparent_index,
             histogram_to_palette_pointer,
         )
     };
@@ -11705,7 +11777,12 @@ fn encode_nine_bit_literal_lzw_mapped_to<const BITS: usize, const HAS_TRANSPAREN
         return Err("RGBA frame stream is empty or misaligned".to_string());
     }
     let pixel_count = rgba_stream.len() / 4;
-    let clear_count = pixel_count.div_ceil(254);
+    // 247 literals plus CLEAR are exactly 248 nine-bit codes, or 31
+    // byte-aligned groups of eight. This removes the rolling bit accumulator
+    // and scalar tail from every full reset interval while staying below the
+    // first LZW code-width transition.
+    const LITERALS_PER_CLEAR: usize = 247;
+    let clear_count = pixel_count.div_ceil(LITERALS_PER_CLEAR);
     let raw_length = pixel_count
         .checked_add(clear_count)
         .and_then(|codes| codes.checked_add(1))
@@ -11727,34 +11804,37 @@ fn encode_nine_bit_literal_lzw_mapped_to<const BITS: usize, const HAS_TRANSPAREN
     let rgba_pointer = rgba_stream.as_ptr();
     let histogram_to_palette_pointer = histogram_to_palette.as_ptr();
 
-    for chunk_start in (0..pixel_count).step_by(254) {
-        append_nine_bit_literal_code_to_direct(&mut writer, &mut bits, &mut bit_count, 256);
-        let chunk_end = (chunk_start + 254).min(pixel_count);
-        let mut pixel_index = chunk_start;
-        while pixel_index + 14 <= chunk_end {
-            append_nine_bit_mapped_quality_group::<BITS, HAS_TRANSPARENT>(
-                &mut writer,
-                &mut bits,
-                &mut bit_count,
-                rgba_pointer,
-                pixel_index,
+    let full_pixel_count = pixel_count / LITERALS_PER_CLEAR * LITERALS_PER_CLEAR;
+    for chunk_start in (0..full_pixel_count).step_by(LITERALS_PER_CLEAR) {
+        let first_codes = unsafe {
+            mapped_quality_eight_pixels::<BITS, HAS_TRANSPARENT>(
+                rgba_pointer.add(chunk_start * 4),
                 alpha_threshold,
                 transparent_index,
                 histogram_to_palette_pointer,
-            );
-            append_nine_bit_mapped_quality_group::<BITS, HAS_TRANSPARENT>(
-                &mut writer,
-                &mut bits,
-                &mut bit_count,
-                rgba_pointer,
-                pixel_index + 7,
-                alpha_threshold,
-                transparent_index,
-                histogram_to_palette_pointer,
-            );
-            pixel_index += 14;
+            )
+        };
+        write_clear_and_seven_nine_bit_literal_codes(&mut writer, first_codes);
+        let chunk_end = chunk_start + LITERALS_PER_CLEAR;
+        let mut pixel_index = chunk_start + 7;
+        while pixel_index < chunk_end {
+            let packed_codes = unsafe {
+                mapped_quality_eight_pixels::<BITS, HAS_TRANSPARENT>(
+                    rgba_pointer.add(pixel_index * 4),
+                    alpha_threshold,
+                    transparent_index,
+                    histogram_to_palette_pointer,
+                )
+            };
+            write_eight_nine_bit_literal_codes(&mut writer, packed_codes);
+            pixel_index += 8;
         }
-        while pixel_index + 7 <= chunk_end {
+    }
+
+    if full_pixel_count < pixel_count {
+        append_nine_bit_literal_code_to_direct(&mut writer, &mut bits, &mut bit_count, 256);
+        let mut pixel_index = full_pixel_count;
+        while pixel_index + 7 <= pixel_count {
             append_nine_bit_mapped_quality_group::<BITS, HAS_TRANSPARENT>(
                 &mut writer,
                 &mut bits,
@@ -11767,7 +11847,7 @@ fn encode_nine_bit_literal_lzw_mapped_to<const BITS: usize, const HAS_TRANSPAREN
             );
             pixel_index += 7;
         }
-        while pixel_index < chunk_end {
+        while pixel_index < pixel_count {
             let packed = u32::from_le(unsafe {
                 std::ptr::read_unaligned(rgba_pointer.add(pixel_index * 4).cast())
             });

@@ -92,21 +92,21 @@ and wtfgif's one-time Wasm initialization, with zero encode warmups.
 
 | Encoder | Median | wtfgif advantage | Bytes | PSNR | Alpha match |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| **wtfgif 3.0.3** | **2.090 ms** | — | 149,601 | 34.12 dB | 100% |
-| [gif.js 0.2.0](https://github.com/jnordberg/gif.js) | 93.370 ms | **44.67×** | 80,869 | 33.08 dB | 99.78% |
-| image-q + [omggif 1.0.10](https://github.com/deanm/omggif) | 97.910 ms | **46.85×** | 39,350 | 31.84 dB | 100% |
-| [gif.js.optimized 1.0.1](https://github.com/terikon/gif.js.optimized) | 104.345 ms | **49.93×** | 80,304 | 32.20 dB | 99.76% |
-| [gifenc 1.0.3](https://github.com/mattdesl/gifenc) | 122.085 ms | **58.41×** | 39,101 | 34.54 dB | 100% |
-| [modern-gif 2.1.0](https://github.com/qq15725/modern-gif) | 130.675 ms | **62.52×** | 43,114 | 32.65 dB | 100% |
+| **wtfgif (current main)** | **1.660 ms** | — | 149,617 | 34.12 dB | 100% |
+| [gif.js 0.2.0](https://github.com/jnordberg/gif.js) | 83.150 ms | **50.09×** | 80,869 | 33.08 dB | 99.78% |
+| image-q + [omggif 1.0.10](https://github.com/deanm/omggif) | 89.755 ms | **54.07×** | 39,350 | 31.84 dB | 100% |
+| [gif.js.optimized 1.0.1](https://github.com/terikon/gif.js.optimized) | 95.215 ms | **57.36×** | 80,304 | 32.20 dB | 99.76% |
+| [modern-gif 2.1.0](https://github.com/qq15725/modern-gif) | 119.160 ms | **71.78×** | 43,114 | 32.65 dB | 100% |
+| [gifenc 1.0.3](https://github.com/mattdesl/gifenc) | 120.135 ms | **72.37×** | 39,101 | 34.54 dB | 100% |
 
 The tradeoff is file size: wtfgif emits a larger file because its literal LZW
 path prioritizes encode latency. It does not lower the selected pixel quality;
 its 34.12 dB result is second only to gifenc here. The two gif.js variants only
 support color-key transparency, which is why their alpha match is not 100%.
 
-The narrower initialized Node benchmark against image-q + omggif is 97.037 ms
-versus 0.402 ms: **241.24× faster**. Its zero-warmup first encode is 127.492 ms
-versus 1.765 ms: **72.22× faster**.
+The narrower initialized Node benchmark against image-q + omggif is 95.713 ms
+versus 0.352 ms: **272.17× faster**. Its zero-warmup first encode is 124.994 ms
+versus 1.521 ms: **82.17× faster**.
 
 ```bash
 npm run bench

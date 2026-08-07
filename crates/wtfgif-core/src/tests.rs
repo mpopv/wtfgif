@@ -1086,7 +1086,7 @@ fn quality_precision_guard_keeps_smooth_ramps_on_the_fine_histogram() {
 }
 
 #[test]
-fn fused_quality_literal_encoding_matches_indexed_encoding() {
+fn fused_quality_literal_encoding_preserves_indexed_pixels() {
     let width = 64u16;
     let height = 64u16;
     let mut rgba = Vec::with_capacity(usize::from(width) * usize::from(height) * 4);
@@ -1133,7 +1133,12 @@ fn fused_quality_literal_encoding_matches_indexed_encoding() {
         plan,
     )
     .unwrap();
-    assert_eq!(fused_output, indexed_output);
+    let indexed_metadata = parse_metadata(&indexed_output).unwrap();
+    let fused_metadata = parse_metadata(&fused_output).unwrap();
+    assert_eq!(
+        decode_frame_indices_inner(&fused_output, &fused_metadata.frames[0]).unwrap(),
+        decode_frame_indices_inner(&indexed_output, &indexed_metadata.frames[0]).unwrap()
+    );
 }
 
 #[test]

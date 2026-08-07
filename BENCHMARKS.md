@@ -27,12 +27,12 @@ Chrome 150.0.7871.187.
 
 | Implementation | Version | Median | wtfgif advantage | Bytes | PSNR | Alpha match |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| **wtfgif** | 3.0.3 | **2.090 ms** | — | 149,601 | 34.12 dB | 100% |
-| gif.js | 0.2.0 | 93.370 ms | **44.67×** | 80,869 | 33.08 dB | 99.78% |
-| image-q + omggif | 2.1.2 + 1.0.10 | 97.910 ms | **46.85×** | 39,350 | 31.84 dB | 100% |
-| gif.js.optimized | 1.0.1 | 104.345 ms | **49.93×** | 80,304 | 32.20 dB | 99.76% |
-| gifenc | 1.0.3 | 122.085 ms | **58.41×** | 39,101 | 34.54 dB | 100% |
-| modern-gif | 2.1.0 | 130.675 ms | **62.52×** | 43,114 | 32.65 dB | 100% |
+| **wtfgif** | current main | **1.660 ms** | — | 149,617 | 34.12 dB | 100% |
+| gif.js | 0.2.0 | 83.150 ms | **50.09×** | 80,869 | 33.08 dB | 99.78% |
+| image-q + omggif | 2.1.2 + 1.0.10 | 89.755 ms | **54.07×** | 39,350 | 31.84 dB | 100% |
+| gif.js.optimized | 1.0.1 | 95.215 ms | **57.36×** | 80,304 | 32.20 dB | 99.76% |
+| modern-gif | 2.1.0 | 119.160 ms | **71.78×** | 43,114 | 32.65 dB | 100% |
+| gifenc | 1.0.3 | 120.135 ms | **72.37×** | 39,101 | 34.54 dB | 100% |
 
 Every output must parse as an eight-frame 128×128 animation with exact 100 ms
 delays before its sample is accepted. The validator composites all frames,
@@ -73,17 +73,17 @@ decoding, resizing, WebAssembly initialization, warmup, validation, and quality
 measurement are outside timed samples.
 
 Results below are medians from 200 samples after 30 timed-loop warmups on an
-Apple M3 Pro with Node.js 22.23.2, measured on the 3.0.3 release candidate.
+Apple M3 Pro with Node.js 22.23.2, measured on the current main checkpoint.
 
 | Implementation | Median | Speedup | Bytes | PSNR |
 | --- | ---: | ---: | ---: | ---: |
-| image-q rgbquant + omggif balanced LZW | 97.037 ms | 1.00× | 39,350 | 31.84 dB |
-| wtfgif quality/global + literal LZW | 0.402 ms | **241.24×** | 149,601 | 34.12 dB |
+| image-q rgbquant + omggif balanced LZW | 95.713 ms | 1.00× | 39,350 | 31.84 dB |
+| wtfgif quality/global + literal LZW | 0.352 ms | **272.17×** | 149,617 | 34.12 dB |
 
 This is one practical adaptive global-palette pipeline. The implementations do
 not choose identical pixels, so the table reports source-relative PSNR and
 output bytes alongside speed. The wtfgif palette is higher quality on this
-fixture while remaining 241.24× faster. Literal LZW is lossless for the
+fixture while remaining 272.17× faster. Literal LZW is lossless for the
 indexed pixels, so the speedup does not come from lowering GIF pixel quality.
 
 The quality path uses a weighted 4-bit-per-channel histogram for ordinary
@@ -100,31 +100,32 @@ alpha preflight because it is faster than branching on transparency during
 scattered histogram updates.
 
 The same source with every pixel treated as opaque (`BENCH_ALPHA_THRESHOLD=0`)
-took 106.376 ms for image-q + omggif and 0.539 ms for wtfgif: **197.48×**,
+took 104.704 ms for image-q + omggif and 0.388 ms for wtfgif: **269.65×**,
 with 33.91 dB PSNR. This is the normal full-color, no-transparent-pixels case.
 
-The larger stress workload (ten synthetic 512×512 RGBA frames) measured
-6,493.282 ms for image-q + omggif and 4.758 ms for wtfgif: **1364.67×**,
+In a separate 10-sample run after three timed-loop warmups, the larger stress
+workload (ten synthetic 512×512 RGBA frames) measured
+6,509.276 ms for image-q + omggif and 4.373 ms for wtfgif: **1488.40×**,
 with 2,973,381 output bytes and 26.19 dB PSNR versus 24.26 dB for the
 baseline. This is still arbitrary RGBA input: the palette is unknown, every
 pixel is scanned, and every indexed pixel is emitted into a valid GIF.
-The 1364.67× ratio is a workload-size effect, not a cache shortcut: both sides
+The 1488.40× ratio is a workload-size effect, not a cache shortcut: both sides
 read all 2,621,440 source pixels, while wtfgif keeps its histogram, parent-cell
 lookup, and literal writer linear in the input size.
 
 For the no-warmup, first-real-encode contract:
 
 ```bash
-BENCH_INITIALIZED_FIRST=1 BENCH_WTFFIG_ENTRY=encode BENCH_ITERATIONS=60 node scripts/bench-cold-rgba.mjs
+BENCH_INITIALIZED_FIRST=1 BENCH_WTFFIG_ENTRY=encode BENCH_ITERATIONS=120 node scripts/bench-cold-rgba.mjs
 ```
 
 That run starts a fresh Node process for every sample, initializes Wasm, and
-then times exactly one real encode with no warmup. Across 60 processes the
-median was 127.492 ms for image-q + omggif versus 1.765 ms for wtfgif
-(**72.22×**). There is no synthetic encode, retained source pixel, palette, or
+then times exactly one real encode with no warmup. Across 120 processes the
+median was 124.994 ms for image-q + omggif versus 1.521 ms for wtfgif
+(**82.17×**). There is no synthetic encode, retained source pixel, palette, or
 output result in initialization. The parent-observed wall clock, which also
-includes launching and shutting down Node, was 171.298 ms versus 31.737 ms
-(**5.40×**).
+includes launching and shutting down Node, was 169.388 ms versus 30.380 ms
+(**5.58×**).
 
 Run the optional larger synthetic stress workload with:
 
@@ -133,9 +134,9 @@ npm run bench:rgba:stress
 ```
 
 For a stress-only receipt, add `BENCH_COLD_RGBA_FIXTURE=stress`. Across five
-fresh processes, the first encode after initialization took 6,440.154 ms with
-image-q + omggif and 8.469 ms with wtfgif: **760.48×**. The complete process
-wall clock was 6,513.887 ms versus 58.699 ms: **110.97×**. The wtfgif output
+fresh processes, the first encode after initialization took 6,386.553 ms with
+image-q + omggif and 8.876 ms with wtfgif: **719.54×**. The complete process
+wall clock was 6,464.915 ms versus 59.557 ms: **108.55×**. The wtfgif output
 remains 2,973,381 bytes at 26.19 dB PSNR. The large image-q allocation makes this
 workload noisy, so use several samples and report the median.
 
