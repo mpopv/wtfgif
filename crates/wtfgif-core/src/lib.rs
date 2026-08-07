@@ -4378,9 +4378,9 @@ fn encode_rgba_quality_low_res_exact_gif_inner_with_output(
         rgba_stream.len(),
         usize::from(width) * usize::from(height) * frame_count * 4
     );
-    match index_rgba_frames_quality_low_res_exact(rgba_stream, alpha_threshold) {
+    match index_rgba_frames_quality_low_res_exact::<false>(rgba_stream, alpha_threshold) {
         QualityIndexResult::Exact((palette, indexed, transparent_index)) => {
-            let encoded = encode_indexed_literal_gif_inner_with_output(
+            let encoded = encode_indexed_literal_gif_inner_with_output_unchecked(
                 output,
                 &indexed,
                 width,
@@ -6344,7 +6344,7 @@ fn index_rgba_frames_quality_low_res(
             take_quality_palette(256),
         ));
     }
-    index_rgba_frames_quality_low_res_exact(rgba_stream, alpha_threshold)
+    index_rgba_frames_quality_low_res_exact::<false>(rgba_stream, alpha_threshold)
 }
 
 /// The delta encoder is already a distinct advanced path, so give flat source
@@ -6365,7 +6365,7 @@ fn index_rgba_frames_quality_low_res_delta(
             take_quality_palette(256),
         ))
     } else {
-        index_rgba_frames_quality_low_res_exact(rgba_stream, alpha_threshold)
+        index_rgba_frames_quality_low_res_exact::<true>(rgba_stream, alpha_threshold)
     };
     match result {
         QualityIndexResult::Exact(exact) => exact,
@@ -6464,7 +6464,7 @@ fn quality_low_res_likely_exact(rgba_stream: &[u8], alpha_threshold: u8) -> bool
 }
 
 #[inline(never)]
-fn index_rgba_frames_quality_low_res_exact(
+fn index_rgba_frames_quality_low_res_exact<const COALESCE_RUNS: bool>(
     rgba_stream: &[u8],
     alpha_threshold: u8,
 ) -> QualityIndexResult {
@@ -6485,46 +6485,92 @@ fn index_rgba_frames_quality_low_res_exact(
     let mut indexed = take_quantized_indexed(pixel_count);
     let indexed_pointer = indexed.as_mut_ptr();
     let mut has_transparent_pixels = false;
-    let mut previous_rgb = u32::MAX;
-    let mut previous_index = 0u8;
     let rgba_pointer = rgba_stream.as_ptr();
     let mut overflowed = false;
-    for pixel_index in 0..pixel_count {
-        let packed = u32::from_le(unsafe {
-            std::ptr::read_unaligned(rgba_pointer.add(pixel_index * 4).cast())
-        });
-        let alpha = (packed >> 24) as u8;
-        if alpha < alpha_threshold {
-            has_transparent_pixels = true;
-            unsafe { *indexed_pointer.add(pixel_index) = u8::MAX };
-            if palette.len() == 256 {
+    if COALESCE_RUNS {
+        let mut pixel_index = 0usize;
+        while pixel_index < pixel_count {
+            let packed = u32::from_le(unsafe {
+                std::ptr::read_unaligned(rgba_pointer.add(pixel_index * 4).cast())
+            });
+            let mut run_end = pixel_index + 1;
+            while run_end < pixel_count {
+                let next = u32::from_le(unsafe {
+                    std::ptr::read_unaligned(rgba_pointer.add(run_end * 4).cast())
+                });
+                if next != packed {
+                    break;
+                }
+                run_end += 1;
+            }
+            let run_length = run_end - pixel_index;
+            let alpha = (packed >> 24) as u8;
+            let index = if alpha < alpha_threshold {
+                has_transparent_pixels = true;
+                if palette.len() == 256 {
+                    overflowed = true;
+                    break;
+                }
+                u8::MAX
+            } else {
+                let rgb = rgb_key(packed as u8, (packed >> 8) as u8, (packed >> 16) as u8);
+                if let Some(index) = table.get(rgb) {
+                    index
+                } else {
+                    let color_limit = if has_transparent_pixels { 255 } else { 256 };
+                    if palette.len() == color_limit {
+                        overflowed = true;
+                        break;
+                    }
+                    let index = palette.len() as u8;
+                    table.insert_if_absent(rgb, index);
+                    palette.push(rgb);
+                    index
+                }
+            };
+            unsafe { std::ptr::write_bytes(indexed_pointer.add(pixel_index), index, run_length) };
+            pixel_index = run_end;
+        }
+    } else {
+        let mut previous_rgb = u32::MAX;
+        let mut previous_index = 0u8;
+        for pixel_index in 0..pixel_count {
+            let packed = u32::from_le(unsafe {
+                std::ptr::read_unaligned(rgba_pointer.add(pixel_index * 4).cast())
+            });
+            let alpha = (packed >> 24) as u8;
+            if alpha < alpha_threshold {
+                has_transparent_pixels = true;
+                unsafe { *indexed_pointer.add(pixel_index) = u8::MAX };
+                if palette.len() == 256 {
+                    overflowed = true;
+                    break;
+                }
+                continue;
+            }
+            let rgb = rgb_key(packed as u8, (packed >> 8) as u8, (packed >> 16) as u8);
+            if rgb == previous_rgb {
+                unsafe { *indexed_pointer.add(pixel_index) = previous_index };
+                continue;
+            }
+            if let Some(index) = table.get(rgb) {
+                previous_rgb = rgb;
+                previous_index = index;
+                unsafe { *indexed_pointer.add(pixel_index) = index };
+                continue;
+            }
+            let color_limit = if has_transparent_pixels { 255 } else { 256 };
+            if palette.len() == color_limit {
                 overflowed = true;
                 break;
             }
-            continue;
-        }
-        let rgb = rgb_key(packed as u8, (packed >> 8) as u8, (packed >> 16) as u8);
-        if rgb == previous_rgb {
-            unsafe { *indexed_pointer.add(pixel_index) = previous_index };
-            continue;
-        }
-        if let Some(index) = table.get(rgb) {
+            let index = palette.len() as u8;
+            table.insert_if_absent(rgb, index);
+            palette.push(rgb);
             previous_rgb = rgb;
             previous_index = index;
             unsafe { *indexed_pointer.add(pixel_index) = index };
-            continue;
         }
-        let color_limit = if has_transparent_pixels { 255 } else { 256 };
-        if palette.len() == color_limit {
-            overflowed = true;
-            break;
-        }
-        let index = palette.len() as u8;
-        table.insert_if_absent(rgb, index);
-        palette.push(rgb);
-        previous_rgb = rgb;
-        previous_index = index;
-        unsafe { *indexed_pointer.add(pixel_index) = index };
     }
     if overflowed {
         recycle_quantized_indexed(indexed);
@@ -6568,9 +6614,31 @@ fn index_rgba_frames_quality_low_res_quantized_alpha(
     const HISTOGRAM_BITS: usize = 4;
     const HISTOGRAM_LEN: usize = 1 << (HISTOGRAM_BITS * 3);
     let mut histogram = take_quality_histogram_u32(HISTOGRAM_LEN);
-    let has_transparent_pixels = accumulate_quality_histogram_u32_bits_remaining_mixed::<
-        HISTOGRAM_BITS,
-    >(&mut histogram, rgba_stream, 0, alpha_threshold);
+    let has_transparent_pixels = if rgba_stream_samples_alpha_255(rgba_stream) {
+        let all_alpha_255 = accumulate_quality_histogram_u32_bits_remaining_opaque::<
+            HISTOGRAM_BITS,
+            false,
+            true,
+        >(&mut histogram, rgba_stream, 0, &mut []);
+        if all_alpha_255 {
+            false
+        } else {
+            histogram.fill(RgbHistogramBin32::default());
+            accumulate_quality_histogram_u32_bits_remaining_mixed::<HISTOGRAM_BITS>(
+                &mut histogram,
+                rgba_stream,
+                0,
+                alpha_threshold,
+            )
+        }
+    } else {
+        accumulate_quality_histogram_u32_bits_remaining_mixed::<HISTOGRAM_BITS>(
+            &mut histogram,
+            rgba_stream,
+            0,
+            alpha_threshold,
+        )
+    };
     finish_quality_low_res_quantized(histogram, has_transparent_pixels, palette)
 }
 
@@ -11180,7 +11248,25 @@ fn encode_four_bit_literal_lzw_direct_to<const VALIDATE: bool>(
     };
     let mut bits = 0u64;
     let mut bit_count = 0usize;
-    let mut groups = index_stream.chunks_exact(6);
+    let mut paired_groups = index_stream.chunks_exact(12);
+    for group in &mut paired_groups {
+        let packed = 8u64
+            | (u64::from(group[0]) << 4)
+            | (u64::from(group[1]) << 8)
+            | (u64::from(group[2]) << 12)
+            | (u64::from(group[3]) << 16)
+            | (u64::from(group[4]) << 20)
+            | (u64::from(group[5]) << 24)
+            | (8u64 << 28)
+            | (u64::from(group[6]) << 32)
+            | (u64::from(group[7]) << 36)
+            | (u64::from(group[8]) << 40)
+            | (u64::from(group[9]) << 44)
+            | (u64::from(group[10]) << 48)
+            | (u64::from(group[11]) << 52);
+        writer.write_fixed_u64(packed, 7);
+    }
+    let mut groups = paired_groups.remainder().chunks_exact(6);
     for group in &mut groups {
         let packed = 8u32
             | (u32::from(group[0]) << 4)

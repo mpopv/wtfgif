@@ -296,6 +296,23 @@ fn nine_bit_literal_direct_subblocks_match_buffered_writer() {
 }
 
 #[test]
+fn four_bit_literal_direct_subblocks_match_buffered_writer() {
+    for length in [1usize, 6, 7, 11, 12, 13, 255, 508, 4096] {
+        let indices: Vec<u8> = (0..length)
+            .map(|index| ((index * 5 + index / 3) & 7) as u8)
+            .collect();
+        let mut direct = Vec::new();
+        encode_indexed_literal_lzw_direct_to(&mut direct, &indices, 3, 8).unwrap();
+
+        let mut buffered = Vec::new();
+        let mut compressed = Vec::new();
+        encode_indexed_literal_lzw_to(&mut buffered, &indices, 3, 8, &mut compressed).unwrap();
+
+        assert_eq!(direct, buffered, "length {length}");
+    }
+}
+
+#[test]
 fn seven_bit_literal_direct_subblocks_match_buffered_writer() {
     for length in [1usize, 62, 63, 255, 508, 4096] {
         let indices: Vec<u8> = (0..length)
@@ -505,7 +522,7 @@ fn quality_exact_direct_buffer_preserves_runs_and_transparency() {
     }
 
     let QualityIndexResult::Exact((palette, indexed, transparent_index)) =
-        index_rgba_frames_quality_low_res_exact(&rgba, TRANSPARENT_ALPHA_THRESHOLD)
+        index_rgba_frames_quality_low_res_exact::<false>(&rgba, TRANSPARENT_ALPHA_THRESHOLD)
     else {
         panic!("three opaque colors plus transparency must remain exact");
     };
@@ -1225,6 +1242,45 @@ fn opaque_quality_scan_is_identical_for_zero_alpha_threshold() {
     let thresholded = index_rgba_frames_quality(&rgba, TRANSPARENT_ALPHA_THRESHOLD);
     let opaque = index_rgba_frames_quality(&rgba, 0);
     assert_eq!(thresholded, opaque);
+}
+
+#[test]
+fn low_res_opaque_probe_recovers_unsampled_transparency() {
+    let pixel_count = 8_192usize;
+    let mut rgba = Vec::with_capacity(pixel_count * 4);
+    for pixel in 0..pixel_count {
+        rgba.extend_from_slice(&[
+            (pixel * 73) as u8,
+            (pixel * 151 + 17) as u8,
+            (pixel * 211 + 29) as u8,
+            255,
+        ]);
+    }
+    rgba[7] = 0;
+    assert!(rgba_stream_samples_alpha_255(&rgba));
+
+    let mut histogram = take_quality_histogram_u32(1 << 12);
+    let has_transparent = accumulate_quality_histogram_u32_bits_remaining_mixed::<4>(
+        &mut histogram,
+        &rgba,
+        0,
+        TRANSPARENT_ALPHA_THRESHOLD,
+    );
+    let expected =
+        finish_quality_low_res_quantized(histogram, has_transparent, take_quality_palette(256))
+            .into_indexed(&rgba, TRANSPARENT_ALPHA_THRESHOLD);
+    let actual = index_rgba_frames_quality_low_res_quantized_alpha(
+        &rgba,
+        TRANSPARENT_ALPHA_THRESHOLD,
+        take_quality_palette(256),
+    )
+    .into_indexed(&rgba, TRANSPARENT_ALPHA_THRESHOLD);
+
+    assert_eq!(actual, expected);
+    recycle_quality_palette(expected.0);
+    recycle_quantized_indexed(expected.1);
+    recycle_quality_palette(actual.0);
+    recycle_quantized_indexed(actual.1);
 }
 
 #[test]

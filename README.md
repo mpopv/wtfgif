@@ -85,11 +85,11 @@ or URL, use `new Blob([gif], { type: "image/gif" })`.
 
 `wtfgif` is optimized for maximum encoding speed at the cost of larger output
 files. On the documented 128×128, eight-frame small-image workload, it encoded
-**184.57× faster** than image-q + omggif under comparable conditions (0.526 ms
-vs 97.060 ms), with a **3.80× larger file**.
+**180.13× faster** than image-q + omggif under comparable conditions (0.536 ms
+vs 96.612 ms), with a **3.80× larger file**.
 
 Every fixture in the 10-fixture corpus was more than 100× faster. Speedups
-ranged from 104.06× to 266.44× with a 157.63× geometric mean. Output files
+ranged from 130.19× to 264.51× with a 166.28× geometric mean. Output files
 ranged from 1.17× to 22.74× larger, with a 6.23× geometric mean.
 
 ## Browser comparison
