@@ -4,6 +4,10 @@ All notable changes to wtfgif are documented here.
 
 ## Unreleased
 
+- Pack each eight-code literal group through two staged four-code expansions,
+  reducing the RGBA quality encoder's per-pixel mask-and-shift work without
+  changing a single output byte. A 10,000-pattern reference-packing test now
+  covers the arithmetic directly.
 - Reserve a source-agnostic 4 MB input arena during Wasm initialization so the
   first real encode does not allocate its ordinary input scratch inside the
   timed path. No source pixels, palette, or encoded result exists at
@@ -15,8 +19,9 @@ All notable changes to wtfgif are documented here.
   pixel-art median improved from 0.507 ms to 0.457 ms in that change's paired
   receipt.
 - Refresh the 10-fixture first-encode receipt and six-library browser chart.
-  The corpus spans **47.27x to 126.62x** with a **78.38x geometric mean**;
-  the five browser alternatives are **64.17x to 95.59x slower** than wtfgif.
+  The corpus spans **62.68x to 125.58x** with a **91.63x geometric mean**;
+  the real MakeEmoji workload is **110.14x faster**, and the five browser
+  alternatives are **71.36x to 108.78x slower** than wtfgif.
 - Make encoding latency the only compression policy. Remove the public
   `compression` option and delete the balanced dictionary encoder from the
   JavaScript, Rust, Wasm, and native paths; all encoders now use literal LZW.
