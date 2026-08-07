@@ -534,6 +534,19 @@ fn quality_exact_direct_buffer_preserves_runs_and_transparency() {
 }
 
 #[test]
+fn uniform_run_hint_is_conservative_and_keeps_the_small_palette_route_exact() {
+    let mut rgba = [12, 16, 32, 255].repeat(40_000);
+    assert!(quality_low_res_has_uniform_sampled_runs(&rgba));
+    let hints = quality_low_res_hints(&rgba, TRANSPARENT_ALPHA_THRESHOLD);
+    assert!(hints.likely_exact);
+    assert!(hints.likely_small_palette);
+    assert!(hints.prefers_run_coalescing);
+
+    rgba[8_191 * 4] = 13;
+    assert!(!quality_low_res_has_uniform_sampled_runs(&rgba));
+}
+
+#[test]
 fn likely_exact_delta_probe_falls_back_without_changing_quantization() {
     let pixel_count = 8_192usize;
     let mut rgba = Vec::with_capacity(pixel_count * 4);

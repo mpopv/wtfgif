@@ -580,7 +580,43 @@ pub fn encode_rgba_quality_low_res_constant_delay_scratch_from_input(
     debug_assert!(rgba_stream.len() % 4 == 0);
     debug_assert!(rgba_stream.len() / 4 <= QUALITY_LOW_RES_PIXEL_LIMIT);
     let output = REUSABLE_GIF_OUTPUT.with(|scratch| std::mem::take(&mut *scratch.borrow_mut()));
-    let hints = quality_low_res_hints(rgba_stream, alpha_threshold);
+    let hints = if rgba_stream.len() >= 40_000 * 4
+        && quality_low_res_has_uniform_sampled_runs(rgba_stream)
+    {
+        QualityLowResHints {
+            likely_exact: true,
+            likely_small_palette: true,
+            prefers_run_coalescing: true,
+        }
+    } else {
+        quality_low_res_hints(rgba_stream, alpha_threshold)
+    };
+    let tried_small_exact = rgba_stream.len() >= 40_000 * 4 && hints.likely_small_palette;
+    if tried_small_exact {
+        if let Some((palette, indexed, transparent_index)) =
+            index_rgba_frames_quality_small_exact(rgba_stream, alpha_threshold)
+        {
+            let encoded = encode_indexed_literal_gif_inner_with_output_unchecked(
+                output,
+                &indexed,
+                width,
+                height,
+                frame_count,
+                &palette,
+                DelaySource::Constant(delay),
+                loop_count,
+                transparent_index,
+            );
+            recycle_quality_palette(palette);
+            recycle_quantized_indexed(indexed);
+            let Ok(encoded) = encoded else {
+                return 0;
+            };
+            let length = encoded.len();
+            REUSABLE_GIF_OUTPUT.with(|scratch| *scratch.borrow_mut() = encoded);
+            return length;
+        }
+    }
     let encoded = if !hints.likely_exact
         && quality_low_res_exact_is_impossible(rgba_stream, alpha_threshold)
     {
@@ -605,7 +641,7 @@ pub fn encode_rgba_quality_low_res_constant_delay_scratch_from_input(
                 DelaySource::Constant(delay),
                 loop_count,
                 alpha_threshold,
-                rgba_stream.len() >= 40_000 * 4 && hints.likely_small_palette,
+                false,
                 output,
             )
         } else {
@@ -617,7 +653,7 @@ pub fn encode_rgba_quality_low_res_constant_delay_scratch_from_input(
                 DelaySource::Constant(delay),
                 loop_count,
                 alpha_threshold,
-                rgba_stream.len() >= 40_000 * 4 && hints.likely_small_palette,
+                false,
                 output,
             )
         }

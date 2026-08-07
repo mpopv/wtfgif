@@ -26,18 +26,18 @@ Node.js 22.23.2.
 
 | Fixture | Shape | wtfgif | image-q + omggif | Speedup | File-size ratio |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| MakeEmoji production sample | 128×128×8 | 1.229 ms | 130.547 ms | **106.21×** | 3.80× |
-| Photographic animation | 128×96×8 | 0.855 ms | 64.753 ms | **75.76×** | 1.84× |
-| Pixel art | 64×64×12 | 0.507 ms | 27.479 ms | **54.25×** | 6.35× |
-| Smooth gradients | 128×128×8 | 1.571 ms | 113.256 ms | **72.07×** | 8.00× |
-| Random noise | 128×128×8 | 0.774 ms | 90.360 ms | **116.72×** | 7.28× |
-| Transparency | 128×128×8 | 0.655 ms | 45.419 ms | **69.34×** | 20.85× |
-| Disjoint frame palettes | 128×128×8 | 0.678 ms | 57.102 ms | **84.16×** | 7.64× |
-| Nearly static animation | 128×128×12 | 0.971 ms | 72.260 ms | **74.41×** | 12.19× |
-| Tiny animation | 16×16×6 | 0.463 ms | 52.930 ms | **114.39×** | 1.17× |
-| One-megapixel animation | 512×512×4 | 4.332 ms | 557.792 ms | **128.77×** | 22.74× |
+| MakeEmoji production sample | 128×128×8 | 1.239 ms | 127.071 ms | **102.54×** | 3.80× |
+| Photographic animation | 128×96×8 | 0.834 ms | 63.045 ms | **75.64×** | 1.84× |
+| Pixel art | 64×64×12 | 0.457 ms | 26.199 ms | **57.35×** | 6.35× |
+| Smooth gradients | 128×128×8 | 1.572 ms | 107.274 ms | **68.23×** | 8.00× |
+| Random noise | 128×128×8 | 0.745 ms | 86.191 ms | **115.72×** | 7.28× |
+| Transparency | 128×128×8 | 0.647 ms | 44.087 ms | **68.09×** | 20.85× |
+| Disjoint frame palettes | 128×128×8 | 0.660 ms | 54.905 ms | **83.14×** | 7.64× |
+| Nearly static animation | 128×128×12 | 0.914 ms | 70.017 ms | **76.58×** | 12.19× |
+| Tiny animation | 16×16×6 | 0.460 ms | 52.224 ms | **113.58×** | 1.17× |
+| One-megapixel animation | 512×512×4 | 4.144 ms | 533.460 ms | **128.74×** | 22.74× |
 
-The observed range is 54.25×–128.77×, with an 86.51× geometric-mean speedup.
+The observed range is 57.35×–128.74×, with an 86.05× geometric-mean speedup.
 The corresponding files are 1.17×–22.74× larger, with a 6.50× geometric mean.
 This is the library's intended tradeoff: encode latency takes priority over
 compression ratio.
@@ -98,12 +98,12 @@ Chrome 151.0.7922.77.
 
 | Implementation | Version | Median | wtfgif advantage | Bytes | PSNR | Alpha match |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| **wtfgif** | 3.0.6 | **1.490 ms** | — | 149,689 | 34.12 dB | 100% |
-| gif.js | 0.2.0 | 94.225 ms | **63.24×** | 80,869 | 33.08 dB | 99.78% |
-| image-q + omggif | 2.1.2 + 1.0.10 | 96.805 ms | **64.97×** | 39,350 | 31.84 dB | 100% |
-| gif.js.optimized | 1.0.1 | 106.600 ms | **71.54×** | 80,304 | 32.20 dB | 99.76% |
-| gifenc | 1.0.3 | 124.565 ms | **83.60×** | 39,101 | 34.54 dB | 100% |
-| modern-gif | 2.1.0 | 131.735 ms | **88.41×** | 43,114 | 32.65 dB | 100% |
+| **wtfgif** | 3.0.6 | **1.415 ms** | — | 149,689 | 34.12 dB | 100% |
+| gif.js | 0.2.0 | 102.785 ms | **72.64×** | 80,869 | 33.08 dB | 99.78% |
+| modern-gif | 2.1.0 | 115.195 ms | **81.41×** | 43,114 | 32.65 dB | 100% |
+| gif.js.optimized | 1.0.1 | 120.655 ms | **85.27×** | 80,304 | 32.20 dB | 99.76% |
+| gifenc | 1.0.3 | 120.835 ms | **85.40×** | 39,101 | 34.54 dB | 100% |
+| image-q + omggif | 2.1.2 + 1.0.10 | 155.655 ms | **110.00×** | 39,350 | 31.84 dB | 100% |
 
 Every output must parse as an eight-frame 128×128 animation with exact 100 ms
 delays before its sample is accepted. The validator composites all frames,

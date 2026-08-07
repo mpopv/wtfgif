@@ -6506,6 +6506,31 @@ struct QualityLowResHints {
     prefers_run_coalescing: bool,
 }
 
+#[inline(always)]
+fn quality_low_res_has_uniform_sampled_runs(rgba_stream: &[u8]) -> bool {
+    let pixel_count = rgba_stream.len() / 4;
+    let sample_step = 8_191 % pixel_count;
+    let rgba_pointer = rgba_stream.as_ptr();
+    let first = u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.cast()) });
+    if first != u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(4).cast()) }) {
+        return false;
+    }
+    let mut sample_pixel = sample_step;
+    for _ in 1..4 {
+        let current = u32::from_le(unsafe {
+            std::ptr::read_unaligned(rgba_pointer.add(sample_pixel * 4).cast())
+        });
+        let next = u32::from_le(unsafe {
+            std::ptr::read_unaligned(rgba_pointer.add((sample_pixel + 1) * 4).cast())
+        });
+        if current != first || next != first {
+            return false;
+        }
+        sample_pixel += sample_step;
+    }
+    true
+}
+
 #[inline(never)]
 fn quality_low_res_hints(rgba_stream: &[u8], alpha_threshold: u8) -> QualityLowResHints {
     // Flat art commonly repeats a small color set over a large canvas. Sample
@@ -6565,6 +6590,13 @@ fn quality_low_res_hints(rgba_stream: &[u8], alpha_threshold: u8) -> QualityLowR
                 small_colors[small_color_count] = rgb;
                 small_color_count += 1;
             }
+        }
+        if sample_index == 7 && small_color_count <= 2 && adjacent_matches >= 7 {
+            return QualityLowResHints {
+                likely_exact: true,
+                likely_small_palette: true,
+                prefers_run_coalescing: true,
+            };
         }
         let bucket = (rgb.wrapping_mul(2_654_435_761) >> (u32::BITS as usize - 7)) as usize;
         let word = bucket / u64::BITS as usize;
