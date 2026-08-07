@@ -13,7 +13,9 @@ const wasmBytes = readFileSync(
 			import.meta.url,
 		),
 );
+const moduleStarted = performance.now();
 const module = new WebAssembly.Module(wasmBytes);
+const moduleCompleted = performance.now();
 let wasm;
 const imports = {
 	"./wtfgif_core_bg.js": {
@@ -29,7 +31,9 @@ const imports = {
 	},
 };
 wasm = new WebAssembly.Instance(module, imports).exports;
+const instanceCompleted = performance.now();
 wasm.__wbindgen_start();
+const startCompleted = performance.now();
 
 const started = performance.now();
 const inputPointer = wasm.indexed_lzw_input_scratch_reserve(rgba.length);
@@ -51,6 +55,9 @@ const copiedOutput = performance.now();
 
 process.stdout.write(
 	JSON.stringify({
+		moduleMs: moduleCompleted - moduleStarted,
+		instanceMs: instanceCompleted - moduleCompleted,
+		startMs: startCompleted - instanceCompleted,
 		reserveMs: reserved - started,
 		inputCopyMs: copiedInput - reserved,
 		wasmMs: encoded - copiedInput,

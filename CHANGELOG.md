@@ -2,6 +2,22 @@
 
 All notable changes to wtfgif are documented here.
 
+## 3.0.6 - 2026-08-07
+
+- Reduce quality-encoder overhead by claiming the embedded Wasm allocator
+  arena during module initialization, aligning histogram bins for SIMD access,
+  and sharing exact reciprocal division across RGB palette averages. The real
+  fixture remains byte-for-byte unchanged at 149,689 bytes (SHA-256
+  `e997926c952bf2a374b3304debbe7bacb56894b3990101c996c5426b855c6c2d`).
+- Refresh the release receipts: **101.83x** for the first real encode after
+  initialization, **287.47x** initialized, **1586.44x** initialized stress,
+  and **739.45x** first initialized stress. In fresh Chrome processes, the five
+  competing encoders are **75.23x to 113.51x slower** than wtfgif.
+- Add exhaustive reciprocal-arithmetic parity coverage and finer first-call
+  phase profiling. The complete release gate passes 47 Rust tests, 144
+  JavaScript/Wasm assertions, every Wasm variant, edge validation, and packaged
+  ESM, CommonJS, browser-global, and browser-Wasm checks.
+
 ## 3.0.5 - 2026-08-06
 
 - Rewrite the README benchmark section around the honest first-encode result:

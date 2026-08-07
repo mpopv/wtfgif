@@ -155,11 +155,62 @@ unsafe impl talc::source::Source for WasmArenaThenGrow {
 }
 
 #[cfg(all(not(target_feature = "atomics"), target_family = "wasm"))]
+struct WasmAllocator(talc::cell::TalcCell<WasmArenaThenGrow, talc::wasm::WasmBinning>);
+
+#[cfg(all(not(target_feature = "atomics"), target_family = "wasm"))]
+unsafe impl Sync for WasmAllocator {}
+
+#[cfg(all(not(target_feature = "atomics"), target_family = "wasm"))]
+impl WasmAllocator {
+    const fn new() -> Self {
+        Self(talc::cell::TalcCell::new(WasmArenaThenGrow {
+            arena_available: true,
+        }))
+    }
+
+    fn initialize(&self) {
+        let source = self.0.replace_source(WasmArenaThenGrow {
+            arena_available: false,
+        });
+        if !source.arena_available {
+            return;
+        }
+        let arena = std::ptr::addr_of_mut!(WASM_ALLOCATOR_ARENA).cast::<u8>();
+        if unsafe { self.0.claim(arena, WASM_ALLOCATOR_ARENA_BYTES) }.is_none() {
+            self.0.replace_source(source);
+        }
+    }
+}
+
+#[cfg(all(not(target_feature = "atomics"), target_family = "wasm"))]
+unsafe impl std::alloc::GlobalAlloc for WasmAllocator {
+    unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
+        std::alloc::GlobalAlloc::alloc(&self.0, layout)
+    }
+
+    unsafe fn dealloc(&self, pointer: *mut u8, layout: std::alloc::Layout) {
+        std::alloc::GlobalAlloc::dealloc(&self.0, pointer, layout);
+    }
+
+    unsafe fn realloc(
+        &self,
+        pointer: *mut u8,
+        layout: std::alloc::Layout,
+        new_size: usize,
+    ) -> *mut u8 {
+        std::alloc::GlobalAlloc::realloc(&self.0, pointer, layout, new_size)
+    }
+}
+
+#[cfg(all(not(target_feature = "atomics"), target_family = "wasm"))]
 #[global_allocator]
-static TALC: talc::cell::TalcSyncCell<WasmArenaThenGrow, talc::wasm::WasmBinning> =
-    talc::cell::TalcSyncCell::new_wasm(WasmArenaThenGrow {
-        arena_available: true,
-    });
+static TALC: WasmAllocator = WasmAllocator::new();
+
+#[cfg(all(not(target_feature = "atomics"), target_family = "wasm"))]
+#[wasm_bindgen(start)]
+pub fn initialize_wasm_allocator() {
+    TALC.initialize();
+}
 
 #[cfg(any(not(feature = "encode-only"), not(target_arch = "wasm32")))]
 mod buffers;
@@ -5481,7 +5532,7 @@ struct RgbHistogramBin {
     blue: u64,
 }
 
-#[repr(C, align(8))]
+#[repr(C, align(16))]
 #[derive(Clone, Copy, Default)]
 struct RgbHistogramBin32 {
     count: u32,
@@ -6199,18 +6250,23 @@ fn quality_colors_from_histogram_u32<const SAFE_SUMS: bool>(
         if bin.count == 0 {
             continue;
         }
+        let reciprocal = if SAFE_SUMS {
+            (1u64 << 32) / u64::from(bin.count)
+        } else {
+            0
+        };
         let red = if SAFE_SUMS {
-            ((bin.red + bin.count / 2) / bin.count) as u8
+            rounded_histogram_average_u32_reciprocal(bin.red, bin.count, reciprocal)
         } else {
             rounded_histogram_average_u32(bin.red, bin.count)
         };
         let green = if SAFE_SUMS {
-            ((bin.green + bin.count / 2) / bin.count) as u8
+            rounded_histogram_average_u32_reciprocal(bin.green, bin.count, reciprocal)
         } else {
             rounded_histogram_average_u32(bin.green, bin.count)
         };
         let blue = if SAFE_SUMS {
-            ((bin.blue + bin.count / 2) / bin.count) as u8
+            rounded_histogram_average_u32_reciprocal(bin.blue, bin.count, reciprocal)
         } else {
             rounded_histogram_average_u32(bin.blue, bin.count)
         };
@@ -6230,6 +6286,14 @@ fn quality_colors_from_histogram_u32<const SAFE_SUMS: bool>(
 }
 
 #[inline(always)]
+fn rounded_histogram_average_u32_reciprocal(sum: u32, count: u32, reciprocal: u64) -> u8 {
+    let divisor = u64::from(count);
+    let numerator = u64::from(sum + count / 2);
+    let estimate = (numerator * reciprocal) >> 32;
+    (estimate + u64::from(numerator - estimate * divisor >= divisor)) as u8
+}
+
+#[inline(always)]
 fn rounded_histogram_average_u32(sum: u32, count: u32) -> u8 {
     let half = count / 2;
     match sum.checked_add(half) {
@@ -6239,12 +6303,19 @@ fn rounded_histogram_average_u32(sum: u32, count: u32) -> u8 {
 }
 
 #[inline(always)]
-fn rounded_weighted_average_u32(sum: u32, count: u32) -> u8 {
-    let half = count / 2;
-    match sum.checked_add(half) {
-        Some(adjusted) => (adjusted / count) as u8,
-        None => ((u64::from(sum) + u64::from(half)) / u64::from(count)) as u8,
+fn rounded_weighted_average_u32_reciprocal(sum: u32, count: u32, reciprocal: u64) -> u8 {
+    let divisor = u64::from(count);
+    let numerator = u64::from(sum) + divisor / 2;
+    let mut estimate = (numerator * reciprocal) >> 31;
+    let mut remainder = numerator - estimate * divisor;
+    if remainder >= divisor {
+        estimate += 1;
+        remainder -= divisor;
     }
+    if remainder >= divisor {
+        estimate += 1;
+    }
+    estimate as u8
 }
 
 fn quality_colors_from_histogram_u64(histogram: &mut [RgbHistogramBin]) -> Vec<QuantizedColor> {
@@ -7961,10 +8032,11 @@ fn build_quality_index_plan_from_colors<
                 if count == 0 {
                     continue;
                 }
+                let reciprocal = (1u64 << 31) / u64::from(count);
                 let representative = rgb_key(
-                    rounded_weighted_average_u32(red_sums[index], count),
-                    rounded_weighted_average_u32(green_sums[index], count),
-                    rounded_weighted_average_u32(blue_sums[index], count),
+                    rounded_weighted_average_u32_reciprocal(red_sums[index], count, reciprocal),
+                    rounded_weighted_average_u32_reciprocal(green_sums[index], count, reciprocal),
+                    rounded_weighted_average_u32_reciprocal(blue_sums[index], count, reciprocal),
                 );
                 let changed = palette[index] != representative;
                 palette_changed |= changed;

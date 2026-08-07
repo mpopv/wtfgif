@@ -90,10 +90,10 @@ There are no encode warmups, saved palettes, retained pixels, or cached results.
 
 | 500 fresh Node processes | image-q + omggif | wtfgif | Speedup |
 | --- | ---: | ---: | ---: |
-| First real encode | 123.448 ms | **1.231 ms** | **100.26×** |
+| First real encode | 127.979 ms | **1.257 ms** | **101.83×** |
 
-For repeated encoding after that first call, the same job takes 94.302 ms with
-image-q + omggif and 0.315 ms with wtfgif: **298.94× faster**.
+For repeated encoding after that first call, the same job takes 94.900 ms with
+image-q + omggif and 0.330 ms with wtfgif: **287.47× faster**.
 
 ## Browser comparison
 
@@ -104,12 +104,12 @@ package loading and wtfgif's one-time Wasm initialization outside the clock.
 
 | Encoder | First encode | Slower than wtfgif |
 | --- | ---: | ---: |
-| **wtfgif** | **1.545 ms** | — |
-| [gif.js 0.2.0](https://github.com/jnordberg/gif.js) | 95.865 ms | **62.05×** |
-| image-q + [omggif 1.0.10](https://github.com/deanm/omggif) | 98.055 ms | **63.47×** |
-| [gif.js.optimized 1.0.1](https://github.com/terikon/gif.js.optimized) | 107.510 ms | **69.59×** |
-| [gifenc 1.0.3](https://github.com/mattdesl/gifenc) | 122.835 ms | **79.50×** |
-| [modern-gif 2.1.0](https://github.com/qq15725/modern-gif) | 131.525 ms | **85.13×** |
+| **wtfgif** | **1.465 ms** | — |
+| [gif.js 0.2.0](https://github.com/jnordberg/gif.js) | 110.205 ms | **75.23×** |
+| [gifenc 1.0.3](https://github.com/mattdesl/gifenc) | 126.955 ms | **86.66×** |
+| [gif.js.optimized 1.0.1](https://github.com/terikon/gif.js.optimized) | 128.075 ms | **87.42×** |
+| [modern-gif 2.1.0](https://github.com/qq15725/modern-gif) | 128.460 ms | **87.69×** |
+| image-q + [omggif 1.0.10](https://github.com/deanm/omggif) | 166.285 ms | **113.51×** |
 
 wtfgif's output is 149,689 bytes at 34.12 dB PSNR with 100% alpha agreement.
 It favors encode latency and visual quality over producing the smallest file.

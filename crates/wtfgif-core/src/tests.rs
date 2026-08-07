@@ -1254,6 +1254,80 @@ fn packed_quality_histogram_indices_match_channel_indices() {
 }
 
 #[test]
+fn reciprocal_quality_averages_match_integer_division() {
+    let verify = |sum: u32, count: u32| {
+        let reciprocal = (1u64 << 32) / u64::from(count);
+        assert_eq!(
+            rounded_histogram_average_u32_reciprocal(sum, count, reciprocal),
+            ((sum + count / 2) / count) as u8,
+            "sum={sum}, count={count}",
+        );
+    };
+    for count in [1u32, 2, 3, 7, 255, 256, 257, 65_535, 1_000_000] {
+        for sum in [
+            0,
+            count / 2,
+            count.saturating_sub(1),
+            count,
+            count * 127,
+            count * 255,
+        ] {
+            verify(sum, count);
+        }
+    }
+    let mut state = 0x9e37_79b9u32;
+    for _ in 0..250_000 {
+        state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        let count = state % 1_000_000 + 1;
+        state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        let sum = state % (count * 255 + 1);
+        verify(sum, count);
+    }
+
+    let verify_weighted = |sum: u32, count: u32| {
+        let reciprocal = (1u64 << 31) / u64::from(count);
+        let half = count / 2;
+        let expected = match sum.checked_add(half) {
+            Some(adjusted) => (adjusted / count) as u8,
+            None => ((u64::from(sum) + u64::from(half)) / u64::from(count)) as u8,
+        };
+        assert_eq!(
+            rounded_weighted_average_u32_reciprocal(sum, count, reciprocal),
+            expected,
+            "weighted sum={sum}, count={count}",
+        );
+    };
+    for count in [
+        1u32,
+        2,
+        3,
+        255,
+        256,
+        65_535,
+        1_000_000,
+        QUALITY_U32_PIXEL_LIMIT as u32,
+    ] {
+        let maximum_sum = (u64::from(count) * 255).min(u64::from(u32::MAX)) as u32;
+        for sum in [0, count / 2, count, maximum_sum] {
+            verify_weighted(sum, count);
+        }
+    }
+    let mut wide_state = 0xd1b5_4a32_d192_ed03u64;
+    for _ in 0..250_000 {
+        wide_state = wide_state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        let count = (wide_state % QUALITY_U32_PIXEL_LIMIT as u64 + 1) as u32;
+        let maximum_sum = (u64::from(count) * 255).min(u64::from(u32::MAX));
+        wide_state = wide_state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        let sum = (wide_state % (maximum_sum + 1)) as u32;
+        verify_weighted(sum, count);
+    }
+}
+
+#[test]
 fn quality_materialization_preserves_palette_indices() {
     let histogram_to_palette: Vec<u8> = (0..=4095u16).map(|value| value as u8).collect();
     let opaque = materialize_quality_indices(vec![0, 17, 255, 4095], None, &histogram_to_palette);

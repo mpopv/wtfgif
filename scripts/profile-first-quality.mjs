@@ -6,6 +6,9 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const worker = join(root, "scripts", "profile-first-quality-worker.mjs");
 const iterations = Number(process.env.PROFILE_ITERATIONS ?? 100);
 const phases = [
+	"moduleMs",
+	"instanceMs",
+	"startMs",
 	"reserveMs",
 	"inputCopyMs",
 	"wasmMs",
