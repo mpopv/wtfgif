@@ -6444,7 +6444,8 @@ fn index_rgba_frames_quality_low_res_delta(
     rgba_stream: &[u8],
     alpha_threshold: u8,
 ) -> (Vec<u32>, Vec<u8>, Option<u8>) {
-    let result = if !quality_low_res_likely_exact(rgba_stream, alpha_threshold)
+    let hints = quality_low_res_hints(rgba_stream, alpha_threshold);
+    let result = if !hints.likely_exact
         && quality_low_res_exact_is_impossible(rgba_stream, alpha_threshold)
     {
         QualityIndexResult::Quantized(index_rgba_frames_quality_low_res_quantized(
@@ -6499,8 +6500,14 @@ fn quality_low_res_exact_is_impossible(rgba_stream: &[u8], alpha_threshold: u8) 
     false
 }
 
+struct QualityLowResHints {
+    likely_exact: bool,
+    likely_small_palette: bool,
+    prefers_run_coalescing: bool,
+}
+
 #[inline(never)]
-fn quality_low_res_likely_exact(rgba_stream: &[u8], alpha_threshold: u8) -> bool {
+fn quality_low_res_hints(rgba_stream: &[u8], alpha_threshold: u8) -> QualityLowResHints {
     // Flat art commonly repeats a small color set over a large canvas. Sample
     // the complete stream first so those inputs can enter the authoritative
     // exact scan without paying for this second full pass. A false "likely
@@ -6509,10 +6516,15 @@ fn quality_low_res_likely_exact(rgba_stream: &[u8], alpha_threshold: u8) -> bool
     const SAMPLE_COUNT: usize = 256;
     const SAMPLE_BUCKETS: usize = 128;
     const SAMPLE_COLOR_LIMIT: usize = 48;
+    const SMALL_COLOR_LIMIT: usize = 12;
     let pixel_count = rgba_stream.len() / 4;
     let sample_count = pixel_count.min(SAMPLE_COUNT);
     let mut sample_occupied = [0u64; SAMPLE_BUCKETS / u64::BITS as usize];
     let mut sample_colors = 0usize;
+    let mut small_colors = [u32::MAX; SMALL_COLOR_LIMIT];
+    let mut small_color_count = 0usize;
+    let mut likely_small_palette = true;
+    let mut adjacent_matches = 0usize;
     let rgba_pointer = rgba_stream.as_ptr();
     let mut sample_pixel = 0usize;
     let sample_step = if pixel_count == 0 {
@@ -6525,10 +6537,16 @@ fn quality_low_res_likely_exact(rgba_stream: &[u8], alpha_threshold: u8) -> bool
             step
         }
     };
-    for _ in 0..sample_count {
+    for sample_index in 0..sample_count {
         let packed = u32::from_le(unsafe {
             std::ptr::read_unaligned(rgba_pointer.add(sample_pixel * 4).cast())
         });
+        if sample_pixel + 1 < pixel_count {
+            let next = u32::from_le(unsafe {
+                std::ptr::read_unaligned(rgba_pointer.add((sample_pixel + 1) * 4).cast())
+            });
+            adjacent_matches += usize::from(packed == next);
+        }
         sample_pixel += sample_step;
         if sample_pixel >= pixel_count {
             sample_pixel -= pixel_count;
@@ -6537,6 +6555,17 @@ fn quality_low_res_likely_exact(rgba_stream: &[u8], alpha_threshold: u8) -> bool
             continue;
         }
         let rgb = packed & 0x00ff_ffff;
+        if sample_index < 64
+            && likely_small_palette
+            && !small_colors[..small_color_count].contains(&rgb)
+        {
+            if small_color_count == SMALL_COLOR_LIMIT {
+                likely_small_palette = false;
+            } else {
+                small_colors[small_color_count] = rgb;
+                small_color_count += 1;
+            }
+        }
         let bucket = (rgb.wrapping_mul(2_654_435_761) >> (u32::BITS as usize - 7)) as usize;
         let word = bucket / u64::BITS as usize;
         let mask = 1u64 << (bucket % u64::BITS as usize);
@@ -6544,65 +6573,19 @@ fn quality_low_res_likely_exact(rgba_stream: &[u8], alpha_threshold: u8) -> bool
             sample_occupied[word] |= mask;
             sample_colors += 1;
             if sample_colors > SAMPLE_COLOR_LIMIT {
-                break;
+                return QualityLowResHints {
+                    likely_exact: false,
+                    likely_small_palette: false,
+                    prefers_run_coalescing: false,
+                };
             }
         }
     }
-    sample_colors <= SAMPLE_COLOR_LIMIT
-}
-
-#[inline(never)]
-fn quality_low_res_prefers_run_coalescing(rgba_stream: &[u8]) -> bool {
-    const SAMPLE_COUNT: usize = 256;
-    let pixel_count = rgba_stream.len() / 4;
-    if pixel_count < 2 {
-        return false;
+    QualityLowResHints {
+        likely_exact: true,
+        likely_small_palette,
+        prefers_run_coalescing: sample_count > 0 && adjacent_matches * 4 >= sample_count * 3,
     }
-    let step = (pixel_count / SAMPLE_COUNT).max(1);
-    let rgba_pointer = rgba_stream.as_ptr();
-    let mut matches = 0usize;
-    let mut samples = 0usize;
-    let mut pixel = 0usize;
-    while pixel + 1 < pixel_count && samples < SAMPLE_COUNT {
-        let current =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(pixel * 4).cast()) });
-        let next = u32::from_le(unsafe {
-            std::ptr::read_unaligned(rgba_pointer.add((pixel + 1) * 4).cast())
-        });
-        matches += usize::from(current == next);
-        samples += 1;
-        pixel += step;
-    }
-    matches * 4 >= samples * 3
-}
-
-#[inline(never)]
-fn quality_low_res_likely_small_palette(rgba_stream: &[u8], alpha_threshold: u8) -> bool {
-    const SAMPLE_COUNT: usize = 64;
-    const SAMPLE_COLOR_LIMIT: usize = 12;
-    let pixel_count = rgba_stream.len() / 4;
-    let sample_count = pixel_count.min(SAMPLE_COUNT);
-    let mut colors = [u32::MAX; SAMPLE_COLOR_LIMIT];
-    let mut color_count = 0usize;
-    let step = (pixel_count / sample_count.max(1)).max(1);
-    let rgba_pointer = rgba_stream.as_ptr();
-    let mut pixel = 0usize;
-    for _ in 0..sample_count {
-        let packed =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(pixel * 4).cast()) });
-        if ((packed >> 24) as u8) >= alpha_threshold {
-            let rgb = packed & 0x00ff_ffff;
-            if !colors[..color_count].contains(&rgb) {
-                if color_count == SAMPLE_COLOR_LIMIT {
-                    return false;
-                }
-                colors[color_count] = rgb;
-                color_count += 1;
-            }
-        }
-        pixel = (pixel + step).min(pixel_count.saturating_sub(1));
-    }
-    true
 }
 
 #[inline(never)]

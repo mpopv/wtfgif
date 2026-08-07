@@ -4,6 +4,14 @@ All notable changes to wtfgif are documented here.
 
 ## Unreleased
 
+- Consolidate the first-encode exact-color, small-palette, and repeated-run
+  probes into one bounded sample, and let mid-sized low-color animations enter
+  the compact exact-color map sooner. GIF bytes and decoded pixels remain
+  unchanged; the fresh-process pixel-art median improves from 0.539 ms to
+  0.507 ms in the current corpus receipt.
+- Refresh the 10-fixture first-encode receipt and six-library browser chart.
+  The corpus spans **54.25x to 128.77x** with an **86.51x geometric mean**;
+  the five browser alternatives are **63.24x to 88.41x slower** than wtfgif.
 - Make encoding latency the only compression policy. Remove the public
   `compression` option and delete the balanced dictionary encoder from the
   JavaScript, Rust, Wasm, and native paths; all encoders now use literal LZW.

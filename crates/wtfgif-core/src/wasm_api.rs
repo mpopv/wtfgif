@@ -580,7 +580,8 @@ pub fn encode_rgba_quality_low_res_constant_delay_scratch_from_input(
     debug_assert!(rgba_stream.len() % 4 == 0);
     debug_assert!(rgba_stream.len() / 4 <= QUALITY_LOW_RES_PIXEL_LIMIT);
     let output = REUSABLE_GIF_OUTPUT.with(|scratch| std::mem::take(&mut *scratch.borrow_mut()));
-    let encoded = if !quality_low_res_likely_exact(rgba_stream, alpha_threshold)
+    let hints = quality_low_res_hints(rgba_stream, alpha_threshold);
+    let encoded = if !hints.likely_exact
         && quality_low_res_exact_is_impossible(rgba_stream, alpha_threshold)
     {
         encode_rgba_quality_low_res_quantized_gif_inner_with_output::<true>(
@@ -595,7 +596,7 @@ pub fn encode_rgba_quality_low_res_constant_delay_scratch_from_input(
             output,
         )
     } else {
-        if quality_low_res_prefers_run_coalescing(rgba_stream) {
+        if hints.prefers_run_coalescing {
             encode_rgba_quality_low_res_exact_gif_inner_with_output::<true>(
                 rgba_stream,
                 width,
@@ -604,8 +605,7 @@ pub fn encode_rgba_quality_low_res_constant_delay_scratch_from_input(
                 DelaySource::Constant(delay),
                 loop_count,
                 alpha_threshold,
-                rgba_stream.len() >= 100_000 * 4
-                    && quality_low_res_likely_small_palette(rgba_stream, alpha_threshold),
+                rgba_stream.len() >= 40_000 * 4 && hints.likely_small_palette,
                 output,
             )
         } else {
@@ -617,8 +617,7 @@ pub fn encode_rgba_quality_low_res_constant_delay_scratch_from_input(
                 DelaySource::Constant(delay),
                 loop_count,
                 alpha_threshold,
-                rgba_stream.len() >= 100_000 * 4
-                    && quality_low_res_likely_small_palette(rgba_stream, alpha_threshold),
+                rgba_stream.len() >= 40_000 * 4 && hints.likely_small_palette,
                 output,
             )
         }
@@ -656,8 +655,8 @@ pub fn encode_rgba_quality_gif_constant_delay_scratch_from_input(
     let low_res =
         rgba_stream.len() % 4 == 0 && rgba_stream.len() / 4 <= QUALITY_LOW_RES_PIXEL_LIMIT;
     let encoded = if low_res {
-        if !quality_low_res_likely_exact(rgba_stream, alpha_threshold)
-            && quality_low_res_exact_is_impossible(rgba_stream, alpha_threshold)
+        let hints = quality_low_res_hints(rgba_stream, alpha_threshold);
+        if !hints.likely_exact && quality_low_res_exact_is_impossible(rgba_stream, alpha_threshold)
         {
             encode_rgba_quality_low_res_quantized_gif_inner_with_output::<true>(
                 rgba_stream,
@@ -671,7 +670,7 @@ pub fn encode_rgba_quality_gif_constant_delay_scratch_from_input(
                 output,
             )
         } else {
-            if quality_low_res_prefers_run_coalescing(rgba_stream) {
+            if hints.prefers_run_coalescing {
                 encode_rgba_quality_low_res_exact_gif_inner_with_output::<true>(
                     rgba_stream,
                     width,
@@ -680,8 +679,7 @@ pub fn encode_rgba_quality_gif_constant_delay_scratch_from_input(
                     DelaySource::Constant(delay),
                     loop_count,
                     alpha_threshold,
-                    rgba_stream.len() >= 100_000 * 4
-                        && quality_low_res_likely_small_palette(rgba_stream, alpha_threshold),
+                    rgba_stream.len() >= 40_000 * 4 && hints.likely_small_palette,
                     output,
                 )
             } else {
@@ -693,8 +691,7 @@ pub fn encode_rgba_quality_gif_constant_delay_scratch_from_input(
                     DelaySource::Constant(delay),
                     loop_count,
                     alpha_threshold,
-                    rgba_stream.len() >= 100_000 * 4
-                        && quality_low_res_likely_small_palette(rgba_stream, alpha_threshold),
+                    rgba_stream.len() >= 40_000 * 4 && hints.likely_small_palette,
                     output,
                 )
             }
@@ -775,7 +772,9 @@ pub fn encode_rgba_quality_gif_scratch_from_input(
     let low_res =
         rgba_stream.len() % 4 == 0 && rgba_stream.len() / 4 <= QUALITY_LOW_RES_PIXEL_LIMIT;
     let encoded = if low_res {
-        if quality_low_res_exact_is_impossible(rgba_stream, alpha_threshold) {
+        let hints = quality_low_res_hints(rgba_stream, alpha_threshold);
+        if !hints.likely_exact && quality_low_res_exact_is_impossible(rgba_stream, alpha_threshold)
+        {
             encode_rgba_quality_low_res_quantized_gif_inner_with_output::<false>(
                 rgba_stream,
                 width,
@@ -796,8 +795,7 @@ pub fn encode_rgba_quality_gif_scratch_from_input(
                 DelaySource::PerFrame(delays),
                 loop_count,
                 alpha_threshold,
-                rgba_stream.len() >= 100_000 * 4
-                    && quality_low_res_likely_small_palette(rgba_stream, alpha_threshold),
+                rgba_stream.len() >= 40_000 * 4 && hints.likely_small_palette,
                 output,
             )
         }

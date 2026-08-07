@@ -546,10 +546,7 @@ fn likely_exact_delta_probe_falls_back_without_changing_quantization() {
         sample_pixel = (sample_pixel + 8_191) % pixel_count;
     }
 
-    assert!(quality_low_res_likely_exact(
-        &rgba,
-        TRANSPARENT_ALPHA_THRESHOLD,
-    ));
+    assert!(quality_low_res_hints(&rgba, TRANSPARENT_ALPHA_THRESHOLD).likely_exact);
     assert!(quality_low_res_exact_is_impossible(
         &rgba,
         TRANSPARENT_ALPHA_THRESHOLD,

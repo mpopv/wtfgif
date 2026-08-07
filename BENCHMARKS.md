@@ -26,18 +26,18 @@ Node.js 22.23.2.
 
 | Fixture | Shape | wtfgif | image-q + omggif | Speedup | File-size ratio |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| MakeEmoji production sample | 128×128×8 | 1.236 ms | 132.206 ms | **106.97×** | 3.80× |
-| Photographic animation | 128×96×8 | 0.875 ms | 65.084 ms | **74.40×** | 1.84× |
-| Pixel art | 64×64×12 | 0.539 ms | 27.832 ms | **51.61×** | 6.35× |
-| Smooth gradients | 128×128×8 | 1.597 ms | 115.785 ms | **72.48×** | 8.00× |
-| Random noise | 128×128×8 | 0.792 ms | 92.107 ms | **116.36×** | 7.28× |
-| Transparency | 128×128×8 | 0.648 ms | 46.071 ms | **71.05×** | 20.85× |
-| Disjoint frame palettes | 128×128×8 | 0.697 ms | 57.713 ms | **82.77×** | 7.64× |
-| Nearly static animation | 128×128×12 | 0.967 ms | 73.139 ms | **75.65×** | 12.19× |
-| Tiny animation | 16×16×6 | 0.475 ms | 53.573 ms | **112.83×** | 1.17× |
-| One-megapixel animation | 512×512×4 | 4.385 ms | 565.382 ms | **128.93×** | 22.74× |
+| MakeEmoji production sample | 128×128×8 | 1.229 ms | 130.547 ms | **106.21×** | 3.80× |
+| Photographic animation | 128×96×8 | 0.855 ms | 64.753 ms | **75.76×** | 1.84× |
+| Pixel art | 64×64×12 | 0.507 ms | 27.479 ms | **54.25×** | 6.35× |
+| Smooth gradients | 128×128×8 | 1.571 ms | 113.256 ms | **72.07×** | 8.00× |
+| Random noise | 128×128×8 | 0.774 ms | 90.360 ms | **116.72×** | 7.28× |
+| Transparency | 128×128×8 | 0.655 ms | 45.419 ms | **69.34×** | 20.85× |
+| Disjoint frame palettes | 128×128×8 | 0.678 ms | 57.102 ms | **84.16×** | 7.64× |
+| Nearly static animation | 128×128×12 | 0.971 ms | 72.260 ms | **74.41×** | 12.19× |
+| Tiny animation | 16×16×6 | 0.463 ms | 52.930 ms | **114.39×** | 1.17× |
+| One-megapixel animation | 512×512×4 | 4.332 ms | 557.792 ms | **128.77×** | 22.74× |
 
-The observed range is 51.61×–128.93×, with an 86.11× geometric-mean speedup.
+The observed range is 54.25×–128.77×, with an 86.51× geometric-mean speedup.
 The corresponding files are 1.17×–22.74× larger, with a 6.50× geometric mean.
 This is the library's intended tradeoff: encode latency takes priority over
 compression ratio.
@@ -98,12 +98,12 @@ Chrome 151.0.7922.77.
 
 | Implementation | Version | Median | wtfgif advantage | Bytes | PSNR | Alpha match |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| **wtfgif** | 3.0.6 | **1.435 ms** | — | 149,689 | 34.12 dB | 100% |
-| gif.js | 0.2.0 | 94.325 ms | **65.73×** | 80,869 | 33.08 dB | 99.78% |
-| image-q + omggif | 2.1.2 + 1.0.10 | 96.860 ms | **67.50×** | 39,350 | 31.84 dB | 100% |
-| gif.js.optimized | 1.0.1 | 107.990 ms | **75.25×** | 80,304 | 32.20 dB | 99.76% |
-| gifenc | 1.0.3 | 123.900 ms | **86.34×** | 39,101 | 34.54 dB | 100% |
-| modern-gif | 2.1.0 | 132.675 ms | **92.46×** | 43,114 | 32.65 dB | 100% |
+| **wtfgif** | 3.0.6 | **1.490 ms** | — | 149,689 | 34.12 dB | 100% |
+| gif.js | 0.2.0 | 94.225 ms | **63.24×** | 80,869 | 33.08 dB | 99.78% |
+| image-q + omggif | 2.1.2 + 1.0.10 | 96.805 ms | **64.97×** | 39,350 | 31.84 dB | 100% |
+| gif.js.optimized | 1.0.1 | 106.600 ms | **71.54×** | 80,304 | 32.20 dB | 99.76% |
+| gifenc | 1.0.3 | 124.565 ms | **83.60×** | 39,101 | 34.54 dB | 100% |
+| modern-gif | 2.1.0 | 131.735 ms | **88.41×** | 43,114 | 32.65 dB | 100% |
 
 Every output must parse as an eight-frame 128×128 animation with exact 100 ms
 delays before its sample is accepted. The validator composites all frames,
@@ -157,14 +157,14 @@ output bytes alongside speed. The wtfgif palette is higher quality on this
 fixture while remaining 287.47× faster. Literal LZW is lossless for the
 indexed pixels, so the speedup does not come from lowering GIF pixel quality.
 
-The quality path keeps exact source colors when a small palette is sufficient
-and uses a weighted 4-bit-per-channel histogram for ordinary photo-like and
-noisy inputs. Occupied coarse cells map directly when they fit the GIF palette;
-a one-cell overflow uses a targeted weighted merge, while complete uniform
-color grids use a variance-balanced product palette. Other dense inputs use
-the general adaptive planner. A local-variation guard sends smooth ramps to a
-finer 5-bit histogram. These are internal input-dependent optimizations, not
-user-selectable quality levels, and none reuse a prior source or palette.
+The quality path keeps exact source colors when a small palette is sufficient.
+Its low-resolution first-encode path uses a weighted 4-bit-per-channel
+histogram for ordinary photo-like, noisy, and smooth inputs. Occupied coarse
+cells map directly when they fit the GIF palette; a one-cell overflow uses a
+targeted weighted merge, while other dense inputs use the general adaptive
+planner. Larger inputs can use a finer histogram. These are internal
+input-dependent optimizations, not user-selectable quality levels, and none
+reuse a prior source or palette.
 
 For ordinary-sized inputs (up to one million pixels), the alpha check is
 fused into that histogram pass. Multi-megapixel inputs use a separate tight
