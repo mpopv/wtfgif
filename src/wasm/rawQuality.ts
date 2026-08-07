@@ -15,7 +15,9 @@ const nodeRequire = (() => {
 	const createRequire =
 		processWithBuiltins?.getBuiltinModule?.("node:module")?.createRequire;
 	if (createRequire) return createRequire(import.meta.url);
-	return typeof require === "function" ? require : null;
+	return typeof require === "function" && typeof require.resolve === "function"
+		? require
+		: null;
 })();
 
 type RawQualityExports = WebAssembly.Exports & {

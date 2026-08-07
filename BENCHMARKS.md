@@ -7,6 +7,60 @@ ordinary decoded images in, GIF bytes out.
 npm run bench
 ```
 
+## Browser encoder race
+
+```bash
+npm run bench:race
+```
+
+This comparison uses the same eight real 128×128 MakeEmoji RGBA frames and an
+alpha threshold of 179. Package code, the fixture fetch, and wtfgif's one-time
+Wasm initialization happen before the clock. The timed boundary includes
+palette creation, pixel mapping, GIF compression, and final byte assembly.
+
+Each sample is the first and only encode in a fresh, cross-origin-isolated
+Chrome process and fresh browser profile. There are no encode warmups, retained
+palettes, retained outputs, or scratch-buffer reuse between samples. The six
+encoders run in a rotating order to reduce thermal and ordering bias. Results
+below are medians from 15 processes per encoder on an Apple M3 Pro in Google
+Chrome 150.0.7871.187.
+
+| Implementation | Version | Median | wtfgif advantage | Bytes | PSNR | Alpha match |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| **wtfgif** | 3.0.3 | **2.090 ms** | — | 149,601 | 34.12 dB | 100% |
+| gif.js | 0.2.0 | 93.370 ms | **44.67×** | 80,869 | 33.08 dB | 99.78% |
+| image-q + omggif | 2.1.2 + 1.0.10 | 97.910 ms | **46.85×** | 39,350 | 31.84 dB | 100% |
+| gif.js.optimized | 1.0.1 | 104.345 ms | **49.93×** | 80,304 | 32.20 dB | 99.76% |
+| gifenc | 1.0.3 | 122.085 ms | **58.41×** | 39,101 | 34.54 dB | 100% |
+| modern-gif | 2.1.0 | 130.675 ms | **62.52×** | 43,114 | 32.65 dB | 100% |
+
+Every output must parse as an eight-frame 128×128 animation with exact 100 ms
+delays before its sample is accepted. The validator composites all frames,
+measures RGB PSNR on source-opaque pixels, and measures binary alpha agreement
+over every pixel. Raw timings and interquartile values are committed in
+[`benchmarks/encoder-race.json`](benchmarks/encoder-race.json); the README chart
+is generated from that receipt by `scripts/render-encoder-race-chart.mjs`.
+
+The adapters use each package's highest-color normal path:
+
+- wtfgif, modern-gif, gifenc, and image-q + omggif build one adaptive palette
+  across all eight frames. gifenc uses its higher-quality RGB565 mode.
+- gif.js and gif.js.optimized use their highest-quality `quality: 1` setting,
+  two workers, and their normal per-frame NeuQuant palettes. Their public API
+  spawns workers from `render()`, so worker creation is part of their timed job.
+- GIF has one-bit transparency. wtfgif, gifenc, modern-gif, and the omggif
+  pipeline apply the same threshold exactly. gif.js and gif.js.optimized only
+  expose color-key transparency; the adapter supplies a reserved key, and the
+  measured 99.78%/99.76% alpha agreement records the resulting collisions.
+- gifenc and modern-gif ignore typed-array byte offsets internally. The adapter
+  therefore copies each contiguous fixture frame into its own correctly sized
+  view inside the timed boundary. This preserves correct pixels instead of
+  giving either package a broken-but-fast result.
+
+The raw gif.js outputs contain their package's normal zero padding after the
+GIF trailer. The benchmark reports those bytes as emitted and validates them
+with omggif, which accepts that widely tolerated padding.
+
 ## Default: arbitrary RGBA images
 
 The committed workload is eight real images from MakeEmoji. Each image was
