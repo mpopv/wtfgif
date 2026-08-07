@@ -4,6 +4,7 @@
 
 use super::*;
 
+#[cfg(not(feature = "quality-only"))]
 #[wasm_bindgen]
 pub fn core_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
@@ -188,6 +189,7 @@ pub fn indexed_lzw_scratch_ptr() -> usize {
     REUSABLE_LZW_SCRATCH.with(|scratch| scratch.borrow().output.as_ptr() as usize)
 }
 
+#[cfg(not(feature = "quality-only"))]
 #[wasm_bindgen]
 pub fn wasm_memory() -> JsValue {
     wasm_bindgen::memory()
@@ -733,38 +735,6 @@ pub fn encode_rgba_gif_advanced_scratch_from_input(
 /// the hot call graph. The public TypeScript API selects this only for the
 /// normal arbitrary-image contract; other combinations use the generic
 /// advanced entry above.
-#[wasm_bindgen]
-pub fn encode_rgba_quality_gif_from_input(
-    length: usize,
-    width: u16,
-    height: u16,
-    frame_count: usize,
-    delays: &[u16],
-    loop_count: i32,
-    alpha_threshold: u8,
-) -> Result<Vec<u8>, JsValue> {
-    let input_ptr = REUSABLE_LZW_SCRATCH.with(|scratch| {
-        let scratch = scratch.borrow();
-        if length > scratch.input.len() * std::mem::size_of::<u32>() {
-            return Err(JsValue::from_str("RGBA input scratch buffer is too short"));
-        }
-        Ok(scratch.input.as_ptr().cast::<u8>())
-    })?;
-    let rgba_stream = unsafe { std::slice::from_raw_parts(input_ptr, length) };
-    let output = REUSABLE_GIF_OUTPUT.with(|scratch| std::mem::take(&mut *scratch.borrow_mut()));
-    encode_rgba_quality_gif_inner_with_output(
-        rgba_stream,
-        width,
-        height,
-        frame_count,
-        DelaySource::PerFrame(delays),
-        loop_count,
-        alpha_threshold,
-        output,
-    )
-    .map_err(|message| JsValue::from_str(&message))
-}
-
 /// Constant-delay variant of the specialized quality encoder. Keeping the
 /// scalar delay scalar across the Wasm boundary avoids allocating a temporary
 /// per-frame delay array for the common animation API.
@@ -777,17 +747,18 @@ pub fn encode_rgba_quality_gif_constant_delay_scratch_from_input(
     delay: u16,
     loop_count: i32,
     alpha_threshold: u8,
-) -> Result<usize, JsValue> {
+) -> usize {
     let input_ptr = REUSABLE_LZW_SCRATCH.with(|scratch| {
         let scratch = scratch.borrow();
-        if length > scratch.input.len() * std::mem::size_of::<u32>() {
-            return Err(JsValue::from_str("RGBA input scratch buffer is too short"));
-        }
-        Ok(scratch.input.as_ptr().cast::<u8>())
-    })?;
+        (length <= scratch.input.len() * std::mem::size_of::<u32>())
+            .then(|| scratch.input.as_ptr().cast::<u8>())
+    });
+    let Some(input_ptr) = input_ptr else {
+        return 0;
+    };
     let rgba_stream = unsafe { std::slice::from_raw_parts(input_ptr, length) };
     let output = REUSABLE_GIF_OUTPUT.with(|scratch| std::mem::take(&mut *scratch.borrow_mut()));
-    let encoded = encode_rgba_quality_gif_inner_with_output(
+    let Ok(encoded) = encode_rgba_quality_gif_inner_with_output(
         rgba_stream,
         width,
         height,
@@ -796,13 +767,32 @@ pub fn encode_rgba_quality_gif_constant_delay_scratch_from_input(
         loop_count,
         alpha_threshold,
         output,
-    )
-    .map_err(|message| JsValue::from_str(&message))?;
+    ) else {
+        return 0;
+    };
     let length = encoded.len();
     REUSABLE_GIF_OUTPUT.with(|scratch| {
         *scratch.borrow_mut() = encoded;
     });
-    Ok(length)
+    length
+}
+
+/// Reserves an aligned per-frame delay array immediately after the RGBA input
+/// in the reusable input scratch buffer and returns its pointer.
+#[wasm_bindgen]
+pub fn quality_delay_scratch_reserve(input_length: usize, delay_count: usize) -> usize {
+    let input_units = input_length.div_ceil(std::mem::size_of::<u32>());
+    let delay_units = delay_count.div_ceil(2);
+    REUSABLE_LZW_SCRATCH.with(|scratch| {
+        let mut scratch = scratch.borrow_mut();
+        let required_units = input_units.saturating_add(delay_units);
+        if scratch.input.len() < required_units {
+            let additional = required_units - scratch.input.len();
+            scratch.input.reserve(additional);
+            unsafe { scratch.input.set_len(required_units) };
+        }
+        unsafe { scratch.input.as_mut_ptr().add(input_units).cast::<u16>() as usize }
+    })
 }
 
 /// Scratch-output form of the specialized quality encoder. The returned
@@ -813,20 +803,32 @@ pub fn encode_rgba_quality_gif_scratch_from_input(
     width: u16,
     height: u16,
     frame_count: usize,
-    delays: &[u16],
+    delay_count: usize,
     loop_count: i32,
     alpha_threshold: u8,
-) -> Result<usize, JsValue> {
+) -> usize {
     let input_ptr = REUSABLE_LZW_SCRATCH.with(|scratch| {
         let scratch = scratch.borrow();
-        if length > scratch.input.len() * std::mem::size_of::<u32>() {
-            return Err(JsValue::from_str("RGBA input scratch buffer is too short"));
-        }
-        Ok(scratch.input.as_ptr().cast::<u8>())
-    })?;
+        (length <= scratch.input.len() * std::mem::size_of::<u32>())
+            .then(|| scratch.input.as_ptr().cast::<u8>())
+    });
+    let Some(input_ptr) = input_ptr else {
+        return 0;
+    };
+    let delays_ptr = REUSABLE_LZW_SCRATCH.with(|scratch| {
+        let scratch = scratch.borrow();
+        let input_units = length.div_ceil(std::mem::size_of::<u32>());
+        let delay_units = delay_count.div_ceil(2);
+        (input_units.saturating_add(delay_units) <= scratch.input.len())
+            .then(|| unsafe { scratch.input.as_ptr().add(input_units).cast::<u16>() })
+    });
+    let Some(delays_ptr) = delays_ptr else {
+        return 0;
+    };
     let rgba_stream = unsafe { std::slice::from_raw_parts(input_ptr, length) };
+    let delays = unsafe { std::slice::from_raw_parts(delays_ptr, delay_count) };
     let output = REUSABLE_GIF_OUTPUT.with(|scratch| std::mem::take(&mut *scratch.borrow_mut()));
-    let encoded = encode_rgba_quality_gif_inner_with_output(
+    let Ok(encoded) = encode_rgba_quality_gif_inner_with_output(
         rgba_stream,
         width,
         height,
@@ -835,13 +837,14 @@ pub fn encode_rgba_quality_gif_scratch_from_input(
         loop_count,
         alpha_threshold,
         output,
-    )
-    .map_err(|message| JsValue::from_str(&message))?;
+    ) else {
+        return 0;
+    };
     let length = encoded.len();
     REUSABLE_GIF_OUTPUT.with(|scratch| {
         *scratch.borrow_mut() = encoded;
     });
-    Ok(length)
+    length
 }
 
 #[wasm_bindgen]

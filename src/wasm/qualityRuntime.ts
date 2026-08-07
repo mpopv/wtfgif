@@ -30,10 +30,23 @@ async function loadBrowserCandidate(
 	const loaded = (await import(
 		/* @vite-ignore */ moduleUrl
 	)) as WasmQualityWebModule;
-	if (typeof loaded.default === "function") {
-		await loaded.default(moduleOrPath);
+	return initializeBrowserModule(loaded, moduleOrPath);
+}
+
+async function initializeBrowserModule(
+	module: WasmQualityWebModule,
+	moduleOrPath?: unknown,
+): Promise<WasmQualityCoreModule> {
+	if (typeof module.default !== "function") return validate(module);
+	const exports = (await module.default(
+		moduleOrPath === undefined ? undefined : { module_or_path: moduleOrPath },
+	)) as { memory?: WebAssembly.Memory } | undefined;
+	if (!(exports?.memory instanceof WebAssembly.Memory)) {
+		throw new Error(
+			"The wtfgif quality encoder did not export WebAssembly memory",
+		);
 	}
-	return validate(loaded);
+	return validate({ ...module, wasm_memory: () => exports.memory! });
 }
 
 export function setWasmQualityCoreModule(
@@ -51,9 +64,17 @@ export function initializeGlobalWasm(moduleOrPath?: unknown): Promise<void> {
 	if (initPromise) return initPromise;
 	initPromise = (async () => {
 		if (isWasmQualityCoreModule(moduleOrPath)) {
-			const module = moduleOrPath as WasmQualityWebModule;
-			if (typeof module.default === "function") await module.default();
-			setWasmQualityCoreModule(module);
+			setWasmQualityCoreModule(moduleOrPath);
+			return;
+		}
+		if (
+			moduleOrPath !== null &&
+			typeof moduleOrPath === "object" &&
+			typeof (moduleOrPath as WasmQualityWebModule).default === "function"
+		) {
+			setWasmQualityCoreModule(
+				await initializeBrowserModule(moduleOrPath as WasmQualityWebModule),
+			);
 			return;
 		}
 		if (cached === null) cached = undefined;
@@ -80,12 +101,7 @@ export async function initializeWasmModule(
 	module: WasmQualityWebModule,
 	moduleOrPath?: unknown,
 ): Promise<void> {
-	if (typeof module.default === "function") {
-		await module.default(
-			moduleOrPath === undefined ? undefined : { module_or_path: moduleOrPath },
-		);
-	}
-	setWasmQualityCoreModule(module);
+	setWasmQualityCoreModule(await initializeBrowserModule(module, moduleOrPath));
 }
 
 export function getWasmStatus() {

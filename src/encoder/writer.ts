@@ -349,6 +349,15 @@ function encodeRgbaQualityWasm(
 		frameCount,
 	);
 	if (!scratchMemory) return null;
+	let delayCount = 0;
+	if (typeof delays !== "number") {
+		delayCount = delays.length;
+		const delayPointer = wasmCore.quality_delay_scratch_reserve(
+			inputLength,
+			delayCount,
+		);
+		new Uint16Array(scratchMemory.buffer, delayPointer, delayCount).set(delays);
+	}
 	const outputLength =
 		typeof delays === "number"
 			? wasmCore.encode_rgba_quality_gif_constant_delay_scratch_from_input(
@@ -365,10 +374,11 @@ function encodeRgbaQualityWasm(
 					width,
 					height,
 					frameCount,
-					delays,
+					delayCount,
 					loop === null ? -1 : loop,
 					alphaThreshold,
 				);
+	if (outputLength === 0) throw new Error("Wasm quality encoding failed.");
 	return new Uint8Array(
 		scratchMemory.buffer,
 		wasmCore.gif_output_scratch_ptr(),

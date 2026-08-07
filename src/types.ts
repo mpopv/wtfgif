@@ -263,21 +263,16 @@ export interface WasmCoreModule {
 		quantization: number,
 		paletteMode: number,
 	) => number;
-	encode_rgba_quality_gif_from_input: (
-		length: number,
-		width: number,
-		height: number,
-		frameCount: number,
-		delays: Uint16Array,
-		loopCount: number,
-		alphaThreshold: number,
-	) => Uint8Array;
+	quality_delay_scratch_reserve: (
+		inputLength: number,
+		delayCount: number,
+	) => number;
 	encode_rgba_quality_gif_scratch_from_input: (
 		length: number,
 		width: number,
 		height: number,
 		frameCount: number,
-		delays: Uint16Array,
+		delayCount: number,
 		loopCount: number,
 		alphaThreshold: number,
 	) => number;
@@ -322,7 +317,7 @@ export type WasmEncodeCoreModule = Pick<
 	| "encode_rgba_gif_advanced"
 	| "encode_rgba_gif_advanced_from_input"
 	| "encode_rgba_gif_advanced_scratch_from_input"
-	| "encode_rgba_quality_gif_from_input"
+	| "quality_delay_scratch_reserve"
 	| "encode_rgba_quality_gif_scratch_from_input"
 	| "encode_rgba_quality_gif_constant_delay_scratch_from_input"
 	| "gif_output_scratch_ptr"
@@ -330,24 +325,18 @@ export type WasmEncodeCoreModule = Pick<
 
 /** Minimal ABI exported by the encode-only quality Wasm artifact. */
 export interface WasmQualityCoreModule {
-	core_version: () => string;
 	indexed_lzw_input_scratch_reserve: (length: number) => number;
 	wasm_memory: () => WebAssembly.Memory;
-	encode_rgba_quality_gif_from_input: (
-		length: number,
-		width: number,
-		height: number,
-		frameCount: number,
-		delays: Uint16Array,
-		loopCount: number,
-		alphaThreshold: number,
-	) => Uint8Array;
+	quality_delay_scratch_reserve: (
+		inputLength: number,
+		delayCount: number,
+	) => number;
 	encode_rgba_quality_gif_scratch_from_input: (
 		length: number,
 		width: number,
 		height: number,
 		frameCount: number,
-		delays: Uint16Array,
+		delayCount: number,
 		loopCount: number,
 		alphaThreshold: number,
 	) => number;

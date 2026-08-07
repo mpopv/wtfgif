@@ -2,6 +2,22 @@
 
 All notable changes to wtfgif are documented here.
 
+## 3.0.3 - 2026-08-06
+
+- Reduce the first real arbitrary-RGBA encode by simplifying the quality-only
+  Wasm ABI, specializing histogram and palette-planning branches at compile
+  time, and reusing the exact-color probe's palette allocation.
+- Speed up exact palette mapping with packed hash entries, compact Wasm color
+  records, radix palette selection, and tighter exact KD-tree searches. Pin the
+  proven Rust toolchain and use a small growable Wasm allocator arena. GIF
+  bytes, decoded pixels, transparency, and quality remain unchanged.
+- The adversarial parity corpus is **108/108 byte-for-byte exact**. Fresh
+  release receipts are **72.22x** for the first normal encode after Wasm
+  initialization (127.492 ms vs 1.765 ms), **241.24x initialized normal**
+  (97.037 ms vs 0.402 ms), **760.48x** for the first initialized stress encode
+  (6,440.154 ms vs 8.469 ms), and **1364.67x initialized stress** (6,493.282 ms
+  vs 4.758 ms).
+
 ## 3.0.2 - 2026-08-06
 
 - Vectorize mixed-alpha histogram indexing and the first four palette mappings

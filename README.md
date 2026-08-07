@@ -89,12 +89,12 @@ The baseline is `image-q` plus `omggif`.
 
 | Boundary | Baseline | wtfgif | Faster |
 | --- | ---: | ---: | ---: |
-| First normal encode after Wasm initialization, zero warmups | 130.470 ms | 2.333 ms | **55.92×** |
-| Normal encode in a fresh worker | 145.221 ms | 3.780 ms | **38.42×** |
-| Complete fresh normal process | 175.615 ms | 33.077 ms | **5.31×** |
-| Initialized normal throughput | 100.554 ms | 0.430 ms | **233.64×** |
-| First 10 × 512×512 stress encode, zero warmups | 6,516.296 ms | 11.184 ms | **582.66×** |
-| Complete fresh stress process | 7,285.050 ms | 71.463 ms | **101.94×** |
+| First normal encode after Wasm initialization, zero warmups | 127.492 ms | 1.765 ms | **72.22×** |
+| Initialized normal throughput | 97.037 ms | 0.402 ms | **241.24×** |
+| Complete fresh normal process | 171.298 ms | 31.737 ms | **5.40×** |
+| First 10 × 512×512 stress encode after initialization | 6,440.154 ms | 8.469 ms | **760.48×** |
+| Initialized stress throughput | 6,493.282 ms | 4.758 ms | **1364.67×** |
+| Complete fresh stress process | 6,513.887 ms | 58.699 ms | **110.97×** |
 
 The normal wtfgif output is 149,601 bytes at 34.12 dB PSNR. The stress output
 is 2,973,381 bytes at 26.19 dB. Literal LZW preserves the selected pixels

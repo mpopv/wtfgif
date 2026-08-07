@@ -1037,13 +1037,14 @@ fn wu_dense_palette_improves_weighted_error_without_approximate_mapping() {
             .sum()
     };
 
-    let (wu_palette, wu_mapping) = build_quality_wu_palette(false, colors.clone(), 1 << 12, 256);
+    let (wu_palette, wu_mapping) =
+        build_quality_wu_palette(false, colors.clone(), 1 << 12, 256, Vec::new());
     let wu_error = weighted_error(&wu_palette, &wu_mapping, &colors);
     recycle_quality_histogram_to_palette(wu_mapping);
     recycle_quality_palette(wu_palette);
 
     let (median_palette, median_mapping) =
-        build_quality_median_cut_palette(false, colors.clone(), 4, 1 << 12, 256);
+        build_quality_median_cut_palette(false, colors.clone(), 4, 1 << 12, 256, Vec::new());
     let median_error = weighted_error(&median_palette, &median_mapping, &colors);
     recycle_quality_histogram_to_palette(median_mapping);
 

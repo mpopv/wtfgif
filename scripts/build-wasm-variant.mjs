@@ -30,7 +30,10 @@ if (feature) {
 const env = { ...process.env };
 if (variant === "simd") {
 	const currentFlags = env.RUSTFLAGS?.trim();
-	env.RUSTFLAGS = [currentFlags, "-C target-feature=+simd128"]
+	env.RUSTFLAGS = [
+		currentFlags,
+		"-C target-feature=+simd128,+bulk-memory,+nontrapping-fptoint",
+	]
 		.filter(Boolean)
 		.join(" ");
 }

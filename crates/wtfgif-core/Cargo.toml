@@ -17,8 +17,11 @@ quality-only = ["encode-only"]
 [dependencies]
 wasm-bindgen = "0.2"
 
+[target.'cfg(target_family = "wasm")'.dependencies]
+talc = { version = "=5.0.4", default-features = false }
+
 [package.metadata.wasm-pack.profile.release]
-wasm-opt = ["-O", "--inline-max-combined-binary-size=5000"]
+wasm-opt = ["-O3", "--inline-max-combined-binary-size=5000"]
 
 [profile.release]
 opt-level = 3

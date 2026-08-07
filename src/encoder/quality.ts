@@ -78,6 +78,15 @@ export function encodeRgbaGifFrames(
 		inputLength,
 	);
 	copyFrames(input, options.frames, frameByteSize, frameCount);
+	let delayCount = 0;
+	if (typeof delay !== "number") {
+		delayCount = delay.length;
+		const delayPointer = module.quality_delay_scratch_reserve(
+			inputLength,
+			delayCount,
+		);
+		new Uint16Array(scratchMemory.buffer, delayPointer, delayCount).set(delay);
+	}
 
 	const outputLength =
 		typeof delay === "number"
@@ -95,10 +104,11 @@ export function encodeRgbaGifFrames(
 					width,
 					height,
 					frameCount,
-					delay,
+					delayCount,
 					loop,
 					alphaThreshold,
 				);
+	if (outputLength === 0) throw new Error("Wasm quality encoding failed.");
 	return new Uint8Array(
 		scratchMemory.buffer,
 		module.gif_output_scratch_ptr(),
