@@ -19,24 +19,25 @@ Each sample runs in a fresh Node process. Package loading and wtfgif Wasm
 initialization happen before the clock; the first and only synchronous encode
 is timed. There are zero encode warmups and no palettes, source pixels, scratch
 buffers, or output results retained between processes. Encoder order alternates
-by fixture and process. Validation and quality measurement are outside the
-clock. Results below are medians from 15 processes per implementation on an
-Apple M3 Pro with Node.js 22.23.2.
+by fixture and process, and each worker loads only the implementation it is
+measuring. Validation and quality measurement are outside the clock. Results
+below are medians from 15 processes per implementation on an Apple M3 Pro with
+Node.js 22.23.2.
 
 | Fixture | Shape | wtfgif | image-q + omggif | Speedup | File-size ratio |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| MakeEmoji production sample | 128×128×8 | 1.182 ms | 130.531 ms | **110.43×** | 3.80× |
-| Photographic animation | 128×96×8 | 1.089 ms | 66.697 ms | **61.26×** | 1.84× |
-| Pixel art | 64×64×12 | 0.503 ms | 27.149 ms | **54.02×** | 6.35× |
-| Smooth gradients | 128×128×8 | 1.482 ms | 113.637 ms | **76.69×** | 8.00× |
-| Random noise | 128×128×8 | 1.511 ms | 90.776 ms | **60.09×** | 7.28× |
-| Transparency | 128×128×8 | 0.799 ms | 46.002 ms | **57.57×** | 20.85× |
-| Disjoint frame palettes | 128×128×8 | 0.671 ms | 61.159 ms | **91.11×** | 7.64× |
-| Nearly static animation | 128×128×12 | 1.012 ms | 70.962 ms | **70.15×** | 12.19× |
-| Tiny animation | 16×16×6 | 0.912 ms | 53.359 ms | **58.50×** | 1.17× |
-| One-megapixel animation | 512×512×4 | 4.300 ms | 554.101 ms | **128.86×** | 22.74× |
+| MakeEmoji production sample | 128×128×8 | 1.236 ms | 132.206 ms | **106.97×** | 3.80× |
+| Photographic animation | 128×96×8 | 0.875 ms | 65.084 ms | **74.40×** | 1.84× |
+| Pixel art | 64×64×12 | 0.539 ms | 27.832 ms | **51.61×** | 6.35× |
+| Smooth gradients | 128×128×8 | 1.597 ms | 115.785 ms | **72.48×** | 8.00× |
+| Random noise | 128×128×8 | 0.792 ms | 92.107 ms | **116.36×** | 7.28× |
+| Transparency | 128×128×8 | 0.648 ms | 46.071 ms | **71.05×** | 20.85× |
+| Disjoint frame palettes | 128×128×8 | 0.697 ms | 57.713 ms | **82.77×** | 7.64× |
+| Nearly static animation | 128×128×12 | 0.967 ms | 73.139 ms | **75.65×** | 12.19× |
+| Tiny animation | 16×16×6 | 0.475 ms | 53.573 ms | **112.83×** | 1.17× |
+| One-megapixel animation | 512×512×4 | 4.385 ms | 565.382 ms | **128.93×** | 22.74× |
 
-The observed range is 54.02×–128.86×, with a 73.61× geometric-mean speedup.
+The observed range is 51.61×–128.93×, with an 86.11× geometric-mean speedup.
 The corresponding files are 1.17×–22.74× larger, with a 6.50× geometric mean.
 This is the library's intended tradeoff: encode latency takes priority over
 compression ratio.
@@ -97,12 +98,12 @@ Chrome 151.0.7922.77.
 
 | Implementation | Version | Median | wtfgif advantage | Bytes | PSNR | Alpha match |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| **wtfgif** | 3.0.6 | **1.465 ms** | — | 149,689 | 34.12 dB | 100% |
-| gif.js | 0.2.0 | 110.205 ms | **75.23×** | 80,869 | 33.08 dB | 99.78% |
-| gifenc | 1.0.3 | 126.955 ms | **86.66×** | 39,101 | 34.54 dB | 100% |
-| gif.js.optimized | 1.0.1 | 128.075 ms | **87.42×** | 80,304 | 32.20 dB | 99.76% |
-| modern-gif | 2.1.0 | 128.460 ms | **87.69×** | 43,114 | 32.65 dB | 100% |
-| image-q + omggif | 2.1.2 + 1.0.10 | 166.285 ms | **113.51×** | 39,350 | 31.84 dB | 100% |
+| **wtfgif** | 3.0.6 | **1.435 ms** | — | 149,689 | 34.12 dB | 100% |
+| gif.js | 0.2.0 | 94.325 ms | **65.73×** | 80,869 | 33.08 dB | 99.78% |
+| image-q + omggif | 2.1.2 + 1.0.10 | 96.860 ms | **67.50×** | 39,350 | 31.84 dB | 100% |
+| gif.js.optimized | 1.0.1 | 107.990 ms | **75.25×** | 80,304 | 32.20 dB | 99.76% |
+| gifenc | 1.0.3 | 123.900 ms | **86.34×** | 39,101 | 34.54 dB | 100% |
+| modern-gif | 2.1.0 | 132.675 ms | **92.46×** | 43,114 | 32.65 dB | 100% |
 
 Every output must parse as an eight-frame 128×128 animation with exact 100 ms
 delays before its sample is accepted. The validator composites all frames,
@@ -156,13 +157,14 @@ output bytes alongside speed. The wtfgif palette is higher quality on this
 fixture while remaining 287.47× faster. Literal LZW is lossless for the
 indexed pixels, so the speedup does not come from lowering GIF pixel quality.
 
-The quality path uses a weighted 4-bit-per-channel histogram for ordinary
-noisy/photo-like large workloads and the full 5-bit-per-channel histogram for
-smooth ramps. A small local-variation sample chooses the precision before the
-mandatory full scan. This is an internal memory/throughput optimization, not a
-user-selectable quality mode: both branches use adaptive palettes, and smooth
-gradients use the finer histogram, with a compact 4-bit parent-cell lookup
-when the dense color set does not fit in the smaller table.
+The quality path keeps exact source colors when a small palette is sufficient
+and uses a weighted 4-bit-per-channel histogram for ordinary photo-like and
+noisy inputs. Occupied coarse cells map directly when they fit the GIF palette;
+a one-cell overflow uses a targeted weighted merge, while complete uniform
+color grids use a variance-balanced product palette. Other dense inputs use
+the general adaptive planner. A local-variation guard sends smooth ramps to a
+finer 5-bit histogram. These are internal input-dependent optimizations, not
+user-selectable quality levels, and none reuse a prior source or palette.
 
 For ordinary-sized inputs (up to one million pixels), the alpha check is
 fused into that histogram pass. Multi-megapixel inputs use a separate tight

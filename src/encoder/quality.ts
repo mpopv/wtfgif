@@ -326,11 +326,22 @@ function normalizeDelays(
 	if (delay.length !== frameCount) {
 		throw new Error("Delay count does not match frame count.");
 	}
-	const normalized = new Uint16Array(frameCount);
-	for (let frame = 0; frame < frameCount; frame++) {
-		normalized[frame] = checkedU16(delay[frame] ?? 0, "Delay invalid.");
+	const first = checkedU16(delay[0] ?? 0, "Delay invalid.");
+	for (let frame = 1; frame < frameCount; frame++) {
+		const current = checkedU16(delay[frame] ?? 0, "Delay invalid.");
+		if (current === first) continue;
+		const normalized = new Uint16Array(frameCount);
+		normalized.fill(first, 0, frame);
+		normalized[frame] = current;
+		for (let remaining = frame + 1; remaining < frameCount; remaining++) {
+			normalized[remaining] = checkedU16(
+				delay[remaining] ?? 0,
+				"Delay invalid.",
+			);
+		}
+		return normalized;
 	}
-	return normalized;
+	return first;
 }
 
 function checkedU16(value: number, message: string): number {

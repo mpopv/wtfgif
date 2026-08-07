@@ -1,11 +1,12 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
+import { loadBenchmarkCorpus } from "./benchmark/corpus.mjs";
 
-const rgba = new Uint8Array(
-	readFileSync(
-		new URL("../test/rgba/makeemoji-128x128x8.rgba", import.meta.url),
-	),
-);
+const fixtureId = process.env.PROFILE_FIXTURE ?? "makeemoji-real";
+const fixture = loadBenchmarkCorpus().find((value) => value.id === fixtureId);
+if (!fixture) throw new Error(`Unknown PROFILE_FIXTURE: ${fixtureId}`);
+const { rgba, width, height, frameCount } = fixture;
 const wasmBytes = readFileSync(
 	process.env.PROFILE_WASM_PATH ??
 		new URL(
@@ -41,10 +42,10 @@ const reserved = performance.now();
 new Uint8Array(wasm.memory.buffer, inputPointer, rgba.length).set(rgba);
 const copiedInput = performance.now();
 const outputLength = (
-	process.env.PROFILE_GENERAL === "1"
+	rgba.length / 4 > 1_000_000 || process.env.PROFILE_GENERAL === "1"
 		? wasm.encode_rgba_quality_gif_constant_delay_scratch_from_input
 		: wasm.encode_rgba_quality_low_res_constant_delay_scratch_from_input
-)(rgba.length, 128, 128, 8, 10, 0, 179);
+)(rgba.length, width, height, frameCount, 10, 0, 179);
 const encoded = performance.now();
 const output = new Uint8Array(
 	wasm.memory.buffer,
@@ -64,5 +65,6 @@ process.stdout.write(
 		outputCopyMs: copiedOutput - encoded,
 		totalMs: copiedOutput - started,
 		outputBytes: output.length,
+		outputSha256: createHash("sha256").update(output).digest("hex"),
 	}),
 );

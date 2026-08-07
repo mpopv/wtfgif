@@ -4,14 +4,14 @@ import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium, firefox, webkit } from "playwright";
-import { encodeWtfgif, initializeAdapters } from "./benchmark/adapters.mjs";
+import { encodeWtfgif, initializeAdapter } from "./benchmark/adapters.mjs";
 import { ALPHA_THRESHOLD, loadBenchmarkCorpus } from "./benchmark/corpus.mjs";
 import { decodeCompositedGif } from "./benchmark/metrics.mjs";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const outputDir = join(root, "output", "playwright");
 mkdirSync(outputDir, { recursive: true });
-await initializeAdapters();
+await initializeAdapter("wtfgif");
 
 function sha256(bytes) {
 	return createHash("sha256").update(bytes).digest("hex");

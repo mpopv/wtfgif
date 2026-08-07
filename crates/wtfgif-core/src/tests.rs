@@ -1144,6 +1144,131 @@ fn wu_dense_palette_improves_weighted_error_without_approximate_mapping() {
 }
 
 #[test]
+fn flat_grid_palette_improves_uniform_color_volume_error() {
+    let mut colors = Vec::with_capacity(1 << 12);
+    for red in 0..16u16 {
+        for green in 0..16u16 {
+            for blue in 0..16u16 {
+                colors.push(QuantizedColor {
+                    count: QuantizedColorCount::from(1u16),
+                    histogram_index: (red << 8) | (green << 4) | blue,
+                    red: ((red << 4) | 8) as u8,
+                    green: ((green << 4) | 8) as u8,
+                    blue: ((blue << 4) | 8) as u8,
+                });
+            }
+        }
+    }
+    let weighted_error =
+        |palette: &[u32], mapping: &[u8], source_colors: &[QuantizedColor]| -> u64 {
+            source_colors
+                .iter()
+                .map(|color| {
+                    let representative =
+                        palette[usize::from(mapping[usize::from(color.histogram_index)])];
+                    let red = ((representative >> 16) & 255) as i32;
+                    let green = ((representative >> 8) & 255) as i32;
+                    let blue = (representative & 255) as i32;
+                    let dr = i32::from(color.red) - red;
+                    let dg = i32::from(color.green) - green;
+                    let db = i32::from(color.blue) - blue;
+                    (dr * dr + dg * dg + db * db) as u64
+                })
+                .sum()
+        };
+
+    let (grid_palette, grid_mapping) =
+        build_quality_flat_grid_palette(colors.clone(), 1 << 12, 256, Vec::new());
+    assert_eq!(grid_palette.len(), 256);
+    assert_eq!(grid_mapping.len(), 1 << 12);
+    assert!(grid_mapping
+        .iter()
+        .all(|&index| usize::from(index) < grid_palette.len()));
+    let grid_error = weighted_error(&grid_palette, &grid_mapping, &colors);
+
+    let (wu_palette, wu_mapping) =
+        build_quality_wu_palette(false, colors.clone(), 1 << 12, 256, Vec::new());
+    let wu_error = weighted_error(&wu_palette, &wu_mapping, &colors);
+    assert!(grid_error < wu_error, "{grid_error} should beat {wu_error}");
+
+    recycle_quality_histogram_to_palette(grid_mapping);
+    recycle_quality_palette(grid_palette);
+    recycle_quality_histogram_to_palette(wu_mapping);
+    recycle_quality_palette(wu_palette);
+}
+
+#[test]
+fn direct_cell_plan_preserves_every_coarse_representative() {
+    let colors: Vec<_> = (0..240u16)
+        .map(|histogram_index| QuantizedColor {
+            count: QuantizedColorCount::from(histogram_index + 1),
+            histogram_index,
+            red: ((histogram_index >> 8) as u8) * 16 + 8,
+            green: (((histogram_index >> 4) & 15) as u8) * 16 + 8,
+            blue: ((histogram_index & 15) as u8) * 16 + 8,
+        })
+        .collect();
+    let expected = colors.clone();
+    let plan = build_quality_direct_cell_plan(false, colors, Vec::new());
+
+    assert_eq!(plan.palette.len(), 256);
+    for color in expected {
+        let index = plan.histogram_to_palette[usize::from(color.histogram_index)];
+        assert_eq!(
+            plan.palette[usize::from(index)],
+            rgb_key(color.red, color.green, color.blue)
+        );
+    }
+
+    recycle_quality_histogram_to_palette(plan.histogram_to_palette);
+    recycle_quality_palette(plan.palette);
+}
+
+#[test]
+fn single_merge_plan_matches_general_palette_refinement() {
+    let colors: Vec<_> = (0..256u16)
+        .map(|position| {
+            let histogram_index = position;
+            QuantizedColor {
+                count: QuantizedColorCount::from(1 + (position * 41 + 7) % 251),
+                histogram_index,
+                red: ((histogram_index >> 8) as u8) * 16 + 8,
+                green: (((histogram_index >> 4) & 15) as u8) * 16 + 8,
+                blue: ((histogram_index & 15) as u8) * 16 + 8,
+            }
+        })
+        .collect();
+    let expected =
+        build_quality_index_plan_from_colors::<true, 4>(true, colors.clone(), Vec::new(), None);
+    let actual = build_quality_single_merge_plan(true, colors.clone(), Vec::new());
+
+    let weighted_error = |plan: &QualityIndexPlan| -> u64 {
+        colors
+            .iter()
+            .map(|color| {
+                let cell = usize::from(color.histogram_index);
+                let representative = plan.palette[usize::from(plan.histogram_to_palette[cell])];
+                let dr = i32::from(color.red) - ((representative >> 16) & 255) as i32;
+                let dg = i32::from(color.green) - ((representative >> 8) & 255) as i32;
+                let db = i32::from(color.blue) - (representative & 255) as i32;
+                (dr * dr + dg * dg + db * db) as u64 * quantized_color_count_u64(color.count)
+            })
+            .sum()
+    };
+    let expected_error = weighted_error(&expected);
+    let actual_error = weighted_error(&actual);
+    assert!(
+        actual_error <= expected_error,
+        "{actual_error} should not exceed {expected_error}"
+    );
+
+    recycle_quality_histogram_to_palette(expected.histogram_to_palette);
+    recycle_quality_palette(expected.palette);
+    recycle_quality_histogram_to_palette(actual.histogram_to_palette);
+    recycle_quality_palette(actual.palette);
+}
+
+#[test]
 fn quality_precision_guard_keeps_smooth_ramps_on_the_fine_histogram() {
     let mut gradient = Vec::new();
     let mut noisy = Vec::new();

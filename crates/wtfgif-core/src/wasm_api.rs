@@ -595,16 +595,33 @@ pub fn encode_rgba_quality_low_res_constant_delay_scratch_from_input(
             output,
         )
     } else {
-        encode_rgba_quality_low_res_exact_gif_inner_with_output(
-            rgba_stream,
-            width,
-            height,
-            frame_count,
-            DelaySource::Constant(delay),
-            loop_count,
-            alpha_threshold,
-            output,
-        )
+        if quality_low_res_prefers_run_coalescing(rgba_stream) {
+            encode_rgba_quality_low_res_exact_gif_inner_with_output::<true>(
+                rgba_stream,
+                width,
+                height,
+                frame_count,
+                DelaySource::Constant(delay),
+                loop_count,
+                alpha_threshold,
+                rgba_stream.len() >= 100_000 * 4
+                    && quality_low_res_likely_small_palette(rgba_stream, alpha_threshold),
+                output,
+            )
+        } else {
+            encode_rgba_quality_low_res_exact_gif_inner_with_output::<false>(
+                rgba_stream,
+                width,
+                height,
+                frame_count,
+                DelaySource::Constant(delay),
+                loop_count,
+                alpha_threshold,
+                rgba_stream.len() >= 100_000 * 4
+                    && quality_low_res_likely_small_palette(rgba_stream, alpha_threshold),
+                output,
+            )
+        }
     };
     let Ok(encoded) = encoded else {
         return 0;
@@ -654,16 +671,33 @@ pub fn encode_rgba_quality_gif_constant_delay_scratch_from_input(
                 output,
             )
         } else {
-            encode_rgba_quality_low_res_exact_gif_inner_with_output(
-                rgba_stream,
-                width,
-                height,
-                frame_count,
-                DelaySource::Constant(delay),
-                loop_count,
-                alpha_threshold,
-                output,
-            )
+            if quality_low_res_prefers_run_coalescing(rgba_stream) {
+                encode_rgba_quality_low_res_exact_gif_inner_with_output::<true>(
+                    rgba_stream,
+                    width,
+                    height,
+                    frame_count,
+                    DelaySource::Constant(delay),
+                    loop_count,
+                    alpha_threshold,
+                    rgba_stream.len() >= 100_000 * 4
+                        && quality_low_res_likely_small_palette(rgba_stream, alpha_threshold),
+                    output,
+                )
+            } else {
+                encode_rgba_quality_low_res_exact_gif_inner_with_output::<false>(
+                    rgba_stream,
+                    width,
+                    height,
+                    frame_count,
+                    DelaySource::Constant(delay),
+                    loop_count,
+                    alpha_threshold,
+                    rgba_stream.len() >= 100_000 * 4
+                        && quality_low_res_likely_small_palette(rgba_stream, alpha_threshold),
+                    output,
+                )
+            }
         }
     } else {
         encode_rgba_quality_gif_inner_with_output(
@@ -754,7 +788,7 @@ pub fn encode_rgba_quality_gif_scratch_from_input(
                 output,
             )
         } else {
-            encode_rgba_quality_low_res_exact_gif_inner_with_output(
+            encode_rgba_quality_low_res_exact_gif_inner_with_output::<false>(
                 rgba_stream,
                 width,
                 height,
@@ -762,6 +796,8 @@ pub fn encode_rgba_quality_gif_scratch_from_input(
                 DelaySource::PerFrame(delays),
                 loop_count,
                 alpha_threshold,
+                rgba_stream.len() >= 100_000 * 4
+                    && quality_low_res_likely_small_palette(rgba_stream, alpha_threshold),
                 output,
             )
         }

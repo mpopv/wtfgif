@@ -89,9 +89,9 @@ initializes Wasm before the clock, and times the first and only complete encode.
 There are no encode warmups or retained palettes, source pixels, scratch
 buffers, or output results between samples.
 
-Across the 10-fixture arbitrary-RGBA corpus, `wtfgif` encoded **54.02×–128.86×
-faster** than image-q + omggif, with a **73.61× geometric mean**. The real
-128×128 MakeEmoji workload was **110.43× faster** (1.182 ms vs 130.531 ms).
+Across the 10-fixture arbitrary-RGBA corpus, `wtfgif` encoded **51.61×–128.93×
+faster** than image-q + omggif, with an **86.11× geometric mean**. The real
+128×128 MakeEmoji workload was **106.97× faster** (1.236 ms vs 132.206 ms).
 Output files were 1.17×–22.74× larger, with a 6.50× geometric mean.
 
 ## Browser comparison

@@ -77,4 +77,17 @@ describe("encode-only quality entry", () => {
 			);
 		}
 	});
+
+	test("normalizes an equal delay array to the constant-delay encoding path", () => {
+		const options = {
+			width: 2,
+			height: 1,
+			frames,
+			frameCount: 2,
+			loop: 0,
+		} as const;
+		expect(
+			encodeRgbaGifFrames({ ...options, delay: Uint16Array.of(11, 11) }),
+		).toStrictEqual(encodeRgbaGifFrames({ ...options, delay: 11 }));
+	});
 });

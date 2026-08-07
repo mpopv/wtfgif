@@ -1,15 +1,22 @@
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const ImageQ = require("image-q");
-const { GifWriter } = require("omggif");
-
 let wtfgif;
+let ImageQ;
+let GifWriter;
 
-export async function initializeAdapters() {
-	wtfgif = await import("../../dist/encode.mjs");
-	await wtfgif.initializeWasmGlobally();
-	return wtfgif.getWasmStatus();
+export async function initializeAdapter(implementation) {
+	if (implementation === "wtfgif") {
+		wtfgif = await import("../../dist/encode.mjs");
+		await wtfgif.initializeWasmGlobally();
+		return wtfgif.getWasmStatus();
+	}
+	if (implementation === "image-q-rgbquant+omggif") {
+		ImageQ = require("image-q");
+		({ GifWriter } = require("omggif"));
+		return undefined;
+	}
+	throw new Error(`Unknown benchmark implementation: ${implementation}`);
 }
 
 function delayAt(delay, frame) {
@@ -106,6 +113,9 @@ function quantizeImageQGlobal(rgba, alphaThreshold) {
 }
 
 export function encodeImageQOmggif(value, alphaThreshold) {
+	if (!ImageQ || !GifWriter) {
+		throw new Error("Benchmark adapter has not been initialized");
+	}
 	const quantized = quantizeImageQGlobal(value.rgba, alphaThreshold);
 	const output = new Uint8Array(
 		quantized.indexed.length * 2 + value.frameCount * 1024 + 8192,

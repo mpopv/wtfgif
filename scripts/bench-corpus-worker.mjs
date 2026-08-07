@@ -3,7 +3,7 @@ import { performance } from "node:perf_hooks";
 import {
 	encodeImageQOmggif,
 	encodeWtfgif,
-	initializeAdapters,
+	initializeAdapter,
 } from "./benchmark/adapters.mjs";
 import { ALPHA_THRESHOLD, loadBenchmarkCorpus } from "./benchmark/corpus.mjs";
 
@@ -19,8 +19,7 @@ const value = loadBenchmarkCorpus({
 }).find((fixture) => fixture.id === fixtureId);
 if (!value) throw new Error(`Unknown corpus fixture: ${fixtureId}`);
 
-const wasmStatus =
-	implementation === "wtfgif" ? await initializeAdapters() : undefined;
+const wasmStatus = await initializeAdapter(implementation);
 const encode =
 	implementation === "wtfgif"
 		? encodeWtfgif
