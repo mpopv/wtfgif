@@ -4134,6 +4134,120 @@ fn encode_rgba_quality_gif_inner_with_output(
     }
 }
 
+/// Encode the quantized half of the normal-size quality path without making
+/// V8 compile the exact-color and high-resolution branches on the first
+/// photographic encode. The Wasm boundary proves the exact probe overflowed
+/// before entering here; less common inputs stay on the complete dispatcher.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn encode_rgba_quality_low_res_quantized_gif_inner_with_output(
+    rgba_stream: &[u8],
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    delays: DelaySource<'_>,
+    loop_count: i32,
+    alpha_threshold: u8,
+    output: Vec<u8>,
+) -> Result<Vec<u8>, String> {
+    #[cfg(not(target_arch = "wasm32"))]
+    validate_rgba_stream(rgba_stream, width, height, frame_count, delays, loop_count)?;
+    #[cfg(target_arch = "wasm32")]
+    debug_assert_eq!(
+        rgba_stream.len(),
+        usize::from(width) * usize::from(height) * frame_count * 4
+    );
+    let palette = take_quality_palette(256);
+    let plan = if alpha_threshold == 0 {
+        index_rgba_frames_quality_low_res_quantized_opaque(rgba_stream, palette)
+    } else {
+        index_rgba_frames_quality_low_res_quantized_alpha(rgba_stream, alpha_threshold, palette)
+    };
+    if plan.palette.len() == 256
+        && plan.histogram_indices.is_none()
+        && plan.histogram_bits == 4
+        && plan.mapping_bits == 4
+    {
+        encode_quality_four_bit_index_plan_literal_gif(
+            output,
+            rgba_stream,
+            width,
+            height,
+            frame_count,
+            delays,
+            loop_count,
+            alpha_threshold,
+            plan,
+        )
+    } else {
+        encode_quality_index_plan_literal_gif(
+            output,
+            rgba_stream,
+            width,
+            height,
+            frame_count,
+            delays,
+            loop_count,
+            alpha_threshold,
+            plan,
+        )
+    }
+}
+
+/// Encode the exact-color half of the normal-size quality path after the
+/// caller's stack probe has proved that every opaque RGB value fits in GIF's
+/// palette. Keeping this separate also prevents exact illustrations from
+/// compiling the quantizer and large-image encoder on their first call.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn encode_rgba_quality_low_res_exact_gif_inner_with_output(
+    rgba_stream: &[u8],
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    delays: DelaySource<'_>,
+    loop_count: i32,
+    alpha_threshold: u8,
+    output: Vec<u8>,
+) -> Result<Vec<u8>, String> {
+    #[cfg(not(target_arch = "wasm32"))]
+    validate_rgba_stream(rgba_stream, width, height, frame_count, delays, loop_count)?;
+    #[cfg(target_arch = "wasm32")]
+    debug_assert_eq!(
+        rgba_stream.len(),
+        usize::from(width) * usize::from(height) * frame_count * 4
+    );
+    match index_rgba_frames_quality_low_res_exact(rgba_stream, alpha_threshold) {
+        QualityIndexResult::Exact((palette, indexed, transparent_index)) => {
+            let encoded = encode_indexed_literal_gif_inner_with_output(
+                output,
+                &indexed,
+                width,
+                height,
+                frame_count,
+                &palette,
+                delays,
+                loop_count,
+                transparent_index,
+            );
+            recycle_quality_palette(palette);
+            recycle_quantized_indexed(indexed);
+            encoded
+        }
+        QualityIndexResult::Quantized(plan) => encode_quality_index_plan_literal_gif(
+            output,
+            rgba_stream,
+            width,
+            height,
+            frame_count,
+            delays,
+            loop_count,
+            alpha_threshold,
+            plan,
+        ),
+    }
+}
+
 /// Emit the normal low-resolution quality plan without pulling the branches
 /// for retained 5-bit cells and short palettes into the first-call graph.
 #[allow(clippy::too_many_arguments)]
@@ -6058,13 +6172,14 @@ fn index_rgba_frames_quality_low_res(
 }
 
 /// Prove that an image needs quantization before allocating the reusable
-/// palette and prefix-index buffers. The compact stack table stores keys only;
-/// exact inputs fall through to the full indexed pass, while normal photos
-/// stop as soon as their 257th RGB value is seen.
+/// palette and prefix-index buffers. Every occupied hash bucket represents at
+/// least one distinct RGB value, so crossing GIF's color limit is conclusive.
+/// Collisions can only produce a conservative false negative, which falls
+/// through to the complete exact scan and cannot change the encoded result.
 #[inline(never)]
 fn quality_low_res_exact_is_impossible(rgba_stream: &[u8], alpha_threshold: u8) -> bool {
-    let mut entries = [COLOR_INDEX_EMPTY; COLOR_INDEX_CAP];
-    let mut has_sentinel = false;
+    const OCCUPANCY_BITS: usize = 1 << 10;
+    let mut occupied = [0u64; OCCUPANCY_BITS / u64::BITS as usize];
     let mut color_count = 0usize;
     let mut opaque_color_limit = 256usize;
     let rgba_pointer = rgba_stream.as_ptr();
@@ -6080,28 +6195,11 @@ fn quality_low_res_exact_is_impossible(rgba_stream: &[u8], alpha_threshold: u8) 
             continue;
         }
         let rgb = packed & 0x00ff_ffff;
-        let inserted = if rgb == COLOR_INDEX_EMPTY {
-            if has_sentinel {
-                false
-            } else {
-                has_sentinel = true;
-                true
-            }
-        } else {
-            let mut slot = (rgb as usize).wrapping_mul(2_654_435_761) & (COLOR_INDEX_CAP - 1);
-            loop {
-                let stored = entries[slot];
-                if stored == rgb {
-                    break false;
-                }
-                if stored == COLOR_INDEX_EMPTY {
-                    entries[slot] = rgb;
-                    break true;
-                }
-                slot = (slot + 1) & (COLOR_INDEX_CAP - 1);
-            }
-        };
-        if inserted {
+        let bucket = (rgb.wrapping_mul(2_654_435_761) >> (u32::BITS as usize - 10)) as usize;
+        let word = bucket / u64::BITS as usize;
+        let mask = 1u64 << (bucket % u64::BITS as usize);
+        if occupied[word] & mask == 0 {
+            occupied[word] |= mask;
             color_count += 1;
             if color_count > opaque_color_limit {
                 return true;
@@ -6190,13 +6288,52 @@ fn index_rgba_frames_quality_low_res_quantized(
     alpha_threshold: u8,
     palette: Vec<u32>,
 ) -> QualityIndexPlan {
+    if alpha_threshold == 0 {
+        index_rgba_frames_quality_low_res_quantized_opaque(rgba_stream, palette)
+    } else {
+        index_rgba_frames_quality_low_res_quantized_alpha(rgba_stream, alpha_threshold, palette)
+    }
+}
+
+#[inline(never)]
+fn index_rgba_frames_quality_low_res_quantized_alpha(
+    rgba_stream: &[u8],
+    alpha_threshold: u8,
+    palette: Vec<u32>,
+) -> QualityIndexPlan {
     const HISTOGRAM_BITS: usize = 4;
     const HISTOGRAM_LEN: usize = 1 << (HISTOGRAM_BITS * 3);
     let mut histogram = take_quality_histogram_u32(HISTOGRAM_LEN);
-    let has_transparent_pixels = accumulate_quality_histogram_u32_bits_remaining::<
+    let has_transparent_pixels = accumulate_quality_histogram_u32_bits_remaining_mixed::<
         HISTOGRAM_BITS,
-        false,
-    >(&mut histogram, rgba_stream, 0, alpha_threshold, &mut []);
+    >(&mut histogram, rgba_stream, 0, alpha_threshold);
+    finish_quality_low_res_quantized(histogram, has_transparent_pixels, palette)
+}
+
+#[inline(never)]
+fn index_rgba_frames_quality_low_res_quantized_opaque(
+    rgba_stream: &[u8],
+    palette: Vec<u32>,
+) -> QualityIndexPlan {
+    const HISTOGRAM_BITS: usize = 4;
+    const HISTOGRAM_LEN: usize = 1 << (HISTOGRAM_BITS * 3);
+    let mut histogram = take_quality_histogram_u32(HISTOGRAM_LEN);
+    accumulate_quality_histogram_u32_bits_remaining_opaque::<HISTOGRAM_BITS, false, false>(
+        &mut histogram,
+        rgba_stream,
+        0,
+        &mut [],
+    );
+    finish_quality_low_res_quantized(histogram, false, palette)
+}
+
+#[inline(never)]
+fn finish_quality_low_res_quantized(
+    mut histogram: Vec<RgbHistogramBin32>,
+    has_transparent_pixels: bool,
+    palette: Vec<u32>,
+) -> QualityIndexPlan {
+    const HISTOGRAM_BITS: usize = 4;
     let colors = quality_colors_from_histogram_u32::<true>(&mut histogram);
     recycle_quality_histogram_u32(histogram);
     build_quality_index_plan_from_colors::<true, HISTOGRAM_BITS>(

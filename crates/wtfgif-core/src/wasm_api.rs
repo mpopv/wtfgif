@@ -758,16 +758,45 @@ pub fn encode_rgba_quality_gif_constant_delay_scratch_from_input(
     };
     let rgba_stream = unsafe { std::slice::from_raw_parts(input_ptr, length) };
     let output = REUSABLE_GIF_OUTPUT.with(|scratch| std::mem::take(&mut *scratch.borrow_mut()));
-    let Ok(encoded) = encode_rgba_quality_gif_inner_with_output(
-        rgba_stream,
-        width,
-        height,
-        frame_count,
-        DelaySource::Constant(delay),
-        loop_count,
-        alpha_threshold,
-        output,
-    ) else {
+    let low_res =
+        rgba_stream.len() % 4 == 0 && rgba_stream.len() / 4 <= QUALITY_LOW_RES_PIXEL_LIMIT;
+    let encoded = if low_res {
+        if quality_low_res_exact_is_impossible(rgba_stream, alpha_threshold) {
+            encode_rgba_quality_low_res_quantized_gif_inner_with_output(
+                rgba_stream,
+                width,
+                height,
+                frame_count,
+                DelaySource::Constant(delay),
+                loop_count,
+                alpha_threshold,
+                output,
+            )
+        } else {
+            encode_rgba_quality_low_res_exact_gif_inner_with_output(
+                rgba_stream,
+                width,
+                height,
+                frame_count,
+                DelaySource::Constant(delay),
+                loop_count,
+                alpha_threshold,
+                output,
+            )
+        }
+    } else {
+        encode_rgba_quality_gif_inner_with_output(
+            rgba_stream,
+            width,
+            height,
+            frame_count,
+            DelaySource::Constant(delay),
+            loop_count,
+            alpha_threshold,
+            output,
+        )
+    };
+    let Ok(encoded) = encoded else {
         return 0;
     };
     let length = encoded.len();
@@ -828,16 +857,45 @@ pub fn encode_rgba_quality_gif_scratch_from_input(
     let rgba_stream = unsafe { std::slice::from_raw_parts(input_ptr, length) };
     let delays = unsafe { std::slice::from_raw_parts(delays_ptr, delay_count) };
     let output = REUSABLE_GIF_OUTPUT.with(|scratch| std::mem::take(&mut *scratch.borrow_mut()));
-    let Ok(encoded) = encode_rgba_quality_gif_inner_with_output(
-        rgba_stream,
-        width,
-        height,
-        frame_count,
-        DelaySource::PerFrame(delays),
-        loop_count,
-        alpha_threshold,
-        output,
-    ) else {
+    let low_res =
+        rgba_stream.len() % 4 == 0 && rgba_stream.len() / 4 <= QUALITY_LOW_RES_PIXEL_LIMIT;
+    let encoded = if low_res {
+        if quality_low_res_exact_is_impossible(rgba_stream, alpha_threshold) {
+            encode_rgba_quality_low_res_quantized_gif_inner_with_output(
+                rgba_stream,
+                width,
+                height,
+                frame_count,
+                DelaySource::PerFrame(delays),
+                loop_count,
+                alpha_threshold,
+                output,
+            )
+        } else {
+            encode_rgba_quality_low_res_exact_gif_inner_with_output(
+                rgba_stream,
+                width,
+                height,
+                frame_count,
+                DelaySource::PerFrame(delays),
+                loop_count,
+                alpha_threshold,
+                output,
+            )
+        }
+    } else {
+        encode_rgba_quality_gif_inner_with_output(
+            rgba_stream,
+            width,
+            height,
+            frame_count,
+            DelaySource::PerFrame(delays),
+            loop_count,
+            alpha_threshold,
+            output,
+        )
+    };
+    let Ok(encoded) = encoded else {
         return 0;
     };
     let length = encoded.len();
