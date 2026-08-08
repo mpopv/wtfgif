@@ -1348,6 +1348,20 @@ fn flat_grid_palette_improves_uniform_color_volume_error() {
         .all(|&index| usize::from(index) < grid_palette.len()));
     let grid_error = weighted_error(&grid_palette, &grid_mapping, &colors);
 
+    let equally_weighted_colors = colors
+        .iter()
+        .map(|color| QuantizedColor {
+            count: QuantizedColorCount::from(37u16),
+            ..*color
+        })
+        .collect();
+    let (equally_weighted_palette, equally_weighted_mapping) =
+        build_quality_flat_grid_palette(equally_weighted_colors, 1 << 12, 256, Vec::new());
+    assert_eq!(equally_weighted_palette, grid_palette);
+    assert_eq!(equally_weighted_mapping, grid_mapping);
+    recycle_quality_histogram_to_palette(equally_weighted_mapping);
+    recycle_quality_palette(equally_weighted_palette);
+
     let (wu_palette, wu_mapping) =
         build_quality_wu_palette(false, colors.clone(), 1 << 12, 256, Vec::new());
     let wu_error = weighted_error(&wu_palette, &wu_mapping, &colors);

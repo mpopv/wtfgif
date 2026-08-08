@@ -8795,20 +8795,24 @@ fn build_quality_flat_grid_palette(
     let mut maximum = [0u8; 3];
     let mut sum = [0u64; 3];
     let mut squared_sum = [0u64; 3];
-    let mut total = 0u64;
+    debug_assert!(colors
+        .first()
+        .is_some_and(|first| colors.iter().all(|color| color.count == first.count)));
+    // The caller admits only equal-count Cartesian grids. The common weight
+    // cancels from both variance comparisons and rounded cell averages, so
+    // unit weights produce the exact same levels and palette representatives.
     for color in &colors {
-        let count = quantized_color_count_u64(color.count);
         let channels = [color.red, color.green, color.blue];
-        total += count;
         for channel in 0..3 {
             let value = channels[channel];
             minimum[channel] = minimum[channel].min(value);
             maximum[channel] = maximum[channel].max(value);
-            sum[channel] += u64::from(value) * count;
-            squared_sum[channel] += u64::from(value) * u64::from(value) * count;
+            sum[channel] += u64::from(value);
+            squared_sum[channel] += u64::from(value) * u64::from(value);
         }
     }
 
+    let total = colors.len() as u64;
     let spread = [
         total * squared_sum[0] - sum[0] * sum[0],
         total * squared_sum[1] - sum[1] * sum[1],
@@ -8861,11 +8865,10 @@ fn build_quality_flat_grid_palette(
         }
         let cell = (coordinates[0] * levels[1] + coordinates[1]) * levels[2] + coordinates[2];
         color_grid_cells[position] = cell as u8;
-        let count = color.count as u32;
-        counts[cell] += count;
-        red_sums[cell] += u32::from(color.red) * count;
-        green_sums[cell] += u32::from(color.green) * count;
-        blue_sums[cell] += u32::from(color.blue) * count;
+        counts[cell] += 1;
+        red_sums[cell] += u32::from(color.red);
+        green_sums[cell] += u32::from(color.green);
+        blue_sums[cell] += u32::from(color.blue);
     }
 
     palette.clear();

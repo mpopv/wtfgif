@@ -67,6 +67,10 @@ All notable changes to wtfgif are documented here.
   emit repeated transparent literal groups from pre-expanded bytes. This
   avoids redundant scans and bit packing without changing decoded pixels or
   corpus GIF hashes.
+- Cancel the common histogram weight in equal-count Cartesian palette grids.
+  This removes redundant count multiplication from variance and representative
+  accumulation while preserving the exact palette and GIF bytes. Paired fresh
+  processes improve tiny by 1.9% and noise by 1.2%.
 - Refresh the clean 40-process arbitrary-RGBA receipt. Every category now
   exceeds 100x on its first real encode after initialization: **145.70x to
   297.61x**, with a **179.34x geometric mean** and **145.70x** on the real
