@@ -7620,6 +7620,21 @@ fn add_quality_histogram_u32_pair_with_alpha<const BITS: usize>(
     }
 }
 
+#[inline(always)]
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+fn add_quality_histogram_u32_pair_packed_with_alpha<const BITS: usize>(
+    histogram: &mut [RgbHistogramBin32],
+    packed: u64,
+    alpha_threshold: u8,
+) -> bool {
+    add_quality_histogram_u32_pair_with_alpha::<BITS>(
+        histogram,
+        packed as u32,
+        (packed >> 32) as u32,
+        alpha_threshold,
+    )
+}
+
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 #[inline(always)]
 fn accumulate_quality_histogram_u32_bits_remaining_mixed_transparent_dense<const BITS: usize>(
@@ -7749,6 +7764,70 @@ fn accumulate_quality_histogram_u32_bits_remaining_mixed_zero_dense<const BITS: 
         )
 }
 
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[inline(never)]
+fn accumulate_quality_histogram_u32_bits_remaining_mixed_opaque_spans_four_bit(
+    histogram: &mut [RgbHistogramBin32],
+    rgba_stream: &[u8],
+    start_offset: usize,
+    alpha_threshold: u8,
+) -> bool {
+    const ALPHA_MASK: u64 = 0xff00_0000_ff00_0000;
+    let rgba_pointer = rgba_stream.as_ptr();
+    let mut has_transparent_pixels = false;
+    let mut offset = start_offset;
+    while offset + 32 <= rgba_stream.len() {
+        let packed01 =
+            u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset).cast()) });
+        let packed23 =
+            u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 8).cast()) });
+        let packed45 =
+            u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 16).cast()) });
+        let packed67 =
+            u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 24).cast()) });
+        let combined_alpha = packed01 & packed23 & packed45 & packed67;
+        if combined_alpha & ALPHA_MASK == ALPHA_MASK {
+            add_quality_histogram_u32_pair_packed::<4>(histogram, packed01);
+            add_quality_histogram_u32_pair_packed::<4>(histogram, packed23);
+            add_quality_histogram_u32_pair_packed::<4>(histogram, packed45);
+            add_quality_histogram_u32_pair_packed::<4>(histogram, packed67);
+        } else {
+            has_transparent_pixels |= add_quality_histogram_u32_pair_packed_with_alpha::<4>(
+                histogram,
+                packed01,
+                alpha_threshold,
+            );
+            has_transparent_pixels |= add_quality_histogram_u32_pair_packed_with_alpha::<4>(
+                histogram,
+                packed23,
+                alpha_threshold,
+            );
+            has_transparent_pixels |= add_quality_histogram_u32_pair_packed_with_alpha::<4>(
+                histogram,
+                packed45,
+                alpha_threshold,
+            );
+            has_transparent_pixels |= add_quality_histogram_u32_pair_packed_with_alpha::<4>(
+                histogram,
+                packed67,
+                alpha_threshold,
+            );
+        }
+        offset += 32;
+    }
+    while offset < rgba_stream.len() {
+        let packed =
+            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset).cast()) });
+        if ((packed >> 24) as u8) < alpha_threshold {
+            has_transparent_pixels = true;
+        } else {
+            add_quality_histogram_u32_bits_const::<4>(histogram, packed);
+        }
+        offset += 4;
+    }
+    has_transparent_pixels
+}
+
 #[inline(never)]
 fn accumulate_quality_histogram_u32_bits_remaining_mixed<const BITS: usize>(
     histogram: &mut [RgbHistogramBin32],
@@ -7774,6 +7853,18 @@ fn accumulate_quality_histogram_u32_bits_remaining_mixed<const BITS: usize>(
         .is_some_and(|alpha| *alpha < alpha_threshold)
     {
         return accumulate_quality_histogram_u32_bits_remaining_mixed_transparent_dense::<BITS>(
+            histogram,
+            rgba_stream,
+            start_offset,
+            alpha_threshold,
+        );
+    }
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    if BITS == 4 {
+        // Ordinary mixed images still contain long all-255 alpha spans. One
+        // packed decision per eight pixels avoids eight threshold checks there;
+        // blocks with any other alpha value retain the exact pairwise path.
+        return accumulate_quality_histogram_u32_bits_remaining_mixed_opaque_spans_four_bit(
             histogram,
             rgba_stream,
             start_offset,
