@@ -8,6 +8,8 @@ let scratchModule: WasmQualityCoreModule | null = null;
 let scratchMemory: WebAssembly.Memory | null = null;
 let scratchPointer = 0;
 let scratchCapacity = 0;
+const PREPARE_ENCODER_OPTIONS = {} as EncodeRgbaGifFramesOptions;
+const PREPARE_ENCODER_RESULT = new Uint8Array();
 
 export type RgbaGifFrame = Uint8Array | Uint8ClampedArray;
 export type RgbaGifFrames = RgbaGifFrame | RgbaGifFrame[];
@@ -43,6 +45,10 @@ export function prepareQualityWasmEncoderModule(
 			QUALITY_LOW_RES_BYTE_LIMIT,
 		);
 		scratchCapacity = QUALITY_LOW_RES_BYTE_LIMIT;
+		// Compile the private JavaScript validation/dispatch function during the
+		// explicit initialization boundary. The sentinel exits before reading
+		// pixels, calling Wasm, or producing image-derived state.
+		encodeRgbaGifFramesPrepared(PREPARE_ENCODER_OPTIONS);
 		encodeRgbaGifFrames = encodeRgbaGifFramesPrepared;
 		return;
 	}
@@ -65,6 +71,7 @@ function encodeRgbaGifFramesUnprepared(
 function encodeRgbaGifFramesPrepared(
 	options: EncodeRgbaGifFramesOptions,
 ): Uint8Array {
+	if (options === PREPARE_ENCODER_OPTIONS) return PREPARE_ENCODER_RESULT;
 	const module = scratchModule!;
 
 	const width = options.width | 0;
