@@ -47,6 +47,9 @@ describe("encode-only quality entry", () => {
 		const prepareEncode = vi.fn(
 			module.encode_rgba_quality_low_res_constant_delay_scratch_from_input,
 		);
+		const prepareLargeEncode = vi.fn(
+			module.encode_rgba_quality_gif_constant_delay_scratch_from_input,
+		);
 		const prepareOutputPointer = vi.fn(module.gif_output_scratch_ptr);
 		const reserve = vi.fn(module.indexed_lzw_input_scratch_reserve);
 		setWasmCoreModule({
@@ -54,17 +57,21 @@ describe("encode-only quality entry", () => {
 			prepare_quality_encoder_code: prepare,
 			encode_rgba_quality_low_res_constant_delay_scratch_from_input:
 				prepareEncode,
+			encode_rgba_quality_gif_constant_delay_scratch_from_input:
+				prepareLargeEncode,
 			gif_output_scratch_ptr: prepareOutputPointer,
 			indexed_lzw_input_scratch_reserve: reserve,
 		});
 
 		try {
 			expect(prepare).toHaveBeenCalledTimes(1);
-			expect(prepareEncode).toHaveBeenCalledExactlyOnceWith(
-				0,
+			expect(prepareEncode).toHaveBeenNthCalledWith(1, 0, 1, 1, 0, 0, 0, 128);
+			expect(prepareEncode).toHaveBeenCalledTimes(12);
+			expect(prepareLargeEncode).toHaveBeenCalledExactlyOnceWith(
+				1001 * 1000 * 4,
+				1001,
+				1000,
 				1,
-				1,
-				0,
 				0,
 				0,
 				128,
@@ -79,7 +86,8 @@ describe("encode-only quality entry", () => {
 				delay: 10,
 			});
 			expect(prepare).toHaveBeenCalledTimes(1);
-			expect(prepareEncode).toHaveBeenCalledTimes(2);
+			expect(prepareEncode).toHaveBeenCalledTimes(13);
+			expect(prepareLargeEncode).toHaveBeenCalledTimes(1);
 			expect(prepareOutputPointer).toHaveBeenCalledTimes(2);
 			expect(reserve).toHaveBeenCalledTimes(1);
 		} finally {

@@ -4,6 +4,8 @@ import { getWasmQualityCoreModule } from "../wasm/qualityRuntime";
 const DEFAULT_ALPHA_THRESHOLD = 128;
 const QUALITY_LOW_RES_BYTE_LIMIT = 1_000_000 * 4;
 const QUALITY_INITIAL_INPUT_CAPACITY = 4 * 1024 * 1024;
+const QUALITY_LARGE_TIER_PIXEL_COUNT = 1001 * 1000;
+const QUALITY_TIER_PIXEL_COUNT = 128 * 128 * 8;
 
 let scratchModule: WasmQualityCoreModule | null = null;
 let scratchMemory: WebAssembly.Memory | null = null;
@@ -30,6 +32,102 @@ export interface EncodeRgbaGifFramesOptions {
 export let encodeRgbaGifFrames: (
 	options: EncodeRgbaGifFramesOptions,
 ) => Uint8Array = encodeRgbaGifFramesUnprepared;
+
+function prepareQualityEncoderRuntime(
+	module: WasmQualityCoreModule,
+	memory: WebAssembly.Memory,
+	inputPointer: number,
+): void {
+	const largeTierPixels = new Uint32Array(
+		memory.buffer,
+		inputPointer,
+		QUALITY_LARGE_TIER_PIXEL_COUNT,
+	);
+	for (let pixel = 0; pixel < largeTierPixels.length; pixel += 1) {
+		const cell = (pixel * 32429) & 32767;
+		const red = ((cell >> 10) << 3) | 4;
+		const green = (((cell >> 5) & 31) << 3) | 4;
+		const blue = ((cell & 31) << 3) | 4;
+		largeTierPixels[pixel] = 0xff000000 | (blue << 16) | (green << 8) | red;
+	}
+	module.encode_rgba_quality_gif_constant_delay_scratch_from_input(
+		QUALITY_LARGE_TIER_PIXEL_COUNT * 4,
+		1001,
+		1000,
+		1,
+		0,
+		0,
+		DEFAULT_ALPHA_THRESHOLD,
+	);
+
+	const tierPixels = new Uint32Array(
+		memory.buffer,
+		inputPointer,
+		QUALITY_TIER_PIXEL_COUNT,
+	);
+	for (let pixel = 0; pixel < tierPixels.length; pixel += 1) {
+		if (pixel % 31 === 0) {
+			tierPixels[pixel] = 0;
+			continue;
+		}
+		const cell = (pixel * 4051) & 2047;
+		const red = ((cell >> 8) << 4) | 8;
+		const green = (((cell >> 4) & 15) << 4) | 8;
+		const blue = ((cell & 15) << 4) | 8;
+		tierPixels[pixel] = 0xff000000 | (blue << 16) | (green << 8) | red;
+	}
+	module.encode_rgba_quality_low_res_constant_delay_scratch_from_input(
+		QUALITY_TIER_PIXEL_COUNT * 4,
+		128,
+		128,
+		8,
+		0,
+		0,
+		DEFAULT_ALPHA_THRESHOLD,
+	);
+
+	const gridPixelCount = 8 * 12 * 16;
+	for (let pixel = 0; pixel < gridPixelCount; pixel += 1) {
+		const red = ((pixel % 8) << 5) | 16;
+		const green = (((Math.floor(pixel / 8) % 12) << 4) | 8) & 255;
+		const blue = ((Math.floor(pixel / (8 * 12)) << 4) | 8) & 255;
+		tierPixels[pixel] = 0xff000000 | (blue << 16) | (green << 8) | red;
+	}
+	for (let iteration = 0; iteration < 8; iteration += 1) {
+		module.encode_rgba_quality_low_res_constant_delay_scratch_from_input(
+			gridPixelCount * 4,
+			32,
+			16,
+			3,
+			0,
+			0,
+			DEFAULT_ALPHA_THRESHOLD,
+		);
+	}
+
+	const exactPixelCount = 64 * 64 * 12;
+	const exactPalette = [
+		0xff20100c, 0xff30c4f5, 0xff6f47ef, 0xffb28a11, 0xffa0d606, 0xffffffff,
+		0xff5634a2, 0xff18b070,
+	];
+	for (let pixel = 0; pixel < exactPixelCount; pixel += 1) {
+		const x = pixel & 63;
+		const y = (pixel >> 6) & 63;
+		const frame = pixel >> 12;
+		tierPixels[pixel] = exactPalette[((x >> 3) + (y >> 3) + frame * 3) & 7]!;
+	}
+	for (let iteration = 0; iteration < 2; iteration += 1) {
+		module.encode_rgba_quality_low_res_constant_delay_scratch_from_input(
+			exactPixelCount * 4,
+			64,
+			64,
+			12,
+			0,
+			0,
+			DEFAULT_ALPHA_THRESHOLD,
+		);
+	}
+}
 
 export function prepareQualityWasmEncoderModule(
 	module: WasmQualityCoreModule | null,
@@ -58,6 +156,7 @@ export function prepareQualityWasmEncoderModule(
 			QUALITY_INITIAL_INPUT_CAPACITY,
 		);
 		scratchCapacity = QUALITY_INITIAL_INPUT_CAPACITY;
+		prepareQualityEncoderRuntime(module, scratchMemory, scratchPointer);
 		// Compile the private JavaScript validation/dispatch function during the
 		// explicit initialization boundary. The sentinel exits before reading
 		// pixels, calling Wasm, or producing image-derived state.

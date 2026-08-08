@@ -8,6 +8,8 @@ const iterations = Number(process.env.PROFILE_ITERATIONS ?? 100);
 const fixture = process.env.PROFILE_FIXTURE ?? "makeemoji-real";
 const baselinePath = process.env.PROFILE_WASM_BASELINE;
 const candidatePath = process.env.PROFILE_WASM_CANDIDATE;
+const allowOutputDifference =
+	process.env.PROFILE_ALLOW_OUTPUT_DIFFERENCE === "1";
 if (!baselinePath || !candidatePath) {
 	throw new Error(
 		"PROFILE_WASM_BASELINE and PROFILE_WASM_CANDIDATE are required",
@@ -18,13 +20,13 @@ if (!Number.isInteger(iterations) || iterations < 1) {
 }
 
 const samples = {
-	baseline: { totalMs: [], wasmMs: [] },
-	candidate: { totalMs: [], wasmMs: [] },
+	baseline: { tierMs: [], totalMs: [], wasmMs: [] },
+	candidate: { tierMs: [], totalMs: [], wasmMs: [] },
 };
 const pairedRatios = { totalMs: [], wasmMs: [] };
-let outputSha256;
+const outputSha256 = {};
 
-function run(wasmPath) {
+function run(name, wasmPath) {
 	const result = spawnSync(process.execPath, [worker], {
 		cwd: root,
 		encoding: "utf8",
@@ -32,18 +34,26 @@ function run(wasmPath) {
 			...process.env,
 			PROFILE_FIXTURE: fixture,
 			PROFILE_WASM_PATH: wasmPath,
+			PROFILE_JS_TIER:
+				name === "candidate" && process.env.PROFILE_CANDIDATE_JS_TIER === "1"
+					? "1"
+					: "0",
 		},
 	});
 	if (result.status !== 0) {
 		throw new Error([result.stdout, result.stderr].join("\n"));
 	}
 	const sample = JSON.parse(result.stdout);
-	if (outputSha256 && outputSha256 !== sample.outputSha256) {
+	if (
+		!allowOutputDifference &&
+		outputSha256.baseline &&
+		outputSha256.baseline !== sample.outputSha256
+	) {
 		throw new Error(
-			`Profile output differs: ${outputSha256} != ${sample.outputSha256}`,
+			`Profile output differs: ${outputSha256.baseline} != ${sample.outputSha256}`,
 		);
 	}
-	outputSha256 = sample.outputSha256;
+	outputSha256[name] = sample.outputSha256;
 	return sample;
 }
 
@@ -65,9 +75,9 @@ for (let iteration = 0; iteration < iterations; iteration += 1) {
 				];
 	const pair = {};
 	for (const [name, wasmPath] of order) {
-		const sample = run(wasmPath);
+		const sample = run(name, wasmPath);
 		pair[name] = sample;
-		for (const phase of ["totalMs", "wasmMs"]) {
+		for (const phase of ["tierMs", "totalMs", "wasmMs"]) {
 			samples[name][phase].push(sample[phase]);
 		}
 	}
@@ -77,6 +87,9 @@ for (let iteration = 0; iteration < iterations; iteration += 1) {
 }
 
 console.log(`Paired first raw quality encode: ${fixture}, ${iterations} pairs`);
+console.log(
+	`tierMs\t${median(samples.baseline.tierMs).toFixed(3)} ms baseline\t${median(samples.candidate.tierMs).toFixed(3)} ms candidate`,
+);
 for (const phase of ["wasmMs", "totalMs"]) {
 	const baseline = median(samples.baseline[phase]);
 	const candidate = median(samples.candidate[phase]);
@@ -85,4 +98,6 @@ for (const phase of ["wasmMs", "totalMs"]) {
 		`${phase}\t${baseline.toFixed(3)} ms baseline\t${candidate.toFixed(3)} ms candidate\t${ratio.toFixed(4)}x paired`,
 	);
 }
-console.log(`outputSha256\t${outputSha256}`);
+for (const name of ["baseline", "candidate"]) {
+	console.log(`outputSha256.${name}\t${outputSha256[name]}`);
+}
