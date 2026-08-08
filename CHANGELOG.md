@@ -14,20 +14,21 @@ All notable changes to wtfgif are documented here.
   checks every pixel and falls back to the mixed-alpha path if an unsampled
   transparent pixel exists.
 - Prepare the quality encoder's data-independent Wasm call graphs during the
-  explicit initialization step using empty sentinels. No user pixels, palette,
-  output, or image-derived state is created or retained, and reusable data
-  scratch remains cold for the first real encode.
+  explicit initialization step using empty sentinels, including the real
+  public low-resolution export and its quantized opaque-probe wrappers. No user
+  pixels, palette, output, or image-derived state is created or retained, and
+  reusable data scratch remains cold for the first real encode.
 - Reuse prior-frame indices while mapping exact small palettes and make the
   bounded classifier prove sampled palettes larger than GIF's 256-color limit
   without redundant occupancy passes. GIF output remains byte-for-byte
   unchanged across the corpus.
 - Refresh the clean 25-process arbitrary-RGBA receipt. Every category now
-  exceeds 100x on its first real encode after initialization: **105.53x to
-  180.74x**, with a **130.31x geometric mean** and **132.40x** on the real
+  exceeds 100x on its first real encode after initialization: **111.22x to
+  239.14x**, with a **141.31x geometric mean** and **139.50x** on the real
   MakeEmoji workload.
 - Refresh the 15-process Chrome comparison and generated SVG. wtfgif takes
-  **1.230 ms**; the five alternatives take 93.635-134.855 ms and are
-  **76.13x-109.64x slower**.
+  **1.130 ms**; the five alternatives take 95.670-133.820 ms and are
+  **84.66x-118.42x slower**.
 - Pass the complete release gate: lint, type checking, dependency audit, Rust
   formatting/clippy/tests, all scalar and SIMD Wasm builds, 148 JavaScript/Wasm
   assertions, independent decoder conformance, edge validation, and package
