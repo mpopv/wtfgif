@@ -13085,14 +13085,26 @@ fn exact_palette_index_packed_cached(
 unsafe fn mapped_quality_four_pixels_simd<const BITS: usize, const HAS_TRANSPARENT: bool>(
     rgba_pointer: *const u8,
     alpha_threshold: u8,
+    transparent_index: u8,
     histogram_to_palette_pointer: *const u8,
 ) -> u32 {
     use core::arch::wasm32::{
-        i32x4_extract_lane, u32x4_lt, u32x4_shl, u32x4_shr, u32x4_splat, v128_and, v128_bitselect,
-        v128_load, v128_or,
+        i32x4_bitmask, i32x4_extract_lane, u32x4_lt, u32x4_shl, u32x4_shr, u32x4_splat, v128_and,
+        v128_bitselect, v128_load, v128_or,
     };
 
     let pixels = v128_load(rgba_pointer.cast());
+    let transparent = if HAS_TRANSPARENT {
+        u32x4_lt(
+            u32x4_shr(pixels, 24),
+            u32x4_splat(u32::from(alpha_threshold)),
+        )
+    } else {
+        u32x4_splat(0)
+    };
+    if HAS_TRANSPARENT && i32x4_bitmask(transparent) == 0b1111 {
+        return u32::from(transparent_index) * 0x0101_0101;
+    }
     let indices = if BITS == 5 {
         v128_or(
             v128_or(
@@ -13111,10 +13123,6 @@ unsafe fn mapped_quality_four_pixels_simd<const BITS: usize, const HAS_TRANSPARE
         )
     };
     let indices = if HAS_TRANSPARENT {
-        let transparent = u32x4_lt(
-            u32x4_shr(pixels, 24),
-            u32x4_splat(u32::from(alpha_threshold)),
-        );
         v128_bitselect(u32x4_splat(1 << (BITS * 3)), indices, transparent)
     } else {
         indices
@@ -13138,11 +13146,13 @@ unsafe fn mapped_quality_eight_pixels<const BITS: usize, const HAS_TRANSPARENT: 
         let low = mapped_quality_four_pixels_simd::<BITS, HAS_TRANSPARENT>(
             rgba_pointer,
             alpha_threshold,
+            _transparent_index,
             histogram_to_palette_pointer,
         );
         let high = mapped_quality_four_pixels_simd::<BITS, HAS_TRANSPARENT>(
             rgba_pointer.add(16),
             alpha_threshold,
+            _transparent_index,
             histogram_to_palette_pointer,
         );
         u64::from(low) | (u64::from(high) << 32)
