@@ -1600,3 +1600,43 @@ fn quality_materialization_preserves_palette_indices() {
     recycle_quantized_indexed(opaque);
     recycle_quantized_indexed(transparent);
 }
+
+#[test]
+fn small_exact_constant_delay_writer_matches_generic_bytes() {
+    const WIDTH: u16 = 7;
+    const HEIGHT: u16 = 2;
+    const FRAME_COUNT: usize = 2;
+    for palette_len in [4usize, 8] {
+        let palette: Vec<u32> = (0..palette_len)
+            .map(|index| rgb_key((index * 31) as u8, (index * 47) as u8, (index * 73) as u8))
+            .collect();
+        let indices: Vec<u8> = (0..usize::from(WIDTH) * usize::from(HEIGHT) * FRAME_COUNT)
+            .map(|index| (index % palette_len) as u8)
+            .collect();
+        let expected = encode_indexed_literal_gif_inner_with_output_unchecked(
+            Vec::new(),
+            &indices,
+            WIDTH,
+            HEIGHT,
+            FRAME_COUNT,
+            &palette,
+            DelaySource::Constant(7),
+            0,
+            None,
+        )
+        .unwrap();
+        let actual = encode_small_exact_constant_delay_gif_with_output(
+            Vec::new(),
+            &indices,
+            WIDTH,
+            HEIGHT,
+            FRAME_COUNT,
+            &palette,
+            7,
+            0,
+            None,
+        )
+        .unwrap();
+        assert_eq!(actual, expected, "palette_len={palette_len}");
+    }
+}

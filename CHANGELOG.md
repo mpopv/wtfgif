@@ -2,6 +2,25 @@
 
 All notable changes to wtfgif are documented here.
 
+## 3.0.8 - 2026-08-07
+
+- Specialize the first constant-delay exact-palette encode after the complete
+  palette scan has proved a small color table. Eight-color input enters the
+  four-bit literal packer directly, while two- and four-color input bypasses
+  the generic codec dispatcher and zero-fill before GIF sub-block assembly.
+  The specialized writer is byte-for-byte identical to the generic writer in
+  direct unit coverage and across the corpus.
+- Tighten Binaryen's combined-function inlining budget from 2500 to 1500
+  bytes. This reduces V8's honest first-call lazy-compilation work without an
+  encode warmup, source-derived initialization, or a change to steady codec
+  behavior.
+- Correct the first-quality profiler to reserve the same source-independent
+  4 MB input arena as the public initialization path before timing. Direct
+  release-to-release alternating fresh-process A/B measurements show 3.11%
+  lower MakeEmoji latency (280 pairs), 13.95% lower pixel-art latency (320
+  pairs), and 13.18% lower nearly-static latency (260 pairs). Every compared
+  GIF has the same SHA-256 hash as 3.0.7.
+
 ## 3.0.7 - 2026-08-07
 
 - Replace recursive palette-tree recoloring with two flat passes: update each

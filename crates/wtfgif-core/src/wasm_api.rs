@@ -596,14 +596,14 @@ pub fn encode_rgba_quality_low_res_constant_delay_scratch_from_input(
         if let Some((palette, indexed, transparent_index)) =
             index_rgba_frames_quality_small_exact(rgba_stream, alpha_threshold)
         {
-            let encoded = encode_indexed_literal_gif_inner_with_output_unchecked(
+            let encoded = encode_small_exact_constant_delay_gif_with_output(
                 output,
                 &indexed,
                 width,
                 height,
                 frame_count,
                 &palette,
-                DelaySource::Constant(delay),
+                delay,
                 loop_count,
                 transparent_index,
             );

@@ -35,6 +35,7 @@ wasm = new WebAssembly.Instance(module, imports).exports;
 const instanceCompleted = performance.now();
 wasm.__wbindgen_start();
 const startCompleted = performance.now();
+wasm.indexed_lzw_input_scratch_reserve(4_000_000);
 
 const started = performance.now();
 const inputPointer = wasm.indexed_lzw_input_scratch_reserve(rgba.length);

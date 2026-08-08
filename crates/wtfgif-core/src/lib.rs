@@ -10492,6 +10492,155 @@ fn encode_indexed_literal_gif_inner_with_output_unchecked(
     )
 }
 
+/// Emit the small exact-palette Wasm path after the public boundary has
+/// already validated dimensions, frame count, delay, loop count, and index
+/// range. Keeping the constant-delay capacity calculation here avoids pulling
+/// the generic delay and validation machinery into the first flat-art encode.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn encode_small_exact_constant_delay_gif_with_output(
+    output: Vec<u8>,
+    index_stream: &[u8],
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    palette_rgb: &[u32],
+    delay: u16,
+    loop_count: i32,
+    transparent_index: Option<u8>,
+) -> Result<Vec<u8>, String> {
+    if palette_rgb.len().next_power_of_two().max(2) == 8 {
+        return encode_eight_color_exact_constant_delay_gif_with_output(
+            output,
+            index_stream,
+            width,
+            height,
+            frame_count,
+            palette_rgb,
+            delay,
+            loop_count,
+            transparent_index,
+        );
+    }
+    encode_small_exact_constant_delay_gif_with_output_general(
+        output,
+        index_stream,
+        width,
+        height,
+        frame_count,
+        palette_rgb,
+        delay,
+        loop_count,
+        transparent_index,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn encode_small_exact_constant_delay_gif_with_output_general(
+    mut output: Vec<u8>,
+    index_stream: &[u8],
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    palette_rgb: &[u32],
+    delay: u16,
+    loop_count: i32,
+    transparent_index: Option<u8>,
+) -> Result<Vec<u8>, String> {
+    let color_count = palette_rgb.len().next_power_of_two().max(2);
+    let min_code_size = (log2_pow2(color_count) as u8).max(2);
+    let frame_len = usize::from(width) * usize::from(height);
+    debug_assert_eq!(index_stream.len(), frame_len * frame_count);
+    let lzw_length = literal_lzw_block_size(frame_len, min_code_size)?;
+    let graphic_control_length = usize::from(delay != 0 || transparent_index.is_some()) * 8;
+    let output_capacity = 13
+        + color_count * 3
+        + usize::from(loop_count >= 0) * 19
+        + frame_count * (10 + graphic_control_length + lzw_length)
+        + 1;
+    output.clear();
+    if output.capacity() < output_capacity {
+        output.reserve(output_capacity - output.capacity());
+    }
+    write_indexed_gif_header(&mut output, width, height, palette_rgb, color_count);
+    write_loop_extension(&mut output, loop_count);
+    for frame in index_stream.chunks_exact(frame_len) {
+        write_indexed_gif_frame_header(
+            &mut output,
+            0,
+            0,
+            width,
+            height,
+            delay,
+            transparent_index,
+            if transparent_index.is_some() { 2 } else { 0 },
+        );
+        if min_code_size == 2 {
+            encode_two_bit_literal_lzw_direct_to_unchecked(&mut output, frame)?;
+        } else {
+            encode_indexed_literal_lzw_direct_to_unchecked(
+                &mut output,
+                frame,
+                min_code_size,
+                color_count,
+            )?;
+        }
+    }
+    output.push(0x3b);
+    Ok(output)
+}
+
+/// Eight-color flat art can enter the four-bit literal packer directly. Keep
+/// this as a separate lazy-compiled function so other small palette sizes do
+/// not pay for a specialization that does not help them.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn encode_eight_color_exact_constant_delay_gif_with_output(
+    mut output: Vec<u8>,
+    index_stream: &[u8],
+    width: u16,
+    height: u16,
+    frame_count: usize,
+    palette_rgb: &[u32],
+    delay: u16,
+    loop_count: i32,
+    transparent_index: Option<u8>,
+) -> Result<Vec<u8>, String> {
+    const COLOR_COUNT: usize = 8;
+    const MIN_CODE_SIZE: u8 = 3;
+    let frame_len = usize::from(width) * usize::from(height);
+    debug_assert_eq!(index_stream.len(), frame_len * frame_count);
+    let lzw_length = literal_lzw_block_size(frame_len, MIN_CODE_SIZE)?;
+    let graphic_control_length = usize::from(delay != 0 || transparent_index.is_some()) * 8;
+    let output_capacity = 13
+        + COLOR_COUNT * 3
+        + usize::from(loop_count >= 0) * 19
+        + frame_count * (10 + graphic_control_length + lzw_length)
+        + 1;
+    output.clear();
+    if output.capacity() < output_capacity {
+        output.reserve(output_capacity - output.capacity());
+    }
+    write_indexed_gif_header(&mut output, width, height, palette_rgb, COLOR_COUNT);
+    write_loop_extension(&mut output, loop_count);
+    for frame in index_stream.chunks_exact(frame_len) {
+        write_indexed_gif_frame_header(
+            &mut output,
+            0,
+            0,
+            width,
+            height,
+            delay,
+            transparent_index,
+            if transparent_index.is_some() { 2 } else { 0 },
+        );
+        encode_four_bit_literal_lzw_direct_to::<false>(&mut output, frame, COLOR_COUNT)?;
+    }
+    output.push(0x3b);
+    Ok(output)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn encode_indexed_literal_gif_inner_with_output_impl<const VALIDATE: bool>(
     mut output: Vec<u8>,
@@ -11612,6 +11761,29 @@ fn encode_indexed_literal_lzw_direct_to_unchecked(
         min_code_size,
         color_count,
     )
+}
+
+#[inline(never)]
+fn encode_two_bit_literal_lzw_direct_to_unchecked(
+    output: &mut Vec<u8>,
+    index_stream: &[u8],
+) -> Result<(), String> {
+    output.push(2);
+    let compressed_start = output.len();
+    encode_two_bit_literal_codes(output, index_stream, 4)?;
+    let compressed_length = output.len() - compressed_start;
+    let block_count = compressed_length.div_ceil(255);
+    let final_length = output.len() + block_count + 1;
+    resize_output_uninitialized(output, final_length);
+    for block in (0..block_count).rev() {
+        let source_start = compressed_start + block * 255;
+        let length = (compressed_length - block * 255).min(255);
+        let destination_start = compressed_start + block * 256;
+        output.copy_within(source_start..source_start + length, destination_start + 1);
+        output[destination_start] = length as u8;
+    }
+    output[final_length - 1] = 0;
+    Ok(())
 }
 
 #[inline(always)]
