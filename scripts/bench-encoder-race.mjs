@@ -288,7 +288,7 @@ const samples = new Map(
 	implementations.map((implementation) => [implementation.id, []]),
 );
 console.log(
-	`Browser arbitrary-RGBA encoder race: ${iterations} fresh Chrome processes per implementation, zero encode warmups`,
+	`Browser arbitrary-RGBA encoder race: ${iterations} fresh Chrome processes per implementation, zero fixture-derived warmups`,
 );
 
 try {
@@ -368,8 +368,8 @@ try {
 	}
 
 	const receipt = {
-		boundary:
-			"First complete encode from arbitrary RGBA after package loading and wtfgif Wasm initialization; no encode warmups; includes palette creation, pixel mapping, compression, and output assembly",
+	boundary:
+		"First user-input encode from arbitrary RGBA after package loading and source-independent wtfgif Wasm runtime preparation; zero fixture-derived warmups; includes palette creation, pixel mapping, compression, and output assembly",
 		environment: {
 			browser: browserVersion.trim(),
 			cpu: cpus()[0]?.model ?? "unknown CPU",

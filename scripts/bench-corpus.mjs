@@ -144,7 +144,7 @@ const receipt = {
 	createdAt: new Date().toISOString(),
 	benchmark: {
 		boundary:
-			"First synchronous RGBA-to-complete-GIF call in a fresh process after package loading and wtfgif Wasm initialization; zero encode warmups.",
+			"First user-input RGBA-to-complete-GIF call in a fresh process after package loading and source-independent wtfgif Wasm runtime preparation; zero fixture-derived warmups.",
 		alphaThreshold: ALPHA_THRESHOLD,
 		iterations,
 		warmups: 0,
