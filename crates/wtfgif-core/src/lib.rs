@@ -7934,6 +7934,80 @@ fn add_quality_histogram_u32_pair_record_opaque<const BITS: usize>(
     );
 }
 
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[inline(always)]
+fn accumulate_quality_histogram_u32_bits_remaining_mixed_transparent_dense<const BITS: usize>(
+    histogram: &mut [RgbHistogramBin32],
+    rgba_stream: &[u8],
+    start_offset: usize,
+    alpha_threshold: u8,
+) -> bool {
+    use core::arch::wasm32::{i32x4_bitmask, u32x4_lt, u32x4_shr, u32x4_splat, v128_load};
+
+    let rgba_pointer = rgba_stream.as_ptr();
+    let threshold_vector = u32x4_splat(u32::from(alpha_threshold));
+    let mut has_transparent_pixels = false;
+    let mut offset = start_offset;
+    while offset + 32 <= rgba_stream.len() {
+        let pixels03 = unsafe { v128_load(rgba_pointer.add(offset).cast()) };
+        let pixels47 = unsafe { v128_load(rgba_pointer.add(offset + 16).cast()) };
+        let transparent03 = i32x4_bitmask(u32x4_lt(u32x4_shr(pixels03, 24), threshold_vector));
+        let transparent47 = i32x4_bitmask(u32x4_lt(u32x4_shr(pixels47, 24), threshold_vector));
+        if transparent03 == 0b1111 && transparent47 == 0b1111 {
+            has_transparent_pixels = true;
+            offset += 32;
+            continue;
+        }
+        let (packed0, packed1) = unsafe { read_rgba_pair(rgba_pointer, offset) };
+        let (packed2, packed3) = unsafe { read_rgba_pair(rgba_pointer, offset + 8) };
+        let (packed4, packed5) = unsafe { read_rgba_pair(rgba_pointer, offset + 16) };
+        let (packed6, packed7) = unsafe { read_rgba_pair(rgba_pointer, offset + 24) };
+        if transparent03 == 0 && transparent47 == 0 {
+            add_quality_histogram_u32_pair::<BITS>(histogram, packed0, packed1);
+            add_quality_histogram_u32_pair::<BITS>(histogram, packed2, packed3);
+            add_quality_histogram_u32_pair::<BITS>(histogram, packed4, packed5);
+            add_quality_histogram_u32_pair::<BITS>(histogram, packed6, packed7);
+        } else {
+            has_transparent_pixels |= add_quality_histogram_u32_pair_with_alpha::<BITS>(
+                histogram,
+                packed0,
+                packed1,
+                alpha_threshold,
+            );
+            has_transparent_pixels |= add_quality_histogram_u32_pair_with_alpha::<BITS>(
+                histogram,
+                packed2,
+                packed3,
+                alpha_threshold,
+            );
+            has_transparent_pixels |= add_quality_histogram_u32_pair_with_alpha::<BITS>(
+                histogram,
+                packed4,
+                packed5,
+                alpha_threshold,
+            );
+            has_transparent_pixels |= add_quality_histogram_u32_pair_with_alpha::<BITS>(
+                histogram,
+                packed6,
+                packed7,
+                alpha_threshold,
+            );
+        }
+        offset += 32;
+    }
+    while offset < rgba_stream.len() {
+        let packed =
+            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset).cast()) });
+        if ((packed >> 24) as u8) < alpha_threshold {
+            has_transparent_pixels = true;
+        } else {
+            add_quality_histogram_u32_bits_const::<BITS>(histogram, packed);
+        }
+        offset += 4;
+    }
+    has_transparent_pixels
+}
+
 #[inline(never)]
 fn accumulate_quality_histogram_u32_bits_remaining_mixed<const BITS: usize>(
     histogram: &mut [RgbHistogramBin32],
@@ -7941,6 +8015,21 @@ fn accumulate_quality_histogram_u32_bits_remaining_mixed<const BITS: usize>(
     start_offset: usize,
     alpha_threshold: u8,
 ) -> bool {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    // Transparent-canvas inputs conventionally begin in the clear background.
+    // Dispatch once so sparse foregrounds skip clear blocks without charging
+    // mixed/opaque-leading images for a SIMD alpha mask on every block.
+    if rgba_stream
+        .get(start_offset + 3)
+        .is_some_and(|alpha| *alpha < alpha_threshold)
+    {
+        return accumulate_quality_histogram_u32_bits_remaining_mixed_transparent_dense::<BITS>(
+            histogram,
+            rgba_stream,
+            start_offset,
+            alpha_threshold,
+        );
+    }
     let rgba_pointer = rgba_stream.as_ptr();
     let mut has_transparent_pixels = false;
     let mut offset = start_offset;
