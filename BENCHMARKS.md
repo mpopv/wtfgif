@@ -26,6 +26,11 @@ measuring. Validation and quality measurement are outside the clock. Results
 below are medians from 15 processes per implementation on an Apple M3 Pro with
 Node.js 22.23.2.
 
+The committed receipt identifies wtfgif 3.0.6 at clean commit `97d9c2c`. It is
+the newest full clean corpus run used by these docs. A later byte-identical
+data-layout change is not folded into the headline numbers until the complete
+corpus is rerun under normal machine conditions.
+
 | Fixture | Shape | wtfgif | image-q + omggif | Speedup | File-size ratio |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | MakeEmoji production sample | 128×128×8 | 1.166 ms | 128.460 ms | **110.14×** | 3.80× |
@@ -99,6 +104,12 @@ There are no encode warmups, image-derived retained state, or results reused
 between samples. The six encoders run in a rotating order to reduce thermal and
 ordering bias. Results below are medians from 15 processes per encoder on an
 Apple M3 Pro in Google Chrome 151.0.7922.77.
+
+This is public-API time-to-result, not a codec-kernel microbenchmark. The
+gif.js and gif.js.optimized APIs create workers when `render()` begins, so that
+worker creation is inside their timed jobs. The README chart uses bar length
+for median encode time and prints each encoder's emitted GIF size beside the
+time.
 
 | Implementation | Version | Median | wtfgif advantage | Bytes | PSNR | Alpha match |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |

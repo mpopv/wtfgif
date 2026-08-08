@@ -4,6 +4,9 @@ All notable changes to wtfgif are documented here.
 
 ## Unreleased
 
+- Tie the README and benchmark claims to their clean committed receipts, and
+  update the browser chart to show emitted GIF size alongside encode time and
+  disclose that gif.js worker creation is inside its public-API timing.
 - Align the exact palette KD nodes to a 16-byte stride so Wasm can load their
   color, bounds, and traversal fields more efficiently. Alternating
   fresh-process A/B runs improved the KD-heavy MakeEmoji fixture by 1.19% and

@@ -95,6 +95,9 @@ Across the 10-fixture arbitrary-RGBA corpus, `wtfgif` encoded **62.68×–125.58
 faster** than image-q + omggif, with a **91.63× geometric mean**. The real
 128×128 MakeEmoji workload was **110.14× faster** (1.166 ms vs 128.460 ms).
 Output files were 1.17×–22.74× larger, with a 6.50× geometric mean.
+These values come from the committed clean
+[`benchmarks/corpus.json`](benchmarks/corpus.json) receipt for wtfgif 3.0.6 at
+commit `97d9c2c`.
 
 ## Browser comparison
 
@@ -105,7 +108,10 @@ the documented eight-frame small-image workload. Package loading and wtfgif's
 one-time Wasm initialization are outside the clock. Output size and quality
 results are reported alongside the raw timings in [BENCHMARKS.md](BENCHMARKS.md).
 On this run, `wtfgif` took **1.510 ms**; the five alternatives took
-**107.750–164.265 ms** and were **71.36×–108.78× slower**.
+**107.750–164.265 ms** and were **71.36×–108.78× slower**. wtfgif emitted
+149,689 bytes; the alternatives emitted 39,101–80,869 bytes. For the two
+gif.js implementations, their public API's worker creation is part of the
+timed encode.
 
 ```bash
 npm run bench
