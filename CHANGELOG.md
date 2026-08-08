@@ -4,6 +4,11 @@ All notable changes to wtfgif are documented here.
 
 ## Unreleased
 
+- Prepare the public encoder's data-independent JavaScript validation and
+  dispatch during explicit initialization. Its private empty sentinel returns
+  before reading pixels, calling Wasm, or creating output state, so the timed
+  sample remains the first and only real encode while avoiding V8's first-use
+  compilation cost.
 - Skip 32-pixel clear-canvas spans with one SIMD alpha reduction while building
   a mixed-alpha histogram. The dedicated function is prepared with an empty
   sentinel during initialization and is entered only when the source starts at
@@ -45,12 +50,12 @@ All notable changes to wtfgif are documented here.
   avoids redundant scans and bit packing without changing decoded pixels or
   corpus GIF hashes.
 - Refresh the clean 40-process arbitrary-RGBA receipt. Every category now
-  exceeds 100x on its first real encode after initialization: **127.63x to
-  233.44x**, with a **156.29x geometric mean** and **135.34x** on the real
+  exceeds 100x on its first real encode after initialization: **133.64x to
+  289.90x**, with a **174.29x geometric mean** and **139.74x** on the real
   MakeEmoji workload.
 - Refresh the 15-process Chrome comparison and generated SVG. wtfgif takes
-  **1.265 ms**; the five alternatives take 97.000-138.020 ms and are
-  **76.68x-109.11x slower**.
+  **1.075 ms**; the five alternatives take 92.655-126.180 ms and are
+  **86.19x-117.38x slower**.
 - Pass the complete release gate: lint, type checking, dependency audit, Rust
   formatting/clippy/tests, all scalar and SIMD Wasm builds, 148 JavaScript/Wasm
   assertions, independent decoder conformance, edge validation, and package

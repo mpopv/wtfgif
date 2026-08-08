@@ -18,23 +18,23 @@
 <line x1="790" y1="102" x2="790" y2="418" stroke="#e3e8eb" stroke-width="1"/>
 <text x="790" y="98" text-anchor="middle" font-size="12" fill="#687780">150 ms</text>
 <text x="220" y="151" text-anchor="end" font-size="15" font-weight="700">wtfgif</text>
-<rect x="250" y="130" width="4.55" height="28" rx="3" fill="#0d8f6f"/>
-<text x="263.55" y="150" text-anchor="start" font-size="14" font-weight="700" fill="#172026">1.26 ms · 146.2 KiB · baseline</text>
+<rect x="250" y="130" width="3.87" height="28" rx="3" fill="#0d8f6f"/>
+<text x="262.87" y="150" text-anchor="start" font-size="14" font-weight="700" fill="#172026">1.07 ms · 146.2 KiB · baseline</text>
 <text x="220" y="201" text-anchor="end" font-size="15" font-weight="500">gif.js</text>
-<rect x="250" y="180" width="349.2" height="28" rx="3" fill="#aab5bb"/>
-<text x="608.2" y="200" text-anchor="start" font-size="14" font-weight="700" fill="#172026">97.0 ms · 79.0 KiB · 76.68× slower</text>
+<rect x="250" y="180" width="333.56" height="28" rx="3" fill="#aab5bb"/>
+<text x="592.56" y="200" text-anchor="start" font-size="14" font-weight="700" fill="#172026">92.7 ms · 79.0 KiB · 86.19× slower</text>
 <text x="220" y="251" text-anchor="end" font-size="15" font-weight="500">image-q + omggif</text>
-<rect x="250" y="230" width="363.53" height="28" rx="3" fill="#aab5bb"/>
-<text x="622.53" y="250" text-anchor="start" font-size="14" font-weight="700" fill="#172026">101.0 ms · 38.4 KiB · 79.83× slower</text>
+<rect x="250" y="230" width="345.19" height="28" rx="3" fill="#aab5bb"/>
+<text x="604.19" y="250" text-anchor="start" font-size="14" font-weight="700" fill="#172026">95.9 ms · 38.4 KiB · 89.20× slower</text>
 <text x="220" y="301" text-anchor="end" font-size="15" font-weight="500">gif.js.optimized</text>
-<rect x="250" y="280" width="402.98" height="28" rx="3" fill="#aab5bb"/>
-<text x="661.98" y="300" text-anchor="start" font-size="14" font-weight="700" fill="#172026">111.9 ms · 78.4 KiB · 88.49× slower</text>
+<rect x="250" y="280" width="387.9" height="28" rx="3" fill="#aab5bb"/>
+<text x="646.9" y="300" text-anchor="start" font-size="14" font-weight="700" fill="#172026">107.8 ms · 78.4 KiB · 100.23× slower</text>
 <text x="220" y="351" text-anchor="end" font-size="15" font-weight="500">gifenc</text>
-<rect x="250" y="330" width="449.46" height="28" rx="3" fill="#aab5bb"/>
-<text x="708.46" y="350" text-anchor="start" font-size="14" font-weight="700" fill="#172026">124.9 ms · 38.2 KiB · 98.70× slower</text>
+<rect x="250" y="330" width="447.46" height="28" rx="3" fill="#aab5bb"/>
+<text x="706.46" y="350" text-anchor="start" font-size="14" font-weight="700" fill="#172026">124.3 ms · 38.2 KiB · 115.62× slower</text>
 <text x="220" y="401" text-anchor="end" font-size="15" font-weight="500">modern-gif</text>
-<rect x="250" y="380" width="496.87" height="28" rx="3" fill="#aab5bb"/>
-<text x="755.87" y="400" text-anchor="start" font-size="14" font-weight="700" fill="#172026">138.0 ms · 42.1 KiB · 109.11× slower</text>
+<rect x="250" y="380" width="454.25" height="28" rx="3" fill="#aab5bb"/>
+<text x="713.25" y="400" text-anchor="start" font-size="14" font-weight="700" fill="#172026">126.2 ms · 42.1 KiB · 117.38× slower</text>
 <text x="40" y="482" font-size="12" fill="#687780">Bar length = encode time · labels include emitted GIF size and relative slowdown · gif.js worker creation is timed</text>
 <text x="40" y="504" font-size="12" fill="#687780">Google Chrome 151.0.7922.77 · Apple M3 Pro · every output decoded and checked</text>
 </g>

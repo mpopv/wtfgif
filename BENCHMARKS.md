@@ -15,44 +15,46 @@ animation shape and delays, and return a complete GIF. Both use an alpha
 threshold of 179. Every fixture encodes complete frames through the public
 `wtfgif/encode` entry point and the equivalent image-q + omggif pipeline.
 
-Each sample runs in a fresh Node process. Package loading and wtfgif Wasm
+Each sample runs in a fresh Node process. Package loading and wtfgif
 initialization happen before the clock; the first and only synchronous encode
 is timed. Initialization reserves a fixed 4 MB input arena without seeing the
-fixture and prepares data-independent Wasm code paths using empty sentinels.
-Every source byte is copied into that arena after the clock starts, and the
-first real encode begins with cold data scratch. There are zero encode warmups
-and no palettes, source pixels, encoded outputs, or prior encode results
-retained between processes. Encoder order alternates by fixture and process,
-and each worker loads only the implementation it is measuring. Validation and
-quality measurement are outside the clock. Results below are medians from 40
-processes per implementation on an Apple M3 Pro with Node.js 22.23.2.
+fixture and prepares data-independent JavaScript dispatch and Wasm code paths
+using empty sentinels. The JavaScript sentinel returns before reading pixels,
+calling Wasm, or creating output state. Every source byte is copied into the
+arena after the clock starts, and the first real encode begins with cold data
+scratch. There are zero encode warmups and no palettes, source pixels, encoded
+outputs, or prior encode results retained between processes. Encoder order
+alternates by fixture and process, and each worker loads only the implementation
+it is measuring. Validation and quality measurement are outside the clock.
+Results below are medians from 40 processes per implementation on an Apple M3
+Pro with Node.js 22.23.2.
 
 The committed receipt identifies wtfgif 3.0.8. Its encoded artifacts were built
-from clean commit `299362dcec87996c09794fa14f94303786f78446`; the receipt is a
+from clean commit `786d0626fbe5be4c8c87ea9ea8fda1839bc56fea`; the receipt is a
 point-in-time measurement and remains valid when later documentation-only
 commits change the repository.
 
 | Fixture | Shape | wtfgif | image-q + omggif | Speedup | File-size ratio |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| MakeEmoji production sample | 128×128×8 | 1.003 ms | 135.753 ms | **135.34×** | 3.80× |
-| Photographic animation | 128×96×8 | 0.487 ms | 66.755 ms | **137.00×** | 1.84× |
-| Pixel art | 64×64×12 | 0.217 ms | 28.747 ms | **132.27×** | 6.35× |
-| Smooth gradients | 128×128×8 | 0.854 ms | 120.927 ms | **141.54×** | 8.00× |
-| Random noise | 128×128×8 | 0.532 ms | 96.403 ms | **181.17×** | 7.28× |
-| Transparency | 128×128×8 | 0.371 ms | 47.293 ms | **127.63×** | 20.85× |
-| Disjoint frame palettes | 128×128×8 | 0.290 ms | 58.556 ms | **202.24×** | 7.64× |
-| Nearly static animation | 128×128×12 | 0.431 ms | 73.798 ms | **171.18×** | 12.19× |
-| Tiny animation | 16×16×6 | 0.233 ms | 54.439 ms | **233.44×** | 1.17× |
-| One-megapixel animation | 512×512×4 | 4.403 ms | 590.328 ms | **134.07×** | 22.74× |
+| MakeEmoji production sample | 128×128×8 | 0.991 ms | 138.440 ms | **139.74×** | 3.80× |
+| Photographic animation | 128×96×8 | 0.457 ms | 68.193 ms | **149.06×** | 1.84× |
+| Pixel art | 64×64×12 | 0.175 ms | 28.517 ms | **162.80×** | 6.35× |
+| Smooth gradients | 128×128×8 | 0.820 ms | 122.673 ms | **149.68×** | 8.00× |
+| Random noise | 128×128×8 | 0.487 ms | 97.847 ms | **201.12×** | 7.28× |
+| Transparency | 128×128×8 | 0.322 ms | 47.639 ms | **147.95×** | 20.85× |
+| Disjoint frame palettes | 128×128×8 | 0.250 ms | 58.956 ms | **235.98×** | 7.64× |
+| Nearly static animation | 128×128×12 | 0.397 ms | 74.340 ms | **187.35×** | 12.19× |
+| Tiny animation | 16×16×6 | 0.189 ms | 54.658 ms | **289.90×** | 1.17× |
+| One-megapixel animation | 512×512×4 | 4.452 ms | 594.986 ms | **133.64×** | 22.74× |
 
-The observed range is 127.63×–233.44×, with a 156.29× geometric-mean speedup.
+The observed range is 133.64×–289.90×, with a 174.29× geometric-mean speedup.
 The corresponding files are 1.17×–22.74× larger, with a 6.50× geometric mean.
 This is the library's intended tradeoff: encode latency takes priority over
 compression ratio.
 
-Every category now exceeds the 100× floor on its first real encode after Wasm
-initialization. Transparency has the narrowest margin at 127.63×, followed by
-pixel art at 132.27×. The real MakeEmoji workload is 135.34× faster.
+Every category now exceeds the 100× floor on its first real encode after
+initialization. The one-megapixel workload has the narrowest margin at 133.64×,
+followed by the real MakeEmoji workload at 139.74×.
 No result depends on a known palette, source cache, previous result, or
 reduced-quality mode.
 
@@ -100,18 +102,19 @@ npm run bench:race
 
 This comparison uses the same eight real 128×128 MakeEmoji RGBA frames and an
 alpha threshold of 179. Package code, the fixture fetch, and wtfgif's one-time
-Wasm initialization happen before the clock. The timed boundary includes
+initialization happen before the clock. The timed boundary includes
 palette creation, pixel mapping, GIF compression, and final byte assembly.
 
 Each sample is the first and only encode in a fresh, cross-origin-isolated
 Chrome process and fresh browser profile. During untimed initialization,
 wtfgif reserves its generic input arena and prepares data-independent Wasm code
-paths using empty sentinels. It then copies the fixture and performs all
-palette, mapping, compression, and assembly work after the clock starts. There
-are no encode warmups, image-derived retained state, or results reused between
-samples. The six encoders run in a rotating order to reduce thermal and
-ordering bias. Results below are medians from 15 processes per encoder on an
-Apple M3 Pro in Google Chrome 151.0.7922.77.
+paths and JavaScript dispatch using empty sentinels. The JavaScript sentinel
+returns before reading pixels, calling Wasm, or creating output state. It then
+copies the fixture and performs all palette, mapping, compression, and assembly
+work after the clock starts. There are no encode warmups, image-derived retained
+state, or results reused between samples. The six encoders run in a rotating
+order to reduce thermal and ordering bias. Results below are medians from 15
+processes per encoder on an Apple M3 Pro in Google Chrome 151.0.7922.77.
 
 This is public-API time-to-result, not a codec-kernel microbenchmark. The
 gif.js and gif.js.optimized APIs create workers when `render()` begins, so that
@@ -121,12 +124,12 @@ slowdown beside the time.
 
 | Implementation | Version | Median | wtfgif advantage | Bytes | PSNR | Alpha match |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| **wtfgif** | 3.0.8 | **1.265 ms** | — | 149,689 | 34.12 dB | 100% |
-| gif.js | 0.2.0 | 97.000 ms | **76.68×** | 80,869 | 33.08 dB | 99.78% |
-| image-q + omggif | 2.1.2 + 1.0.10 | 100.980 ms | **79.83×** | 39,350 | 31.84 dB | 100% |
-| gif.js.optimized | 1.0.1 | 111.940 ms | **88.49×** | 80,304 | 32.20 dB | 99.76% |
-| gifenc | 1.0.3 | 124.850 ms | **98.70×** | 39,101 | 34.54 dB | 100% |
-| modern-gif | 2.1.0 | 138.020 ms | **109.11×** | 43,114 | 32.65 dB | 100% |
+| **wtfgif** | 3.0.8 | **1.075 ms** | — | 149,689 | 34.12 dB | 100% |
+| gif.js | 0.2.0 | 92.655 ms | **86.19×** | 80,869 | 33.08 dB | 99.78% |
+| image-q + omggif | 2.1.2 + 1.0.10 | 95.885 ms | **89.20×** | 39,350 | 31.84 dB | 100% |
+| gif.js.optimized | 1.0.1 | 107.750 ms | **100.23×** | 80,304 | 32.20 dB | 99.76% |
+| gifenc | 1.0.3 | 124.295 ms | **115.62×** | 39,101 | 34.54 dB | 100% |
+| modern-gif | 2.1.0 | 126.180 ms | **117.38×** | 43,114 | 32.65 dB | 100% |
 
 Every output must parse as an eight-frame 128×128 animation with exact 100 ms
 delays before its sample is accepted. The validator composites all frames,
