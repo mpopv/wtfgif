@@ -40,3 +40,9 @@ fn nine_bit_literal_expansion_matches_reference_packing() {
         assert_eq!(u128::from(low) | (u128::from(high) << 64), reference);
     }
 }
+
+#[test]
+fn palette_kd_nodes_keep_the_profiled_layout() {
+    assert_eq!(std::mem::size_of::<PaletteKdNode>(), 16);
+    assert_eq!(std::mem::align_of::<PaletteKdNode>(), 16);
+}

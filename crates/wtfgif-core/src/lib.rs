@@ -9976,6 +9976,7 @@ fn palette_color_distance(color: u32, r: u8, g: u8, b: u8) -> u32 {
     (dr * dr + dg * dg + db * db) as u32
 }
 
+#[repr(C, align(16))]
 #[derive(Clone, Copy)]
 struct PaletteKdNode {
     red: u8,
