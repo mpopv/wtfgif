@@ -71,6 +71,10 @@ All notable changes to wtfgif are documented here.
   This removes redundant count multiplication from variance and representative
   accumulation while preserving the exact palette and GIF bytes. Paired fresh
   processes improve tiny by 1.9% and noise by 1.2%.
+- Prove equal histogram weights and Cartesian grid occupancy in one early-exit
+  pass instead of traversing the color arena twice. This shrinks quality Wasm
+  by 857 bytes and improves paired fresh-process tiny by a further 4.7% and
+  noise by 1.3%, with identical GIF bytes.
 - Refresh the clean 40-process arbitrary-RGBA receipt. Every category now
   exceeds 100x on its first real encode after initialization: **145.70x to
   297.61x**, with a **179.34x geometric mean** and **145.70x** on the real

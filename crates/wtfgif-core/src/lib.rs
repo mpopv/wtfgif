@@ -6960,11 +6960,7 @@ fn finish_quality_low_res_quantized(
     if colors.len() == opaque_color_limit + 1 {
         return build_quality_single_merge_plan(has_transparent_pixels, colors, palette);
     }
-    if colors
-        .first()
-        .is_some_and(|first| colors.iter().all(|color| color.count == first.count))
-        && quality_colors_form_cartesian_grid(&colors)
-    {
+    if quality_colors_form_equal_count_cartesian_grid(&colors) {
         return build_quality_flat_grid_plan(has_transparent_pixels, colors, palette);
     }
     build_quality_index_plan_from_colors::<true, HISTOGRAM_BITS>(
@@ -6975,11 +6971,17 @@ fn finish_quality_low_res_quantized(
 }
 
 #[inline(always)]
-fn quality_colors_form_cartesian_grid(colors: &[QuantizedColor]) -> bool {
+fn quality_colors_form_equal_count_cartesian_grid(colors: &[QuantizedColor]) -> bool {
+    let Some(first) = colors.first() else {
+        return false;
+    };
     let mut red_cells = 0u16;
     let mut green_cells = 0u16;
     let mut blue_cells = 0u16;
     for color in colors {
+        if color.count != first.count {
+            return false;
+        }
         red_cells |= 1 << (color.histogram_index >> 8);
         green_cells |= 1 << ((color.histogram_index >> 4) & 15);
         blue_cells |= 1 << (color.histogram_index & 15);
