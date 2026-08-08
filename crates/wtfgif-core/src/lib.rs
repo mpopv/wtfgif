@@ -10670,7 +10670,15 @@ impl PaletteKdTree {
     ) -> [u8; 1 << 12] {
         #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
         if _requested_cell_count >= 2_048 {
-            return dense_coarse_nearest_table_simd(palette_rgb, requested_cells);
+            return if _requested_cell_count == 1 << 12 {
+                dense_coarse_nearest_table_simd::<false>(
+                    palette_rgb,
+                    requested_cells,
+                    initial_hints,
+                )
+            } else {
+                dense_coarse_nearest_table_simd::<true>(palette_rgb, requested_cells, initial_hints)
+            };
         }
         let mut sorted = true;
         let mut has_duplicate = false;
@@ -10837,15 +10845,37 @@ impl PaletteKdTree {
 
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 #[inline(never)]
-fn dense_coarse_nearest_table_simd(
+fn dense_coarse_nearest_table_simd<const PRUNE_FROM_HINTS: bool>(
     palette_rgb: &[u32],
     requested_cells: &[bool; 1 << 12],
+    initial_hints: &[u8; 1 << 12],
 ) -> [u8; 1 << 12] {
     use core::arch::wasm32::{
         i32x4_add, i32x4_lt, i32x4_splat, v128_bitselect, v128_load, v128_store,
     };
 
     let mut best = [i32::MAX as u32; 1 << 12];
+    let mut row_max_distance = [0u32; 1 << 8];
+    let mut red_max_distance = [0u32; 1 << 4];
+    let mut requested_rows = [false; 1 << 8];
+    if PRUNE_FROM_HINTS {
+        for (cell, requested) in requested_cells.iter().enumerate() {
+            if !*requested {
+                continue;
+            }
+            let red = ((cell >> 8) << 4) | 8;
+            let green = (((cell >> 4) & 15) << 4) | 8;
+            let blue = ((cell & 15) << 4) | 8;
+            let hint_index = initial_hints[cell];
+            let hint_color = palette_rgb[usize::from(hint_index)];
+            let distance = palette_color_distance(hint_color, red as u8, green as u8, blue as u8);
+            best[cell] = (distance << 8) | u32::from(hint_index);
+            let row = cell >> 4;
+            requested_rows[row] = true;
+            row_max_distance[row] = row_max_distance[row].max(distance);
+            red_max_distance[cell >> 8] = red_max_distance[cell >> 8].max(distance);
+        }
+    }
     for (palette_index, &color) in palette_rgb.iter().enumerate() {
         let palette_red = ((color >> 16) & 0xff) as i32;
         let palette_green = ((color >> 8) & 0xff) as i32;
@@ -10866,10 +10896,19 @@ fn dense_coarse_nearest_table_simd(
             *distance = ((delta * delta) as u32) << 8 | palette_index as u32;
         }
         for red in 0..16usize {
+            if PRUNE_FROM_HINTS && red_distances[red] > red_max_distance[red] {
+                continue;
+            }
             for green in 0..16usize {
-                let base_distance =
-                    i32x4_splat(((red_distances[red] + green_distances[green]) << 8) as i32);
                 let row = (red << 8) | (green << 4);
+                let base_distance_unshifted = red_distances[red] + green_distances[green];
+                if PRUNE_FROM_HINTS
+                    && (!requested_rows[row >> 4]
+                        || base_distance_unshifted > row_max_distance[row >> 4])
+                {
+                    continue;
+                }
+                let base_distance = i32x4_splat((base_distance_unshifted << 8) as i32);
                 for blue in (0..16usize).step_by(4) {
                     let blue_distance =
                         unsafe { v128_load(blue_distances_and_index.as_ptr().add(blue).cast()) };

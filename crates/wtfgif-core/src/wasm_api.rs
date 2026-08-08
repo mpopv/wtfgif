@@ -259,7 +259,10 @@ pub fn prepare_quality_encoder_code() {
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     let dense = {
         let requested = [false; 1 << 12];
-        dense_coarse_nearest_table_simd(std::hint::black_box(&[]), &requested)[0]
+        let hints = [0; 1 << 12];
+        dense_coarse_nearest_table_simd::<false>(std::hint::black_box(&[]), &requested, &hints)[0]
+            ^ dense_coarse_nearest_table_simd::<true>(std::hint::black_box(&[]), &requested, &hints)
+                [0]
     };
     #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
     let dense = 0u8;
