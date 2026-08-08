@@ -7611,10 +7611,23 @@ fn add_quality_histogram_u32_pair_packed<const BITS: usize>(
     histogram: &mut [RgbHistogramBin32],
     packed: u64,
 ) {
-    let packed0 = packed as u32;
-    let packed1 = (packed >> 32) as u32;
-    let (index0, index1) = quality_histogram_index_pair_packed::<BITS>(packed);
-    add_quality_histogram_u32_pair_indexed::<BITS>(histogram, packed0, packed1, index0, index1);
+    let indices = quality_histogram_index_pair_packed::<BITS>(packed);
+    add_quality_histogram_u32_pair_packed_indexed::<BITS>(histogram, packed, indices);
+}
+
+#[inline(always)]
+fn add_quality_histogram_u32_pair_packed_indexed<const BITS: usize>(
+    histogram: &mut [RgbHistogramBin32],
+    packed: u64,
+    indices: (usize, usize),
+) {
+    add_quality_histogram_u32_pair_indexed::<BITS>(
+        histogram,
+        packed as u32,
+        (packed >> 32) as u32,
+        indices.0,
+        indices.1,
+    );
 }
 
 #[inline(always)]
@@ -7831,10 +7844,17 @@ fn accumulate_quality_histogram_u32_bits_remaining_mixed_opaque_spans_four_bit(
             u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 24).cast()) });
         let combined_alpha = packed01 & packed23 & packed45 & packed67;
         if combined_alpha & ALPHA_MASK == ALPHA_MASK {
-            add_quality_histogram_u32_pair_packed::<4>(histogram, packed01);
-            add_quality_histogram_u32_pair_packed::<4>(histogram, packed23);
-            add_quality_histogram_u32_pair_packed::<4>(histogram, packed45);
-            add_quality_histogram_u32_pair_packed::<4>(histogram, packed67);
+            // Decode every destination before issuing the scattered bin
+            // updates. Keeping those addresses independent gives the CPU
+            // enough memory-level parallelism to overlap the random writes.
+            let indices01 = quality_histogram_index_pair_packed::<4>(packed01);
+            let indices23 = quality_histogram_index_pair_packed::<4>(packed23);
+            let indices45 = quality_histogram_index_pair_packed::<4>(packed45);
+            let indices67 = quality_histogram_index_pair_packed::<4>(packed67);
+            add_quality_histogram_u32_pair_packed_indexed::<4>(histogram, packed01, indices01);
+            add_quality_histogram_u32_pair_packed_indexed::<4>(histogram, packed23, indices23);
+            add_quality_histogram_u32_pair_packed_indexed::<4>(histogram, packed45, indices45);
+            add_quality_histogram_u32_pair_packed_indexed::<4>(histogram, packed67, indices67);
         } else if (packed01 | packed23 | packed45 | packed67) & ALPHA_MASK == 0 {
             has_transparent_pixels = true;
         } else {

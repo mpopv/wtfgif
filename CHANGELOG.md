@@ -4,6 +4,16 @@ All notable changes to wtfgif are documented here.
 
 ## Unreleased
 
+- Decode all eight histogram destinations before issuing scattered updates for
+  fully opaque spans inside mixed-alpha images. Across 1,200 isolated fresh
+  MakeEmoji pairs, the first encode improves by 1.0085x end to end and 1.0093x
+  inside Wasm with identical GIF bytes. After 64 MiB cache eviction, 400 pairs
+  retain 1.0088x and 1.0106x gains; isolated transparency and noise runs remain
+  neutral.
+- Pass the complete release gate: lint, type checking, dependency audit, Rust
+  formatting/clippy/tests, all scalar and SIMD Wasm builds, 148 JavaScript/Wasm
+  assertions, independent decoder conformance, edge validation, and package
+  validation.
 - Simplify the README benchmark explanation while keeping latency and output
   size together, and clarify why the current clean 3.0.9 receipt measures the
   unchanged encoder source shipped in 3.0.10.
