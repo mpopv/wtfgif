@@ -35,7 +35,9 @@ function run(name, wasmPath) {
 			PROFILE_FIXTURE: fixture,
 			PROFILE_WASM_PATH: wasmPath,
 			PROFILE_JS_TIER:
-				name === "candidate" && process.env.PROFILE_CANDIDATE_JS_TIER === "1"
+				(name === "candidate" &&
+					process.env.PROFILE_CANDIDATE_JS_TIER === "1") ||
+				(name === "baseline" && process.env.PROFILE_BASELINE_JS_TIER === "1")
 					? "1"
 					: "0",
 		},
