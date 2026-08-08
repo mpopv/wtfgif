@@ -4,6 +4,11 @@ All notable changes to wtfgif are documented here.
 
 ## Unreleased
 
+- Skip 32-pixel clear-canvas spans with one SIMD alpha reduction while building
+  a mixed-alpha histogram. The dedicated function is prepared with an empty
+  sentinel during initialization and is entered only when the source starts at
+  alpha zero; it retains no image-derived state and delegates every nonzero
+  span to the exact existing threshold path.
 - Seed dense SIMD nearest-palette mapping from the exact Wu-cube candidates,
   then skip red slices and red/green rows whose distance lower bound cannot
   beat any requested cell. Full-occupancy tables retain the original dense
@@ -40,12 +45,12 @@ All notable changes to wtfgif are documented here.
   avoids redundant scans and bit packing without changing decoded pixels or
   corpus GIF hashes.
 - Refresh the clean 40-process arbitrary-RGBA receipt. Every category now
-  exceeds 100x on its first real encode after initialization: **123.85x to
-  230.59x**, with a **154.01x geometric mean** and **133.80x** on the real
+  exceeds 100x on its first real encode after initialization: **127.63x to
+  233.44x**, with a **156.29x geometric mean** and **135.34x** on the real
   MakeEmoji workload.
 - Refresh the 15-process Chrome comparison and generated SVG. wtfgif takes
-  **1.220 ms**; the five alternatives take 100.760-141.275 ms and are
-  **82.59x-115.80x slower**.
+  **1.265 ms**; the five alternatives take 97.000-138.020 ms and are
+  **76.68x-109.11x slower**.
 - Pass the complete release gate: lint, type checking, dependency audit, Rust
   formatting/clippy/tests, all scalar and SIMD Wasm builds, 148 JavaScript/Wasm
   assertions, independent decoder conformance, edge validation, and package

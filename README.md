@@ -92,19 +92,19 @@ data-independent Wasm code paths with empty sentinels. Every input byte is
 copied after the clock starts, and the first real encode still begins with cold
 data scratch. There are no encode warmups or results reused between samples.
 
-Across the 10-fixture arbitrary-RGBA corpus, `wtfgif` encoded **123.85×–230.59×
-faster** than image-q + omggif, with a **154.01× geometric mean**. The real
-128×128 MakeEmoji workload was **133.80× faster** (1.008 ms vs 134.803 ms).
+Across the 10-fixture arbitrary-RGBA corpus, `wtfgif` encoded **127.63×–233.44×
+faster** than image-q + omggif, with a **156.29× geometric mean**. The real
+128×128 MakeEmoji workload was **135.34× faster** (1.003 ms vs 135.753 ms).
 Output files were 1.17×–22.74× larger, with a 6.50× geometric mean.
 These values come from the committed clean
 [`benchmarks/corpus.json`](benchmarks/corpus.json) receipt for wtfgif 3.0.8.
 The encoded artifacts were built from clean commit
-`ecc8d9f2a7f53efc00d70fdbf94e1c97b2e977e6`; later documentation commits do not
+`299362dcec87996c09794fa14f94303786f78446`; later documentation commits do not
 change that measurement.
 
 Every category in this corpus now clears 100× on the first real encode after
-initialization. The narrowest margin is transparency at **123.85×**, followed
-by photographic animation at **133.23×**. These are honest arbitrary images: no
+initialization. The narrowest margin is transparency at **127.63×**, followed
+by pixel art at **132.27×**. These are honest arbitrary images: no
 known palette, source cache, previous result, or reduced-quality mode.
 
 ## Browser comparison
@@ -115,8 +115,8 @@ These are median first encodes from 15 fresh Chrome processes per encoder on
 the documented eight-frame small-image workload. Package loading and wtfgif's
 one-time Wasm initialization are outside the clock. Output size and quality
 results are reported alongside the raw timings in [BENCHMARKS.md](BENCHMARKS.md).
-On this run, `wtfgif` took **1.220 ms**; the five alternatives took
-**100.760–141.275 ms** and were **82.59×–115.80× slower**. wtfgif emitted
+On this run, `wtfgif` took **1.265 ms**; the five alternatives took
+**97.000–138.020 ms** and were **76.68×–109.11× slower**. wtfgif emitted
 149,689 bytes; the alternatives emitted 39,101–80,869 bytes. For the two
 gif.js implementations, their public API's worker creation is part of the
 timed encode.
