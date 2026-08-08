@@ -4,6 +4,10 @@ All notable changes to wtfgif are documented here.
 
 ## Unreleased
 
+- Align the exact palette KD nodes to a 16-byte stride so Wasm can load their
+  color, bounds, and traversal fields more efficiently. Alternating
+  fresh-process A/B runs improved the KD-heavy MakeEmoji fixture by 1.19% and
+  the one-megapixel fixture by 0.81%; all corpus GIF hashes are unchanged.
 - Pack each eight-code literal group through two staged four-code expansions,
   reducing the RGBA quality encoder's per-pixel mask-and-shift work without
   changing a single output byte. A 10,000-pattern reference-packing test now
