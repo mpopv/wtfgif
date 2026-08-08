@@ -42,6 +42,18 @@ export function prepareQualityWasmEncoderModule(
 	scratchMemory = module?.wasm_memory() ?? null;
 	if (module && scratchMemory) {
 		module.prepare_quality_encoder_code();
+		// Enter the actual exported shims with an empty sentinel during explicit
+		// initialization. Wasm returns before touching reusable image state.
+		module.encode_rgba_quality_low_res_constant_delay_scratch_from_input(
+			0,
+			1,
+			1,
+			0,
+			0,
+			0,
+			DEFAULT_ALPHA_THRESHOLD,
+		);
+		module.gif_output_scratch_ptr();
 		scratchPointer = module.indexed_lzw_input_scratch_reserve(
 			QUALITY_INITIAL_INPUT_CAPACITY,
 		);

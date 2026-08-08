@@ -167,6 +167,15 @@ pub fn prepare_quality_encoder_code() {
     let mixed =
         accumulate_quality_histogram_u32_bits_remaining_mixed::<4>(&mut histogram, empty, 0, 128);
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    let opaque_spans = accumulate_quality_histogram_u32_bits_remaining_mixed_opaque_spans_four_bit(
+        &mut histogram,
+        empty,
+        0,
+        128,
+    );
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+    let opaque_spans = false;
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     let zero_dense = accumulate_quality_histogram_u32_bits_remaining_mixed_zero_dense::<4>(
         &mut histogram,
         empty,
@@ -185,6 +194,8 @@ pub fn prepare_quality_encoder_code() {
     let sampled_opaque_plan =
         index_rgba_frames_quality_low_res_quantized_sampled_opaque(empty, 128, Vec::new());
     recycle_quality_palette(sampled_opaque_plan.palette);
+    let mixed_plan = index_rgba_frames_quality_low_res_quantized_mixed(empty, 128, Vec::new());
+    recycle_quality_palette(mixed_plan.palette);
     let direct_plan = finish_quality_low_res_quantized(Vec::new(), false, Vec::new());
     recycle_quality_palette(direct_plan.palette);
     recycle_quality_histogram_to_palette(direct_plan.histogram_to_palette);
@@ -262,8 +273,26 @@ pub fn prepare_quality_encoder_code() {
         maximum: [0; 3],
     };
     let split = split_wu_cube(std::hint::black_box(&[]), std::hint::black_box(&[]), cube);
-    let tree = PaletteKdTree::new(std::hint::black_box(&[]));
-    let nearest = tree.nearest_with_hint_split(0, 0, 0, None);
+    let unretained_plan = build_quality_index_plan_from_colors::<true, 4>(
+        false,
+        std::hint::black_box(Vec::new()),
+        Vec::new(),
+    );
+    // Do not recycle this preparation-only plan: dropping its temporary table
+    // keeps the reusable palette and mapping arenas cold for the first image.
+    drop(unretained_plan);
+    let mut tree = PaletteKdTree::new(std::hint::black_box(&[]));
+    tree.recolor(std::hint::black_box(&[]));
+    let nearest = tree.nearest_with_seed(0, 0, 0, 0, 1);
+    write_indexed_gif_header(
+        &mut lzw_output,
+        1,
+        1,
+        std::hint::black_box(&[] as &[u32]),
+        2,
+    );
+    write_loop_extension(&mut lzw_output, 0);
+    write_indexed_gif_frame_header(&mut lzw_output, 0, 0, 1, 1, 0, None, 0);
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     let dense = {
         let requested = [false; 1 << 12];
@@ -284,6 +313,7 @@ pub fn prepare_quality_encoder_code() {
             ^ usize::from(impossible)
             ^ usize::from(alpha_255)
             ^ usize::from(mixed)
+            ^ usize::from(opaque_spans)
             ^ usize::from(zero_dense)
             ^ usize::from(opaque)
             ^ usize::from(opaque_lzw.is_ok())

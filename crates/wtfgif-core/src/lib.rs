@@ -6883,6 +6883,17 @@ fn index_rgba_frames_quality_low_res_quantized_mixed(
     alpha_threshold: u8,
     palette: Vec<u32>,
 ) -> QualityIndexPlan {
+    // Explicit Wasm initialization enters with an empty sentinel solely to
+    // compile this wrapper without allocating or retaining histogram scratch.
+    if rgba_stream.is_empty() {
+        return QualityIndexPlan {
+            palette,
+            histogram_to_palette: Vec::new(),
+            transparent_index: None,
+            histogram_bits: 4,
+            mapping_bits: 4,
+        };
+    }
     const HISTOGRAM_BITS: usize = 4;
     const HISTOGRAM_LEN: usize = 1 << (HISTOGRAM_BITS * 3);
     let mut histogram = take_quality_histogram_u32(HISTOGRAM_LEN);

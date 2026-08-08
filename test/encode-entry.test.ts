@@ -40,19 +40,36 @@ afterAll(() => {
 });
 
 describe("encode-only quality entry", () => {
-	test("prepares code and reserves the ordinary input arena during initialization", () => {
+	test("prepares code and exported shims before the first real encode", () => {
 		const module = getWasmCoreModule();
 		if (!module) throw new Error("Expected initialized encode module.");
 		const prepare = vi.fn(module.prepare_quality_encoder_code);
+		const prepareEncode = vi.fn(
+			module.encode_rgba_quality_low_res_constant_delay_scratch_from_input,
+		);
+		const prepareOutputPointer = vi.fn(module.gif_output_scratch_ptr);
 		const reserve = vi.fn(module.indexed_lzw_input_scratch_reserve);
 		setWasmCoreModule({
 			...module,
 			prepare_quality_encoder_code: prepare,
+			encode_rgba_quality_low_res_constant_delay_scratch_from_input:
+				prepareEncode,
+			gif_output_scratch_ptr: prepareOutputPointer,
 			indexed_lzw_input_scratch_reserve: reserve,
 		});
 
 		try {
 			expect(prepare).toHaveBeenCalledTimes(1);
+			expect(prepareEncode).toHaveBeenCalledExactlyOnceWith(
+				0,
+				1,
+				1,
+				0,
+				0,
+				0,
+				128,
+			);
+			expect(prepareOutputPointer).toHaveBeenCalledTimes(1);
 			expect(reserve).toHaveBeenCalledExactlyOnceWith(4 * 1024 * 1024);
 			encodeRgbaGifFrames({
 				width: 2,
@@ -62,6 +79,8 @@ describe("encode-only quality entry", () => {
 				delay: 10,
 			});
 			expect(prepare).toHaveBeenCalledTimes(1);
+			expect(prepareEncode).toHaveBeenCalledTimes(2);
+			expect(prepareOutputPointer).toHaveBeenCalledTimes(2);
 			expect(reserve).toHaveBeenCalledTimes(1);
 		} finally {
 			setWasmCoreModule(module);
