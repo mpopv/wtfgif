@@ -12,11 +12,15 @@ All notable changes to wtfgif are documented here.
   user-encode latency improves by 1.16x-1.59x across MakeEmoji, tiny,
   pixel-art, and one-megapixel fixtures, with byte-for-byte identical GIFs.
 - Refresh the clean 40-process arbitrary-RGBA receipt. Every category remains
-  above 100x at **177.84x-868.28x**, with a **271.24x geometric mean** and
-  **201.46x** on the real MakeEmoji workload.
+  above 100x at **188.22x-893.97x**, with a **270.56x geometric mean** and
+  **199.35x** on the real MakeEmoji workload.
 - Refresh the 15-process browser comparison and generated SVG. wtfgif takes
-  **0.805 ms**; the five alternatives take 98.335-132.500 ms and are
-  **122.16x-164.60x slower**.
+  **0.760 ms**; the five alternatives take 99.425-137.845 ms and are
+  **130.82x-181.38x slower**.
+- Use packed scalar updates for the split-bin histogram scanner. In 800 fresh
+  paired processes, the photographic encode improved by 1.10x end to end and
+  1.11x inside Wasm with identical output; MakeEmoji and large inputs remained
+  neutral. The Wasm gain remained 1.08x after 64 MiB cache eviction.
 - Pass the complete release gate: lint, type checking, dependency audit, Rust
   formatting/clippy/tests, all scalar and SIMD Wasm builds, 148 JavaScript/Wasm
   assertions, independent decoder conformance, edge validation, and package
