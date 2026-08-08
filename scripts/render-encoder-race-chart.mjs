@@ -43,18 +43,27 @@ export function renderEncoderRaceChart(receipt) {
 	const rows = receipt.results.toSorted(
 		(left, right) => left.medianMs - right.medianMs,
 	);
-	const width = 1060;
+	const wtfgif = rows.find((row) => row.id === "wtfgif");
+	if (!wtfgif) throw new Error("Encoder race receipt has no wtfgif result");
+	const width = 1200;
 	const labelWidth = 220;
 	const chartLeft = 250;
 	// Leave enough room for the value label after the longest bar.
-	const chartRight = 790;
+	const chartRight = 830;
 	const chartWidth = chartRight - chartLeft;
 	const rowHeight = 50;
-	const firstRowY = 130;
+	const firstRowY = 148;
 	const height = firstRowY + rows.length * rowHeight + 108;
 	const maximum = niceMaximum(Math.max(...rows.map((row) => row.medianMs)));
 	const tickCount = 5;
-	const subtitle = `Median first real encode · ${receipt.fixture.frames} × ${receipt.fixture.width}×${receipt.fixture.height} RGBA frames · ${receipt.environment.iterations} fresh Chrome processes · lower is better`;
+	const competitors = rows.filter((row) => row.id !== "wtfgif");
+	const minimumSlowdown = Math.min(
+		...competitors.map((row) => row.slowerThanWtfgif),
+	);
+	const maximumSlowdown = Math.max(
+		...competitors.map((row) => row.slowerThanWtfgif),
+	);
+	const workload = `${receipt.fixture.frames} × ${receipt.fixture.width}×${receipt.fixture.height} RGBA frames · ${receipt.environment.iterations} fresh Chrome processes`;
 	const elements = [];
 
 	elements.push(
@@ -63,16 +72,17 @@ export function renderEncoderRaceChart(receipt) {
 		`<desc id="desc">Horizontal bar chart comparing ${rows.map((row) => row.label).join(", ")}. Bar length is median encode time in milliseconds, so shorter is faster. Labels also report emitted GIF size and relative slowdown versus wtfgif.</desc>`,
 		'<rect width="100%" height="100%" fill="#ffffff"/>',
 		'<g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" fill="#172026">',
-		'<text x="40" y="48" font-size="25" font-weight="700">Browser encode time: arbitrary RGBA images → GIF</text>',
-		`<text x="40" y="76" font-size="14" fill="#51606a">${escapeXml(subtitle)}</text>`,
+		'<text x="40" y="48" font-size="25" font-weight="700">Browser encode time on the same RGBA animation</text>',
+		`<text x="40" y="76" font-size="14" fill="#51606a">${escapeXml(`Median first real encode after initialization · ${workload}`)}</text>`,
+		`<text x="40" y="100" font-size="13" fill="#51606a">${escapeXml(`wtfgif ${wtfgif.medianMs.toFixed(3)} ms · alternatives ${minimumSlowdown.toFixed(2)}×–${maximumSlowdown.toFixed(2)}× slower · lower is better`)}</text>`,
 	);
 
 	for (let tick = 0; tick <= tickCount; tick += 1) {
 		const value = (maximum * tick) / tickCount;
 		const x = coordinate(chartLeft + (chartWidth * tick) / tickCount);
 		elements.push(
-			`<line x1="${x}" y1="102" x2="${x}" y2="${firstRowY + rows.length * rowHeight - 12}" stroke="#e3e8eb" stroke-width="1"/>`,
-			`<text x="${x}" y="98" text-anchor="middle" font-size="12" fill="#687780">${value.toFixed(0)} ms</text>`,
+			`<line x1="${x}" y1="120" x2="${x}" y2="${firstRowY + rows.length * rowHeight - 12}" stroke="#e3e8eb" stroke-width="1"/>`,
+			`<text x="${x}" y="118" text-anchor="middle" font-size="12" fill="#687780">${value.toFixed(0)} ms</text>`,
 		);
 	}
 

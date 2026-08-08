@@ -4,6 +4,12 @@ All notable changes to wtfgif are documented here.
 
 ## Unreleased
 
+- Simplify the README benchmark explanation while keeping latency and output
+  size together, and clarify why the current clean 3.0.9 receipt measures the
+  unchanged encoder source shipped in 3.0.10.
+- Make both generated charts derive their summary text and scaling from the
+  committed receipts so future benchmark refreshes cannot leave stale labels.
+
 ## 3.0.10 - 2026-08-08
 
 - Prepare the quality encoder's real large-input, mixed-alpha, Cartesian-grid,

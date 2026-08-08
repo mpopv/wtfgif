@@ -16,6 +16,21 @@ function coordinate(value) {
 	return Number(value.toFixed(2));
 }
 
+function niceMaximum(value) {
+	const exponent = 10 ** Math.floor(Math.log10(value));
+	const normalized = value / exponent;
+	const rounded = [1, 1.25, 1.5, 2, 2.5, 5, 10].find(
+		(candidate) => candidate >= normalized,
+	);
+	return rounded * exponent;
+}
+
+function geometricMean(values) {
+	return Math.exp(
+		values.reduce((sum, value) => sum + Math.log(value), 0) / values.length,
+	);
+}
+
 function chartRows(receipt) {
 	const fixtures = new Map(
 		receipt.corpus.map((fixture) => [fixture.id, fixture]),
@@ -33,8 +48,15 @@ export function renderCorpusSpeedupChart(receipt) {
 	const chartRight = 940;
 	const chartWidth = chartRight - chartLeft;
 	const rowHeight = 42;
-	const firstRowY = 124;
-	const maximum = 900;
+	const firstRowY = 142;
+	const speedups = rows.map((row) => row.speedupVsImageQOmggif);
+	const sizeRatios = rows.map((row) => row.sizeRatioVsImageQOmggif);
+	const minimumSpeedup = Math.min(...speedups);
+	const maximumSpeedup = Math.max(...speedups);
+	const meanSpeedup = geometricMean(speedups);
+	const minimumSizeRatio = Math.min(...sizeRatios);
+	const maximumSizeRatio = Math.max(...sizeRatios);
+	const maximum = niceMaximum(maximumSpeedup);
 	const height = firstRowY + rows.length * rowHeight + 96;
 	const thresholdX = coordinate(chartLeft + (100 / maximum) * chartWidth);
 	const elements = [];
@@ -45,10 +67,11 @@ export function renderCorpusSpeedupChart(receipt) {
 		`<desc id="desc">Horizontal bars show wtfgif speedup over image-q plus omggif for ten workloads. Every bar exceeds the marked 100 times threshold. Labels also report the wtfgif output file-size ratio.</desc>`,
 		'<rect width="100%" height="100%" fill="#ffffff"/>',
 		'<g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" fill="#172026">',
-		'<text x="40" y="46" font-size="25" font-weight="700">First encode after initialization: wtfgif vs image-q + omggif</text>',
-		`<text x="40" y="74" font-size="14" fill="#51606a">${escapeXml(`${receipt.benchmark.processesPerImplementation} fresh Node processes per implementation · arbitrary RGBA → complete GIF · higher is faster`)}</text>`,
-		`<line x1="${thresholdX}" y1="96" x2="${thresholdX}" y2="${firstRowY + rows.length * rowHeight - 10}" stroke="#b34b3f" stroke-width="2" stroke-dasharray="5 4"/>`,
-		`<text x="${thresholdX + 7}" y="106" font-size="12" font-weight="700" fill="#9b3d33">100× goal</text>`,
+		'<text x="40" y="46" font-size="25" font-weight="700">Every tested arbitrary RGBA workload exceeds 100×</text>',
+		`<text x="40" y="74" font-size="14" fill="#51606a">${escapeXml(`First real encode after initialization · ${receipt.benchmark.processesPerImplementation} fresh Node processes per implementation · higher is faster`)}</text>`,
+		`<text x="40" y="98" font-size="13" fill="#51606a">${escapeXml(`${minimumSpeedup.toFixed(2)}×–${maximumSpeedup.toFixed(2)}× · ${meanSpeedup.toFixed(2)}× geometric mean · ${minimumSizeRatio.toFixed(2)}×–${maximumSizeRatio.toFixed(2)}× output size`)}</text>`,
+		`<line x1="${thresholdX}" y1="112" x2="${thresholdX}" y2="${firstRowY + rows.length * rowHeight - 10}" stroke="#b34b3f" stroke-width="2" stroke-dasharray="5 4"/>`,
+		`<text x="${thresholdX + 7}" y="124" font-size="12" font-weight="700" fill="#9b3d33">100×</text>`,
 	);
 
 	for (const [index, row] of rows.entries()) {

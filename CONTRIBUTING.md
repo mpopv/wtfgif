@@ -24,7 +24,10 @@ Changes to decoding or encoding must include a regression test. Compatibility
 changes should compare behavior with omggif when applicable. Performance
 changes should preserve decoded pixels and report the command, fixture set, and
 whether the measurement used a warm process, cold process, WebAssembly, or the
-experimental native addon.
+experimental native addon. Headline encoding claims must come from a clean
+`npm run bench` receipt and report output size and quality beside latency.
+Regenerate the committed charts with `npm run bench:charts` after accepting a
+new receipt.
 
 ## Release checklist
 

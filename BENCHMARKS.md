@@ -31,7 +31,11 @@ Pro with Node.js 22.23.2.
 
 The encoded artifacts were built from clean commit
 `deb3cb7dc3a1da485ff401a40bfca1570183f81b`. The receipt records package
-version 3.0.9 and the complete runtime environment.
+version 3.0.9 and the complete runtime environment. Release 3.0.10 contains
+the same encoder source; the commits between the measured snapshot and the
+release change only benchmark receipts, documentation, charts, and package
+metadata. The receipt is therefore the current encoder measurement without
+mislabeling an older artifact as a newer package build.
 
 | Fixture | Shape | wtfgif | image-q + omggif | Speedup | File-size ratio |
 | --- | ---: | ---: | ---: | ---: | ---: |
