@@ -223,6 +223,8 @@ pub fn prepare_quality_encoder_code() {
     let alpha_lzw =
         encode_nine_bit_literal_lzw_mapped_to::<4, true>(&mut lzw_output, empty, 128, 0, empty);
     let exact_lzw = encode_indexed_literal_lzw_direct_to_unchecked(&mut lzw_output, empty, 7, 128);
+    let aligned_four_bit_lzw =
+        encode_four_bit_aligned_literal_lzw_to_unchecked(&mut lzw_output, empty);
     let (palette, mapping) = build_quality_wu_palette(
         false,
         std::hint::black_box(Vec::new()),
@@ -258,6 +260,7 @@ pub fn prepare_quality_encoder_code() {
             ^ usize::from(opaque_lzw.is_ok())
             ^ usize::from(alpha_lzw.is_ok())
             ^ usize::from(exact_lzw.is_ok())
+            ^ usize::from(aligned_four_bit_lzw.is_ok())
             ^ usize::from(exact_plain.is_ok())
             ^ usize::from(exact_runs.is_ok()),
     );
@@ -702,6 +705,7 @@ pub fn encode_rgba_quality_low_res_constant_delay_scratch_from_input(
             likely_small_palette: true,
             prefers_run_coalescing: true,
             exact_impossible: false,
+            sampled_alpha_255: rgba_stream.get(3).copied() == Some(255),
         }
     } else {
         quality_low_res_hints(rgba_stream, alpha_threshold)
@@ -747,6 +751,7 @@ pub fn encode_rgba_quality_low_res_constant_delay_scratch_from_input(
             delay,
             loop_count,
             alpha_threshold,
+            hints.sampled_alpha_255,
             output,
         )
     } else {
@@ -823,6 +828,7 @@ pub fn encode_rgba_quality_gif_constant_delay_scratch_from_input(
                 delay,
                 loop_count,
                 alpha_threshold,
+                hints.sampled_alpha_255,
                 output,
             )
         } else {
@@ -942,6 +948,7 @@ pub fn encode_rgba_quality_gif_scratch_from_input(
                 0,
                 loop_count,
                 alpha_threshold,
+                hints.sampled_alpha_255,
                 output,
             )
         } else {

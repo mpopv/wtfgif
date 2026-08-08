@@ -313,6 +313,31 @@ fn four_bit_literal_direct_subblocks_match_buffered_writer() {
 }
 
 #[test]
+fn four_bit_aligned_subblocks_decode_every_boundary() {
+    for length in [
+        1usize, 5, 6, 7, 11, 12, 13, 431, 432, 433, 863, 864, 865, 4096,
+    ] {
+        let indices: Vec<u8> = (0..length)
+            .map(|index| ((index * 5 + index / 3) & 7) as u8)
+            .collect();
+        let mut image_data = Vec::new();
+        encode_four_bit_aligned_literal_lzw_to_unchecked(&mut image_data, &indices).unwrap();
+        assert_eq!(
+            image_data.len(),
+            four_bit_aligned_literal_lzw_block_size(length).unwrap(),
+            "length {length}",
+        );
+
+        let mut payload = Vec::new();
+        collect_image_data_into(&image_data, 0, &mut payload).unwrap();
+        let mut decoded = vec![0u8; length];
+        let mut scratch = LzwStackScratch::default();
+        lzw_decode_to_indices_copy_with_scratch(3, &payload, &mut decoded, &mut scratch).unwrap();
+        assert_eq!(decoded, indices, "length {length}");
+    }
+}
+
+#[test]
 fn seven_bit_literal_direct_subblocks_match_buffered_writer() {
     for length in [1usize, 62, 63, 255, 508, 4096] {
         let indices: Vec<u8> = (0..length)

@@ -4308,6 +4308,7 @@ fn encode_rgba_quality_low_res_quantized_gif_inner_with_output<const CONSTANT_DE
     constant_delay: u16,
     loop_count: i32,
     alpha_threshold: u8,
+    sampled_alpha_255: bool,
     output: Vec<u8>,
 ) -> Result<Vec<u8>, String> {
     #[cfg(not(target_arch = "wasm32"))]
@@ -4320,8 +4321,14 @@ fn encode_rgba_quality_low_res_quantized_gif_inner_with_output<const CONSTANT_DE
     let palette = take_quality_palette(256);
     let plan = if alpha_threshold == 0 {
         index_rgba_frames_quality_low_res_quantized_opaque(rgba_stream, palette)
+    } else if sampled_alpha_255 {
+        index_rgba_frames_quality_low_res_quantized_sampled_opaque(
+            rgba_stream,
+            alpha_threshold,
+            palette,
+        )
     } else {
-        index_rgba_frames_quality_low_res_quantized_alpha(rgba_stream, alpha_threshold, palette)
+        index_rgba_frames_quality_low_res_quantized_mixed(rgba_stream, alpha_threshold, palette)
     };
     if plan.palette.len() == 256
         && plan.histogram_indices.is_none()
@@ -6622,6 +6629,7 @@ struct QualityLowResHints {
     likely_small_palette: bool,
     prefers_run_coalescing: bool,
     exact_impossible: bool,
+    sampled_alpha_255: bool,
 }
 
 #[inline(always)]
@@ -6673,6 +6681,7 @@ fn quality_low_res_hints(rgba_stream: &[u8], alpha_threshold: u8) -> QualityLowR
     let mut sample_color_count = 0usize;
     let mut opaque_color_limit = 256usize;
     let mut adjacent_matches = 0usize;
+    let mut sampled_alpha_255 = true;
     let rgba_pointer = rgba_stream.as_ptr();
     let mut sample_pixel = 0usize;
     let sample_step = if pixel_count == 0 {
@@ -6699,6 +6708,7 @@ fn quality_low_res_hints(rgba_stream: &[u8], alpha_threshold: u8) -> QualityLowR
         if sample_pixel >= pixel_count {
             sample_pixel -= pixel_count;
         }
+        sampled_alpha_255 &= (packed >> 24) as u8 == 255;
         if ((packed >> 24) as u8) < alpha_threshold {
             opaque_color_limit = 255;
             if sample_color_count > opaque_color_limit {
@@ -6707,6 +6717,7 @@ fn quality_low_res_hints(rgba_stream: &[u8], alpha_threshold: u8) -> QualityLowR
                     likely_small_palette: false,
                     prefers_run_coalescing: false,
                     exact_impossible: true,
+                    sampled_alpha_255,
                 };
             }
             if sample_color_count > TRANSPARENT_EARLY_REJECT_COLOR_LIMIT {
@@ -6715,6 +6726,7 @@ fn quality_low_res_hints(rgba_stream: &[u8], alpha_threshold: u8) -> QualityLowR
                     likely_small_palette: false,
                     prefers_run_coalescing: false,
                     exact_impossible: false,
+                    sampled_alpha_255,
                 };
             }
             continue;
@@ -6735,6 +6747,7 @@ fn quality_low_res_hints(rgba_stream: &[u8], alpha_threshold: u8) -> QualityLowR
                         likely_small_palette: false,
                         prefers_run_coalescing: false,
                         exact_impossible: true,
+                        sampled_alpha_255,
                     };
                 }
                 if opaque_color_limit == 255
@@ -6745,6 +6758,7 @@ fn quality_low_res_hints(rgba_stream: &[u8], alpha_threshold: u8) -> QualityLowR
                         likely_small_palette: false,
                         prefers_run_coalescing: false,
                         exact_impossible: false,
+                        sampled_alpha_255,
                     };
                 }
                 break;
@@ -6757,6 +6771,7 @@ fn quality_low_res_hints(rgba_stream: &[u8], alpha_threshold: u8) -> QualityLowR
                 likely_small_palette: true,
                 prefers_run_coalescing: true,
                 exact_impossible: false,
+                sampled_alpha_255,
             };
         }
     }
@@ -6765,6 +6780,7 @@ fn quality_low_res_hints(rgba_stream: &[u8], alpha_threshold: u8) -> QualityLowR
         likely_small_palette: sample_color_count <= SMALL_COLOR_LIMIT,
         prefers_run_coalescing: sample_count > 0 && adjacent_matches * 4 >= sample_count * 3,
         exact_impossible: false,
+        sampled_alpha_255: sample_count > 0 && sampled_alpha_255,
     }
 }
 
@@ -10785,10 +10801,9 @@ fn encode_eight_color_exact_constant_delay_gif_with_output(
     transparent_index: Option<u8>,
 ) -> Result<Vec<u8>, String> {
     const COLOR_COUNT: usize = 8;
-    const MIN_CODE_SIZE: u8 = 3;
     let frame_len = usize::from(width) * usize::from(height);
     debug_assert_eq!(index_stream.len(), frame_len * frame_count);
-    let lzw_length = literal_lzw_block_size(frame_len, MIN_CODE_SIZE)?;
+    let lzw_length = four_bit_aligned_literal_lzw_block_size(frame_len)?;
     let graphic_control_length = usize::from(delay != 0 || transparent_index.is_some()) * 8;
     let output_capacity = 13
         + COLOR_COUNT * 3
@@ -10812,7 +10827,7 @@ fn encode_eight_color_exact_constant_delay_gif_with_output(
             transparent_index,
             if transparent_index.is_some() { 2 } else { 0 },
         );
-        encode_four_bit_literal_lzw_direct_to::<false>(&mut output, frame, COLOR_COUNT)?;
+        encode_four_bit_aligned_literal_lzw_to_unchecked(&mut output, frame)?;
     }
     output.push(0x3b);
     Ok(output)
@@ -12449,6 +12464,199 @@ fn encode_four_bit_literal_lzw_direct_to<const VALIDATE: bool>(
         raw_offset += length;
     }
     output[output_start + 1 + block_count + raw_length] = 0;
+    Ok(())
+}
+
+#[inline(always)]
+fn four_bit_aligned_literal_lzw_block_size(pixel_count: usize) -> Result<usize, String> {
+    const LITERALS_PER_BLOCK: usize = 432;
+    const FULL_BLOCK_BYTES: usize = 252;
+    let full_blocks = pixel_count / LITERALS_PER_BLOCK;
+    let remainder = pixel_count % LITERALS_PER_BLOCK;
+    let complete_intervals = remainder / 6;
+    let partial_interval = remainder % 6;
+    let tail_codes = complete_intervals
+        .checked_mul(7)
+        .and_then(|codes| {
+            codes.checked_add(if partial_interval == 0 {
+                1
+            } else {
+                partial_interval + 2
+            })
+        })
+        .ok_or_else(|| "Encoded GIF size overflow".to_string())?;
+    let tail_bytes = tail_codes
+        .checked_mul(4)
+        .ok_or_else(|| "Encoded GIF size overflow".to_string())?
+        .div_ceil(8);
+    full_blocks
+        .checked_mul(FULL_BLOCK_BYTES + 1)
+        .and_then(|length| length.checked_add(tail_bytes + 3))
+        .ok_or_else(|| "Encoded GIF size overflow".to_string())
+}
+
+#[inline(always)]
+unsafe fn write_twelve_four_bit_literals_raw(output: *mut u8, group: &[u8]) {
+    debug_assert_eq!(group.len(), 12);
+    let packed = 8u64
+        | (u64::from(group[0]) << 4)
+        | (u64::from(group[1]) << 8)
+        | (u64::from(group[2]) << 12)
+        | (u64::from(group[3]) << 16)
+        | (u64::from(group[4]) << 20)
+        | (u64::from(group[5]) << 24)
+        | (8u64 << 28)
+        | (u64::from(group[6]) << 32)
+        | (u64::from(group[7]) << 36)
+        | (u64::from(group[8]) << 40)
+        | (u64::from(group[9]) << 44)
+        | (u64::from(group[10]) << 48)
+        | (u64::from(group[11]) << 52);
+    unsafe { std::ptr::write_unaligned(output.cast::<u64>(), packed.to_le()) };
+}
+
+#[inline(always)]
+unsafe fn append_four_bit_literal_code_raw(
+    output: *mut u8,
+    position: &mut usize,
+    bits: &mut u64,
+    bit_count: &mut usize,
+    code: u8,
+) {
+    *bits |= u64::from(code) << *bit_count;
+    *bit_count += 4;
+    while *bit_count >= 8 {
+        unsafe { output.add(*position).write(*bits as u8) };
+        *position += 1;
+        *bits >>= 8;
+        *bit_count -= 8;
+    }
+}
+
+/// Keep every complete 432-pixel group inside one 252-byte GIF sub-block.
+/// That removes the generic writer's branch for a possible 255-byte boundary
+/// from the eight-color exact path while preserving the literal code stream.
+#[inline(never)]
+fn encode_four_bit_aligned_literal_lzw_to_unchecked(
+    output: &mut Vec<u8>,
+    index_stream: &[u8],
+) -> Result<(), String> {
+    if index_stream.is_empty() {
+        return Err("Indexed pixel stream is empty".to_string());
+    }
+    const LITERALS_PER_BLOCK: usize = 432;
+    const FULL_BLOCK_BYTES: usize = 252;
+    let full_blocks = index_stream.len() / LITERALS_PER_BLOCK;
+    let remainder = index_stream.len() % LITERALS_PER_BLOCK;
+    let complete_intervals = remainder / 6;
+    let partial_interval = remainder % 6;
+    let tail_code_count = complete_intervals * 7
+        + if partial_interval == 0 {
+            1
+        } else {
+            partial_interval + 2
+        };
+    let tail_length = (tail_code_count * 4).div_ceil(8);
+    let encoded_length = 1 + full_blocks * (FULL_BLOCK_BYTES + 1) + 1 + tail_length + 1;
+    let output_start = output.len();
+    resize_output_uninitialized(output, output_start + encoded_length);
+    let output_pointer = unsafe { output.as_mut_ptr().add(output_start) };
+    unsafe { output_pointer.write(3) };
+    let mut output_position = 1usize;
+    for block in 0..full_blocks {
+        unsafe {
+            output_pointer
+                .add(output_position)
+                .write(FULL_BLOCK_BYTES as u8)
+        };
+        output_position += 1;
+        let block_start = block * LITERALS_PER_BLOCK;
+        for group_start in (block_start..block_start + LITERALS_PER_BLOCK).step_by(12) {
+            unsafe {
+                write_twelve_four_bit_literals_raw(
+                    output_pointer.add(output_position),
+                    &index_stream[group_start..group_start + 12],
+                )
+            };
+            output_position += 7;
+        }
+    }
+    unsafe { output_pointer.add(output_position).write(tail_length as u8) };
+    output_position += 1;
+    let tail_start = full_blocks * LITERALS_PER_BLOCK;
+    let paired_end = tail_start + (remainder / 12) * 12;
+    for group_start in (tail_start..paired_end).step_by(12) {
+        unsafe {
+            write_twelve_four_bit_literals_raw(
+                output_pointer.add(output_position),
+                &index_stream[group_start..group_start + 12],
+            )
+        };
+        output_position += 7;
+    }
+    let mut bits = 0u64;
+    let mut bit_count = 0usize;
+    let mut pixel_index = paired_end;
+    if pixel_index + 6 <= index_stream.len() {
+        unsafe {
+            append_four_bit_literal_code_raw(
+                output_pointer,
+                &mut output_position,
+                &mut bits,
+                &mut bit_count,
+                8,
+            )
+        };
+        for &pixel in &index_stream[pixel_index..pixel_index + 6] {
+            unsafe {
+                append_four_bit_literal_code_raw(
+                    output_pointer,
+                    &mut output_position,
+                    &mut bits,
+                    &mut bit_count,
+                    pixel,
+                )
+            };
+        }
+        pixel_index += 6;
+    }
+    if pixel_index < index_stream.len() {
+        unsafe {
+            append_four_bit_literal_code_raw(
+                output_pointer,
+                &mut output_position,
+                &mut bits,
+                &mut bit_count,
+                8,
+            )
+        };
+        for &pixel in &index_stream[pixel_index..] {
+            unsafe {
+                append_four_bit_literal_code_raw(
+                    output_pointer,
+                    &mut output_position,
+                    &mut bits,
+                    &mut bit_count,
+                    pixel,
+                )
+            };
+        }
+    }
+    unsafe {
+        append_four_bit_literal_code_raw(
+            output_pointer,
+            &mut output_position,
+            &mut bits,
+            &mut bit_count,
+            9,
+        )
+    };
+    if bit_count > 0 {
+        unsafe { output_pointer.add(output_position).write(bits as u8) };
+        output_position += 1;
+    }
+    unsafe { output_pointer.add(output_position).write(0) };
+    debug_assert_eq!(output_position + 1, encoded_length);
     Ok(())
 }
 
