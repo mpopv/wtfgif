@@ -22,13 +22,20 @@ All notable changes to wtfgif are documented here.
   bounded classifier prove sampled palettes larger than GIF's 256-color limit
   without redundant occupancy passes. GIF output remains byte-for-byte
   unchanged across the corpus.
+- Scan exact-color runs four pixels at a time, write short repeated-index runs
+  with packed stores, and reuse prior-frame indices only after proving an
+  entire source row is byte-for-byte identical. This cuts the disjoint-palette
+  fixture from 0.512 ms to 0.270 ms without changing its GIF bytes.
+- Skip palette-table work when a mapped four-pixel SIMD group is entirely
+  transparent. The alpha threshold, selected palette indices, and output bytes
+  remain unchanged.
 - Refresh the clean 25-process arbitrary-RGBA receipt. Every category now
-  exceeds 100x on its first real encode after initialization: **111.22x to
-  239.14x**, with a **141.31x geometric mean** and **139.50x** on the real
+  exceeds 100x on its first real encode after initialization: **118.20x to
+  241.63x**, with a **151.45x geometric mean** and **132.68x** on the real
   MakeEmoji workload.
 - Refresh the 15-process Chrome comparison and generated SVG. wtfgif takes
-  **1.130 ms**; the five alternatives take 95.670-133.820 ms and are
-  **84.66x-118.42x slower**.
+  **1.165 ms**; the five alternatives take 94.315-133.225 ms and are
+  **80.96x-114.36x slower**.
 - Pass the complete release gate: lint, type checking, dependency audit, Rust
   formatting/clippy/tests, all scalar and SIMD Wasm builds, 148 JavaScript/Wasm
   assertions, independent decoder conformance, edge validation, and package
