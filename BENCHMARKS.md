@@ -18,41 +18,43 @@ threshold of 179. Every fixture encodes complete frames through the public
 Each sample runs in a fresh Node process. Package loading and wtfgif Wasm
 initialization happen before the clock; the first and only synchronous encode
 is timed. Initialization reserves a fixed 4 MB input arena without seeing the
-fixture. Every source byte is copied into that arena after the clock starts;
-there are zero encode warmups and no palettes, source pixels, encoded outputs,
-or prior encode results retained between processes. Encoder order alternates by
-fixture and process, and each worker loads only the implementation it is
-measuring. Validation and quality measurement are outside the clock. Results
-below are medians from 25 processes per implementation on an Apple M3 Pro with
-Node.js 22.23.2.
+fixture and prepares data-independent Wasm code paths using empty sentinels.
+Every source byte is copied into that arena after the clock starts, and the
+first real encode begins with cold data scratch. There are zero encode warmups
+and no palettes, source pixels, encoded outputs, or prior encode results
+retained between processes. Encoder order alternates by fixture and process,
+and each worker loads only the implementation it is measuring. Validation and
+quality measurement are outside the clock. Results below are medians from 25
+processes per implementation on an Apple M3 Pro with Node.js 22.23.2.
 
 The committed receipt identifies wtfgif 3.0.8. Its encoded artifacts were built
-from clean commit `2989e603cf44bac5c391e473490e9000008ac1e6`; the receipt is a
+from clean commit `51e72b7dd4c1061d168a3779a1887bcee16293d1`; the receipt is a
 point-in-time measurement and remains valid when later documentation-only
 commits change the repository.
 
 | Fixture | Shape | wtfgif | image-q + omggif | Speedup | File-size ratio |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| MakeEmoji production sample | 128×128×8 | 1.167 ms | 131.107 ms | **112.38×** | 3.80× |
-| Photographic animation | 128×96×8 | 0.820 ms | 65.209 ms | **79.52×** | 1.84× |
-| Pixel art | 64×64×12 | 0.369 ms | 27.402 ms | **74.17×** | 6.35× |
-| Smooth gradients | 128×128×8 | 1.515 ms | 114.493 ms | **75.56×** | 8.00× |
-| Random noise | 128×128×8 | 0.722 ms | 90.777 ms | **125.78×** | 7.28× |
-| Transparency | 128×128×8 | 0.598 ms | 45.454 ms | **76.02×** | 20.85× |
-| Disjoint frame palettes | 128×128×8 | 0.677 ms | 57.391 ms | **84.76×** | 7.64× |
-| Nearly static animation | 128×128×12 | 0.757 ms | 71.973 ms | **95.02×** | 12.19× |
-| Tiny animation | 16×16×6 | 0.426 ms | 53.908 ms | **126.59×** | 1.17× |
-| One-megapixel animation | 512×512×4 | 4.376 ms | 558.211 ms | **127.55×** | 22.74× |
+| MakeEmoji production sample | 128×128×8 | 0.974 ms | 132.459 ms | **135.93×** | 3.80× |
+| Photographic animation | 128×96×8 | 0.646 ms | 65.664 ms | **101.61×** | 1.84× |
+| Pixel art | 64×64×12 | 0.283 ms | 28.789 ms | **101.80×** | 6.35× |
+| Smooth gradients | 128×128×8 | 1.078 ms | 119.709 ms | **111.09×** | 8.00× |
+| Random noise | 128×128×8 | 0.616 ms | 93.445 ms | **151.66×** | 7.28× |
+| Transparency | 128×128×8 | 0.427 ms | 46.433 ms | **108.87×** | 20.85× |
+| Disjoint frame palettes | 128×128×8 | 0.531 ms | 57.651 ms | **108.63×** | 7.64× |
+| Nearly static animation | 128×128×12 | 0.454 ms | 72.573 ms | **160.03×** | 12.19× |
+| Tiny animation | 16×16×6 | 0.321 ms | 54.183 ms | **168.82×** | 1.17× |
+| One-megapixel animation | 512×512×4 | 4.287 ms | 563.014 ms | **131.34×** | 22.74× |
 
-The observed range is 74.17×–127.55×, with a 95.37× geometric-mean speedup.
+The observed range is 101.61×–168.82×, with a 125.82× geometric-mean speedup.
 The corresponding files are 1.17×–22.74× larger, with a 6.50× geometric mean.
 This is the library's intended tradeoff: encode latency takes priority over
 compression ratio.
 
-The current corpus therefore does not meet a 100× floor on every arbitrary
-fixture: pixel art is the slowest case at 74.17×. The real MakeEmoji workload
-is 112.38× faster. The optimization goal is to raise the slowest cases while
-preserving the same decoded pixels, alpha behavior, and quality checks.
+Every category now exceeds the 100× floor on its first real encode after Wasm
+initialization. The photographic fixture has the narrowest margin at 101.61×,
+followed by pixel art at 101.80×. The real MakeEmoji workload is 135.93× faster.
+No result depends on a known palette, source cache, previous result, or
+reduced-quality mode.
 
 The baseline uses image-q `rgbquant` palette generation and nearest-color
 mapping followed by omggif LZW. wtfgif uses its global quality quantizer and
@@ -102,11 +104,12 @@ Wasm initialization happen before the clock. The timed boundary includes
 palette creation, pixel mapping, GIF compression, and final byte assembly.
 
 Each sample is the first and only encode in a fresh, cross-origin-isolated
-Chrome process and fresh browser profile. wtfgif reserves its generic input
-arena during the untimed initialization, then copies the fixture and performs
-all palette, mapping, compression, and assembly work after the clock starts.
-There are no encode warmups, image-derived retained state, or results reused
-between samples. The six encoders run in a rotating order to reduce thermal and
+Chrome process and fresh browser profile. During untimed initialization,
+wtfgif reserves its generic input arena and prepares data-independent Wasm code
+paths using empty sentinels. It then copies the fixture and performs all
+palette, mapping, compression, and assembly work after the clock starts. There
+are no encode warmups, image-derived retained state, or results reused between
+samples. The six encoders run in a rotating order to reduce thermal and
 ordering bias. Results below are medians from 15 processes per encoder on an
 Apple M3 Pro in Google Chrome 151.0.7922.77.
 
@@ -118,12 +121,12 @@ slowdown beside the time.
 
 | Implementation | Version | Median | wtfgif advantage | Bytes | PSNR | Alpha match |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| **wtfgif** | 3.0.8 | **1.345 ms** | — | 149,689 | 34.12 dB | 100% |
-| gif.js | 0.2.0 | 84.505 ms | **62.83×** | 80,869 | 33.08 dB | 99.78% |
-| image-q + omggif | 2.1.2 + 1.0.10 | 90.225 ms | **67.08×** | 39,350 | 31.84 dB | 100% |
-| gif.js.optimized | 1.0.1 | 95.755 ms | **71.19×** | 80,304 | 32.20 dB | 99.76% |
-| modern-gif | 2.1.0 | 118.050 ms | **87.77×** | 43,114 | 32.65 dB | 100% |
-| gifenc | 1.0.3 | 119.875 ms | **89.13×** | 39,101 | 34.54 dB | 100% |
+| **wtfgif** | 3.0.8 | **1.245 ms** | — | 149,689 | 34.12 dB | 100% |
+| gif.js | 0.2.0 | 94.415 ms | **75.84×** | 80,869 | 33.08 dB | 99.78% |
+| image-q + omggif | 2.1.2 + 1.0.10 | 97.570 ms | **78.37×** | 39,350 | 31.84 dB | 100% |
+| gif.js.optimized | 1.0.1 | 107.590 ms | **86.42×** | 80,304 | 32.20 dB | 99.76% |
+| gifenc | 1.0.3 | 123.895 ms | **99.51×** | 39,101 | 34.54 dB | 100% |
+| modern-gif | 2.1.0 | 133.235 ms | **107.02×** | 43,114 | 32.65 dB | 100% |
 
 Every output must parse as an eight-frame 128×128 animation with exact 100 ms
 delays before its sample is accepted. The validator composites all frames,

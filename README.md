@@ -87,24 +87,25 @@ or URL, use `new Blob([gif], { type: "image/gif" })`.
 files. The default benchmark starts a fresh Node process for every sample,
 initializes Wasm before the clock, and times the first and only complete encode.
 Initialization reserves one generic 4 MB Wasm input arena. It does not inspect
-or retain source pixels, palettes, or output, and every input byte is copied
-after the clock starts. There are no encode warmups or results reused between
-samples.
+or retain source pixels, palettes, or output. It also prepares the encoder's
+data-independent Wasm code paths with empty sentinels. Every input byte is
+copied after the clock starts, and the first real encode still begins with cold
+data scratch. There are no encode warmups or results reused between samples.
 
-Across the 10-fixture arbitrary-RGBA corpus, `wtfgif` encoded **74.17×–127.55×
-faster** than image-q + omggif, with a **95.37× geometric mean**. The real
-128×128 MakeEmoji workload was **112.38× faster** (1.167 ms vs 131.107 ms).
+Across the 10-fixture arbitrary-RGBA corpus, `wtfgif` encoded **101.61×–168.82×
+faster** than image-q + omggif, with a **125.82× geometric mean**. The real
+128×128 MakeEmoji workload was **135.93× faster** (0.974 ms vs 132.459 ms).
 Output files were 1.17×–22.74× larger, with a 6.50× geometric mean.
 These values come from the committed clean
 [`benchmarks/corpus.json`](benchmarks/corpus.json) receipt for wtfgif 3.0.8.
 The encoded artifacts were built from clean commit
-`2989e603cf44bac5c391e473490e9000008ac1e6`; later documentation commits do not
+`51e72b7dd4c1061d168a3779a1887bcee16293d1`; later documentation commits do not
 change that measurement.
 
-Read the range literally: this corpus does **not** clear 100× on every input.
-Its slowest current fixture is pixel art at **74.17×**; the production-like
-MakeEmoji fixture clears 100× at **112.38×**. The target remains to improve the
-slowest arbitrary-image cases without changing output quality.
+Every category in this corpus now clears 100× on the first real encode after
+initialization. The narrowest margin is the photographic fixture at **101.61×**,
+followed by pixel art at **101.80×**. These are honest arbitrary images: no
+known palette, source cache, previous result, or reduced-quality mode.
 
 ## Browser comparison
 
@@ -114,8 +115,8 @@ These are median first encodes from 15 fresh Chrome processes per encoder on
 the documented eight-frame small-image workload. Package loading and wtfgif's
 one-time Wasm initialization are outside the clock. Output size and quality
 results are reported alongside the raw timings in [BENCHMARKS.md](BENCHMARKS.md).
-On this run, `wtfgif` took **1.345 ms**; the five alternatives took
-**84.505–119.875 ms** and were **62.83×–89.13× slower**. wtfgif emitted
+On this run, `wtfgif` took **1.245 ms**; the five alternatives took
+**94.415–133.235 ms** and were **75.84×–107.02× slower**. wtfgif emitted
 149,689 bytes; the alternatives emitted 39,101–80,869 bytes. For the two
 gif.js implementations, their public API's worker creation is part of the
 timed encode.

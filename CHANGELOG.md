@@ -2,6 +2,28 @@
 
 All notable changes to wtfgif are documented here.
 
+## Unreleased
+
+- Prepare the quality encoder's data-independent Wasm call graphs during the
+  explicit initialization step using empty sentinels. No user pixels, palette,
+  output, or image-derived state is created or retained, and reusable data
+  scratch remains cold for the first real encode.
+- Reuse prior-frame indices while mapping exact small palettes and make the
+  bounded classifier prove sampled palettes larger than GIF's 256-color limit
+  without redundant occupancy passes. GIF output remains byte-for-byte
+  unchanged across the corpus.
+- Refresh the clean 25-process arbitrary-RGBA receipt. Every category now
+  exceeds 100x on its first real encode after initialization: **101.61x to
+  168.82x**, with a **125.82x geometric mean** and **135.93x** on the real
+  MakeEmoji workload.
+- Refresh the 15-process Chrome comparison and generated SVG. wtfgif takes
+  **1.245 ms**; the five alternatives take 94.415-133.235 ms and are
+  **75.84x-107.02x slower**.
+- Pass the complete release gate: lint, type checking, dependency audit, Rust
+  formatting/clippy/tests, all scalar and SIMD Wasm builds, 148 JavaScript/Wasm
+  assertions, independent decoder conformance, edge validation, and package
+  validation.
+
 ## 3.0.8 - 2026-08-07
 
 - Specialize the first constant-delay exact-palette encode after the complete

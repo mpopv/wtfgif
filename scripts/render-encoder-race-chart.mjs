@@ -43,7 +43,7 @@ export function renderEncoderRaceChart(receipt) {
 	const rows = receipt.results.toSorted(
 		(left, right) => left.medianMs - right.medianMs,
 	);
-	const width = 960;
+	const width = 1060;
 	const labelWidth = 220;
 	const chartLeft = 250;
 	// Leave enough room for the value label after the longest bar.
