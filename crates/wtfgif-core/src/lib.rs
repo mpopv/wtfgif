@@ -6673,11 +6673,10 @@ fn quality_low_res_hints(rgba_stream: &[u8], alpha_threshold: u8) -> QualityLowR
     // the separate occupancy pass. A small sampled set can enter the complete
     // exact scanner directly; that scanner still catches every missed color.
     const SHORT_SAMPLE_COUNT: usize = 256;
-    const LONG_SAMPLE_COUNT: usize = 512;
+    const LONG_SAMPLE_COUNT: usize = 2_048;
     const LONG_SAMPLE_PIXEL_THRESHOLD: usize = 40_000;
     const SAMPLE_TABLE_SIZE: usize = 512;
     const LIKELY_EXACT_COLOR_LIMIT: usize = 192;
-    const TRANSPARENT_EARLY_REJECT_COLOR_LIMIT: usize = 48;
     const SMALL_COLOR_LIMIT: usize = 12;
     let pixel_count = rgba_stream.len() / 4;
     let sample_limit = if pixel_count >= LONG_SAMPLE_PIXEL_THRESHOLD {
@@ -6729,15 +6728,6 @@ fn quality_low_res_hints(rgba_stream: &[u8], alpha_threshold: u8) -> QualityLowR
                     sampled_alpha_255,
                 };
             }
-            if sample_color_count > TRANSPARENT_EARLY_REJECT_COLOR_LIMIT {
-                return QualityLowResHints {
-                    likely_exact: false,
-                    likely_small_palette: false,
-                    prefers_run_coalescing: false,
-                    exact_impossible: false,
-                    sampled_alpha_255,
-                };
-            }
             continue;
         }
         let rgb = packed & 0x00ff_ffff;
@@ -6756,17 +6746,6 @@ fn quality_low_res_hints(rgba_stream: &[u8], alpha_threshold: u8) -> QualityLowR
                         likely_small_palette: false,
                         prefers_run_coalescing: false,
                         exact_impossible: true,
-                        sampled_alpha_255,
-                    };
-                }
-                if opaque_color_limit == 255
-                    && sample_color_count > TRANSPARENT_EARLY_REJECT_COLOR_LIMIT
-                {
-                    return QualityLowResHints {
-                        likely_exact: false,
-                        likely_small_palette: false,
-                        prefers_run_coalescing: false,
-                        exact_impossible: false,
                         sampled_alpha_255,
                     };
                 }
@@ -13264,6 +13243,11 @@ fn encode_nine_bit_literal_lzw_mapped_to<const BITS: usize, const HAS_TRANSPAREN
     let rgba_pointer = rgba_stream.as_ptr();
     let histogram_to_palette_pointer = histogram_to_palette.as_ptr();
     let output_pointer = unsafe { output.as_mut_ptr().add(output_start) };
+    let transparent_codes = u64::from(transparent_index) * 0x0101_0101_0101_0101;
+    let (transparent_low, transparent_high) =
+        expand_eight_literal_codes_to_nine_bits(transparent_codes);
+    let (transparent_clear_low, transparent_clear_high) =
+        expand_eight_literal_codes_to_nine_bits(transparent_codes << 8);
     let mut output_position = 1usize;
     for block in 0..full_blocks {
         unsafe {
@@ -13281,12 +13265,24 @@ fn encode_nine_bit_literal_lzw_mapped_to<const BITS: usize, const HAS_TRANSPAREN
                 histogram_to_palette_pointer,
             )
         };
-        unsafe {
-            write_clear_and_seven_nine_bit_literal_codes_raw(
-                output_pointer.add(output_position),
-                first_codes,
-            )
-        };
+        if HAS_TRANSPARENT && first_codes == transparent_codes {
+            unsafe {
+                std::ptr::write_unaligned(
+                    output_pointer.add(output_position).cast::<u64>(),
+                    (transparent_clear_low | 256).to_le(),
+                );
+                output_pointer
+                    .add(output_position + 8)
+                    .write(transparent_clear_high);
+            }
+        } else {
+            unsafe {
+                write_clear_and_seven_nine_bit_literal_codes_raw(
+                    output_pointer.add(output_position),
+                    first_codes,
+                )
+            };
+        }
         output_position += 9;
         let chunk_end = chunk_start + LITERALS_PER_BLOCK;
         let mut pixel_index = chunk_start + 7;
@@ -13299,12 +13295,24 @@ fn encode_nine_bit_literal_lzw_mapped_to<const BITS: usize, const HAS_TRANSPAREN
                     histogram_to_palette_pointer,
                 )
             };
-            unsafe {
-                write_eight_nine_bit_literal_codes_raw(
-                    output_pointer.add(output_position),
-                    packed_codes,
-                )
-            };
+            if HAS_TRANSPARENT && packed_codes == transparent_codes {
+                unsafe {
+                    std::ptr::write_unaligned(
+                        output_pointer.add(output_position).cast::<u64>(),
+                        transparent_low.to_le(),
+                    );
+                    output_pointer
+                        .add(output_position + 8)
+                        .write(transparent_high);
+                }
+            } else {
+                unsafe {
+                    write_eight_nine_bit_literal_codes_raw(
+                        output_pointer.add(output_position),
+                        packed_codes,
+                    )
+                };
+            }
             output_position += 9;
             pixel_index += 8;
         }

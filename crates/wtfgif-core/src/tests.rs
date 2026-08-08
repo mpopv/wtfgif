@@ -635,6 +635,32 @@ fn uniform_run_hint_is_conservative_and_keeps_the_small_palette_route_exact() {
 }
 
 #[test]
+fn transparent_long_sample_can_prove_quantization_without_an_occupancy_scan() {
+    let pixel_count = 40_000usize;
+    let mut rgba = [0, 0, 0, 0].repeat(pixel_count);
+    let sample_step = 8_191 % pixel_count;
+    let mut sample_pixel = 0usize;
+    let mut color = 0u16;
+    for sample_index in 0..1_030 {
+        if sample_index % 4 == 1 && color < 256 {
+            rgba[sample_pixel * 4..sample_pixel * 4 + 4].copy_from_slice(&[
+                color as u8,
+                (color >> 8) as u8,
+                127,
+                255,
+            ]);
+            color += 1;
+        }
+        sample_pixel = (sample_pixel + sample_step) % pixel_count;
+    }
+    assert_eq!(color, 256);
+
+    let hints = quality_low_res_hints(&rgba, TRANSPARENT_ALPHA_THRESHOLD);
+    assert!(hints.exact_impossible);
+    assert!(!hints.sampled_alpha_255);
+}
+
+#[test]
 fn likely_exact_delta_probe_falls_back_without_changing_quantization() {
     let pixel_count = 8_192usize;
     let mut rgba = Vec::with_capacity(pixel_count * 4);
