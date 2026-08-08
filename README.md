@@ -96,8 +96,15 @@ faster** than image-q + omggif, with a **95.37× geometric mean**. The real
 128×128 MakeEmoji workload was **112.38× faster** (1.167 ms vs 131.107 ms).
 Output files were 1.17×–22.74× larger, with a 6.50× geometric mean.
 These values come from the committed clean
-[`benchmarks/corpus.json`](benchmarks/corpus.json) receipt for wtfgif 3.0.8 at
-commit `2989e60`.
+[`benchmarks/corpus.json`](benchmarks/corpus.json) receipt for wtfgif 3.0.8.
+The encoded artifacts were built from clean commit
+`2989e603cf44bac5c391e473490e9000008ac1e6`; later documentation commits do not
+change that measurement.
+
+Read the range literally: this corpus does **not** clear 100× on every input.
+Its slowest current fixture is pixel art at **74.17×**; the production-like
+MakeEmoji fixture clears 100× at **112.38×**. The target remains to improve the
+slowest arbitrary-image cases without changing output quality.
 
 ## Browser comparison
 
@@ -112,6 +119,10 @@ On this run, `wtfgif` took **1.345 ms**; the five alternatives took
 149,689 bytes; the alternatives emitted 39,101–80,869 bytes. For the two
 gif.js implementations, their public API's worker creation is part of the
 timed encode.
+
+The raw receipt is [`benchmarks/encoder-race.json`](benchmarks/encoder-race.json),
+and the chart above is generated from it by
+`scripts/render-encoder-race-chart.mjs`.
 
 ```bash
 npm run bench

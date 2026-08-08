@@ -26,8 +26,10 @@ measuring. Validation and quality measurement are outside the clock. Results
 below are medians from 25 processes per implementation on an Apple M3 Pro with
 Node.js 22.23.2.
 
-The committed receipt identifies wtfgif 3.0.8 at clean commit `2989e60`. It is
-the newest full clean corpus run used by these docs.
+The committed receipt identifies wtfgif 3.0.8. Its encoded artifacts were built
+from clean commit `2989e603cf44bac5c391e473490e9000008ac1e6`; the receipt is a
+point-in-time measurement and remains valid when later documentation-only
+commits change the repository.
 
 | Fixture | Shape | wtfgif | image-q + omggif | Speedup | File-size ratio |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -46,6 +48,11 @@ The observed range is 74.17×–127.55×, with a 95.37× geometric-mean speedup.
 The corresponding files are 1.17×–22.74× larger, with a 6.50× geometric mean.
 This is the library's intended tradeoff: encode latency takes priority over
 compression ratio.
+
+The current corpus therefore does not meet a 100× floor on every arbitrary
+fixture: pixel art is the slowest case at 74.17×. The real MakeEmoji workload
+is 112.38× faster. The optimization goal is to raise the slowest cases while
+preserving the same decoded pixels, alpha behavior, and quality checks.
 
 The baseline uses image-q `rgbquant` palette generation and nearest-color
 mapping followed by omggif LZW. wtfgif uses its global quality quantizer and
@@ -106,8 +113,8 @@ Apple M3 Pro in Google Chrome 151.0.7922.77.
 This is public-API time-to-result, not a codec-kernel microbenchmark. The
 gif.js and gif.js.optimized APIs create workers when `render()` begins, so that
 worker creation is inside their timed jobs. The README chart uses bar length
-for median encode time and prints each encoder's emitted GIF size beside the
-time.
+for median encode time and prints each encoder's emitted GIF size and relative
+slowdown beside the time.
 
 | Implementation | Version | Median | wtfgif advantage | Bytes | PSNR | Alpha match |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |

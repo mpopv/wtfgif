@@ -24,6 +24,9 @@ All notable changes to wtfgif are documented here.
   corpus spans **74.17x to 127.55x** with a **95.37x geometric mean**; the real
   MakeEmoji workload is **112.38x faster**. In fresh Chrome processes, wtfgif
   takes 1.345 ms and the five alternatives are **62.83x to 89.13x slower**.
+- Clarify benchmark provenance in the README and benchmark guide, explicitly
+  call out the current sub-100x pixel-art floor, and restore relative slowdown
+  labels to the generated browser comparison chart.
 
 ## 3.0.7 - 2026-08-07
 
