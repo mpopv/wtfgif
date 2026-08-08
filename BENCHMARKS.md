@@ -28,32 +28,32 @@ quality measurement are outside the clock. Results below are medians from 40
 processes per implementation on an Apple M3 Pro with Node.js 22.23.2.
 
 The committed receipt identifies wtfgif 3.0.8. Its encoded artifacts were built
-from clean commit `f7ced2936eb7309a6eacc2241d072e6c35e8552f`; the receipt is a
+from clean commit `ecc8d9f2a7f53efc00d70fdbf94e1c97b2e977e6`; the receipt is a
 point-in-time measurement and remains valid when later documentation-only
 commits change the repository.
 
 | Fixture | Shape | wtfgif | image-q + omggif | Speedup | File-size ratio |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| MakeEmoji production sample | 128×128×8 | 1.050 ms | 142.084 ms | **135.37×** | 3.80× |
-| Photographic animation | 128×96×8 | 0.542 ms | 76.002 ms | **140.11×** | 1.84× |
-| Pixel art | 64×64×12 | 0.227 ms | 31.756 ms | **139.87×** | 6.35× |
-| Smooth gradients | 128×128×8 | 1.004 ms | 123.539 ms | **123.06×** | 8.00× |
-| Random noise | 128×128×8 | 0.543 ms | 98.911 ms | **182.12×** | 7.28× |
-| Transparency | 128×128×8 | 0.380 ms | 48.207 ms | **126.89×** | 20.85× |
-| Disjoint frame palettes | 128×128×8 | 0.319 ms | 64.692 ms | **202.90×** | 7.64× |
-| Nearly static animation | 128×128×12 | 0.464 ms | 75.171 ms | **162.15×** | 12.19× |
-| Tiny animation | 16×16×6 | 0.237 ms | 55.010 ms | **232.15×** | 1.17× |
-| One-megapixel animation | 512×512×4 | 4.496 ms | 606.931 ms | **134.99×** | 22.74× |
+| MakeEmoji production sample | 128×128×8 | 1.008 ms | 134.803 ms | **133.80×** | 3.80× |
+| Photographic animation | 128×96×8 | 0.501 ms | 66.686 ms | **133.23×** | 1.84× |
+| Pixel art | 64×64×12 | 0.210 ms | 28.362 ms | **134.74×** | 6.35× |
+| Smooth gradients | 128×128×8 | 0.860 ms | 119.310 ms | **138.78×** | 8.00× |
+| Random noise | 128×128×8 | 0.514 ms | 94.838 ms | **184.33×** | 7.28× |
+| Transparency | 128×128×8 | 0.381 ms | 47.144 ms | **123.85×** | 20.85× |
+| Disjoint frame palettes | 128×128×8 | 0.302 ms | 58.591 ms | **193.80×** | 7.64× |
+| Nearly static animation | 128×128×12 | 0.444 ms | 74.755 ms | **168.34×** | 12.19× |
+| Tiny animation | 16×16×6 | 0.235 ms | 54.178 ms | **230.59×** | 1.17× |
+| One-megapixel animation | 512×512×4 | 4.423 ms | 580.090 ms | **131.14×** | 22.74× |
 
-The observed range is 123.06×–232.15×, with a 154.56× geometric-mean speedup.
+The observed range is 123.85×–230.59×, with a 154.01× geometric-mean speedup.
 The corresponding files are 1.17×–22.74× larger, with a 6.50× geometric mean.
 This is the library's intended tradeoff: encode latency takes priority over
 compression ratio.
 
 Every category now exceeds the 100× floor on its first real encode after Wasm
-initialization. Smooth gradients have the narrowest margin at 123.06×,
-followed by transparency at 126.89×. The real MakeEmoji workload is
-135.37× faster.
+initialization. Transparency has the narrowest margin at 123.85×, followed by
+photographic animation at 133.23×. The real MakeEmoji workload is 133.80×
+faster.
 No result depends on a known palette, source cache, previous result, or
 reduced-quality mode.
 
@@ -122,12 +122,12 @@ slowdown beside the time.
 
 | Implementation | Version | Median | wtfgif advantage | Bytes | PSNR | Alpha match |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| **wtfgif** | 3.0.8 | **1.140 ms** | — | 149,689 | 34.12 dB | 100% |
-| gif.js | 0.2.0 | 96.775 ms | **84.89×** | 80,869 | 33.08 dB | 99.78% |
-| image-q + omggif | 2.1.2 + 1.0.10 | 100.300 ms | **87.98×** | 39,350 | 31.84 dB | 100% |
-| gif.js.optimized | 1.0.1 | 110.485 ms | **96.92×** | 80,304 | 32.20 dB | 99.76% |
-| gifenc | 1.0.3 | 126.885 ms | **111.30×** | 39,101 | 34.54 dB | 100% |
-| modern-gif | 2.1.0 | 136.650 ms | **119.87×** | 43,114 | 32.65 dB | 100% |
+| **wtfgif** | 3.0.8 | **1.220 ms** | — | 149,689 | 34.12 dB | 100% |
+| image-q + omggif | 2.1.2 + 1.0.10 | 100.760 ms | **82.59×** | 39,350 | 31.84 dB | 100% |
+| gif.js | 0.2.0 | 101.905 ms | **83.53×** | 80,869 | 33.08 dB | 99.78% |
+| gif.js.optimized | 1.0.1 | 112.270 ms | **92.02×** | 80,304 | 32.20 dB | 99.76% |
+| gifenc | 1.0.3 | 125.805 ms | **103.12×** | 39,101 | 34.54 dB | 100% |
+| modern-gif | 2.1.0 | 141.275 ms | **115.80×** | 43,114 | 32.65 dB | 100% |
 
 Every output must parse as an eight-frame 128×128 animation with exact 100 ms
 delays before its sample is accepted. The validator composites all frames,

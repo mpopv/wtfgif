@@ -4,6 +4,11 @@ All notable changes to wtfgif are documented here.
 
 ## Unreleased
 
+- Seed dense SIMD nearest-palette mapping from the exact Wu-cube candidates,
+  then skip red slices and red/green rows whose distance lower bound cannot
+  beat any requested cell. Full-occupancy tables retain the original dense
+  kernel. The optimized path preserves the exact palette indices and GIF bytes
+  while reducing the smooth-gradient first encode from 1.004 ms to 0.860 ms.
 - Pack the exact eight-color path into 252-byte GIF data sub-blocks aligned to
   complete 432-pixel groups. This removes the generic sub-block boundary branch
   from its literal LZW loop while preserving the exact indexed pixels, decoded
@@ -34,13 +39,13 @@ All notable changes to wtfgif are documented here.
   emit repeated transparent literal groups from pre-expanded bytes. This
   avoids redundant scans and bit packing without changing decoded pixels or
   corpus GIF hashes.
-- Refresh the clean 25-process arbitrary-RGBA receipt. Every category now
-  exceeds 100x on its first real encode after initialization: **120.35x to
-  235.58x**, with a **151.95x geometric mean** and **135.46x** on the real
+- Refresh the clean 40-process arbitrary-RGBA receipt. Every category now
+  exceeds 100x on its first real encode after initialization: **123.85x to
+  230.59x**, with a **154.01x geometric mean** and **133.80x** on the real
   MakeEmoji workload.
 - Refresh the 15-process Chrome comparison and generated SVG. wtfgif takes
-  **1.140 ms**; the five alternatives take 96.200-134.440 ms and are
-  **84.39x-117.93x slower**.
+  **1.220 ms**; the five alternatives take 100.760-141.275 ms and are
+  **82.59x-115.80x slower**.
 - Pass the complete release gate: lint, type checking, dependency audit, Rust
   formatting/clippy/tests, all scalar and SIMD Wasm builds, 148 JavaScript/Wasm
   assertions, independent decoder conformance, edge validation, and package
