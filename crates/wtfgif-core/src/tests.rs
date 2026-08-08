@@ -654,11 +654,10 @@ fn adaptive_histogram_matches_the_general_pair_scan() {
         rgba[100 * 4 + 3] = 17;
         let mut expected = vec![RgbHistogramBin32::default(); 1 << 12];
         let mut actual = vec![RgbHistogramBin32::default(); 1 << 12];
-        let expected_alpha = accumulate_quality_histogram_u32_bits_remaining_opaque::<4, false, true>(
+        let expected_alpha = accumulate_quality_histogram_u32_bits_remaining_opaque::<4, true>(
             &mut expected,
             &rgba,
             0,
-            &mut [],
         );
         let actual_alpha =
             accumulate_quality_histogram_u32_bits_opaque_adaptive::<true>(&mut actual, &rgba);
@@ -1402,7 +1401,7 @@ fn single_merge_plan_matches_general_palette_refinement() {
         })
         .collect();
     let expected =
-        build_quality_index_plan_from_colors::<true, 4>(true, colors.clone(), Vec::new(), None);
+        build_quality_index_plan_from_colors::<true, 4>(true, colors.clone(), Vec::new());
     let actual = build_quality_single_merge_plan(true, colors.clone(), Vec::new());
 
     let weighted_error = |plan: &QualityIndexPlan| -> u64 {
@@ -1736,22 +1735,6 @@ fn reciprocal_quality_averages_match_integer_division() {
         let sum = (wide_state % (maximum_sum + 1)) as u32;
         verify_weighted(sum, count);
     }
-}
-
-#[test]
-fn quality_materialization_preserves_palette_indices() {
-    let histogram_to_palette: Vec<u8> = (0..=4095u16).map(|value| value as u8).collect();
-    let opaque = materialize_quality_indices(vec![0, 17, 255, 4095], None, &histogram_to_palette);
-    assert_eq!(opaque, vec![0, 17, 255, 255]);
-
-    let transparent = materialize_quality_indices(
-        vec![3, u16::MAX, 7, u16::MAX],
-        Some(42),
-        &histogram_to_palette,
-    );
-    assert_eq!(transparent, vec![3, 42, 7, 42]);
-    recycle_quantized_indexed(opaque);
-    recycle_quantized_indexed(transparent);
 }
 
 #[test]

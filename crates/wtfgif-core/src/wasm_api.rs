@@ -175,11 +175,10 @@ pub fn prepare_quality_encoder_code() {
     );
     #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
     let zero_dense = false;
-    let opaque = accumulate_quality_histogram_u32_bits_remaining_opaque::<4, false, false>(
+    let opaque = accumulate_quality_histogram_u32_bits_remaining_opaque::<4, false>(
         &mut histogram,
         empty,
         0,
-        &mut [],
     );
     let colors = quality_colors_from_histogram_u32::<true>(&mut histogram);
     recycle_quality_colors(colors);

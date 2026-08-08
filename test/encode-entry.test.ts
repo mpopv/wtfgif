@@ -53,7 +53,7 @@ describe("encode-only quality entry", () => {
 
 		try {
 			expect(prepare).toHaveBeenCalledTimes(1);
-			expect(reserve).toHaveBeenCalledExactlyOnceWith(4_000_000);
+			expect(reserve).toHaveBeenCalledExactlyOnceWith(4 * 1024 * 1024);
 			encodeRgbaGifFrames({
 				width: 2,
 				height: 1,

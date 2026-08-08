@@ -4261,10 +4261,7 @@ fn encode_rgba_quality_gif_inner_with_output(
             encoded
         }
         QualityIndexResult::Quantized(plan)
-            if plan.palette.len() == 256
-                && plan.histogram_indices.is_none()
-                && plan.histogram_bits == 4
-                && plan.mapping_bits == 4 =>
+            if plan.palette.len() == 256 && plan.histogram_bits == 4 && plan.mapping_bits == 4 =>
         {
             encode_quality_four_bit_index_plan_literal_gif::<false>(
                 output,
@@ -4335,11 +4332,7 @@ fn encode_rgba_quality_low_res_quantized_gif_inner_with_output<const CONSTANT_DE
     } else {
         index_rgba_frames_quality_low_res_quantized_mixed(rgba_stream, alpha_threshold, palette)
     };
-    if plan.palette.len() == 256
-        && plan.histogram_indices.is_none()
-        && plan.histogram_bits == 4
-        && plan.mapping_bits == 4
-    {
+    if plan.palette.len() == 256 && plan.histogram_bits == 4 && plan.mapping_bits == 4 {
         encode_quality_four_bit_index_plan_literal_gif::<CONSTANT_DELAY>(
             output,
             rgba_stream,
@@ -4648,13 +4641,11 @@ fn encode_quality_four_bit_index_plan_literal_gif<const CONSTANT_DELAY: bool>(
     let QualityIndexPlan {
         palette,
         histogram_to_palette,
-        histogram_indices,
         transparent_index,
         histogram_bits,
         mapping_bits,
     } = plan;
     debug_assert_eq!(palette.len(), 256);
-    debug_assert!(histogram_indices.is_none());
     debug_assert_eq!(histogram_bits, 4);
     debug_assert_eq!(mapping_bits, 4);
 
@@ -4797,7 +4788,6 @@ fn encode_quality_index_plan_literal_gif(
     let QualityIndexPlan {
         palette,
         histogram_to_palette,
-        histogram_indices,
         transparent_index,
         histogram_bits,
         mapping_bits,
@@ -4807,7 +4797,6 @@ fn encode_quality_index_plan_literal_gif(
         let (palette, indexed, transparent_index) = QualityIndexPlan {
             palette,
             histogram_to_palette,
-            histogram_indices,
             transparent_index,
             histogram_bits,
             mapping_bits,
@@ -4837,43 +4826,6 @@ fn encode_quality_index_plan_literal_gif(
         .ok_or_else(|| "RGBA frame stream overflow".to_string())?;
     if rgba_stream.len() != expected_len {
         return Err("RGBA frame stream length does not match dimensions".to_string());
-    }
-    if let Some(histogram_indices) = histogram_indices {
-        if histogram_bits == mapping_bits {
-            return encode_quality_index_plan_literal_gif_from_histogram_indices(
-                output,
-                rgba_stream,
-                width,
-                height,
-                frame_count,
-                delays,
-                loop_count,
-                palette,
-                histogram_to_palette,
-                histogram_indices,
-                transparent_index,
-            );
-        }
-        let indexed = materialize_quality_indices(
-            histogram_indices,
-            transparent_index,
-            &histogram_to_palette,
-        );
-        recycle_quality_histogram_to_palette(histogram_to_palette);
-        let encoded = encode_indexed_literal_gif_inner_with_output_unchecked(
-            output,
-            &indexed,
-            width,
-            height,
-            frame_count,
-            &palette,
-            delays,
-            loop_count,
-            transparent_index,
-        );
-        recycle_quality_palette(palette);
-        recycle_quantized_indexed(indexed);
-        return encoded;
     }
     let lzw_length = mapped_quality_literal_lzw_block_size(frame_len)?;
     let frame_capacity = (0..frame_count).try_fold(0usize, |capacity, frame_index| {
@@ -4945,88 +4897,6 @@ fn encode_quality_index_plan_literal_gif(
     output.push(0x3b);
     recycle_quality_histogram_to_palette(histogram_to_palette);
     recycle_quality_palette(palette);
-    Ok(output)
-}
-
-/// Emit a 256-color quality plan directly from the retained histogram cells.
-/// The high-resolution histogram path already records one u16 cell per pixel
-/// while building the palette; materializing those cells into a second u8
-/// buffer before literal LZW is a redundant full-image pass.
-#[allow(clippy::too_many_arguments)]
-fn encode_quality_index_plan_literal_gif_from_histogram_indices(
-    mut output: Vec<u8>,
-    rgba_stream: &[u8],
-    width: u16,
-    height: u16,
-    frame_count: usize,
-    delays: DelaySource<'_>,
-    loop_count: i32,
-    palette: Vec<u32>,
-    histogram_to_palette: Vec<u8>,
-    histogram_indices: Vec<u16>,
-    transparent_index: Option<u8>,
-) -> Result<Vec<u8>, String> {
-    let color_count = checked_palette_color_count(palette.len())?;
-    debug_assert_eq!(color_count, 256);
-    let frame_len = usize::from(width)
-        .checked_mul(usize::from(height))
-        .ok_or_else(|| "Frame size overflow".to_string())?;
-    let expected_pixels = frame_len
-        .checked_mul(frame_count)
-        .ok_or_else(|| "RGBA frame stream overflow".to_string())?;
-    if rgba_stream.len() != expected_pixels.saturating_mul(4)
-        || histogram_indices.len() != expected_pixels
-    {
-        return Err("Quality histogram stream length does not match dimensions".to_string());
-    }
-
-    let min_code_size = 8;
-    let lzw_length = literal_lzw_block_size(frame_len, min_code_size)?;
-    let frame_capacity = (0..frame_count).try_fold(0usize, |capacity, frame_index| {
-        let graphic_control_length =
-            usize::from(delays.get(frame_index) != 0 || transparent_index.is_some()) * 8;
-        capacity
-            .checked_add(10)
-            .and_then(|length| length.checked_add(graphic_control_length))
-            .and_then(|length| length.checked_add(lzw_length))
-            .ok_or_else(|| "Encoded GIF size overflow".to_string())
-    })?;
-    let output_capacity = 13usize
-        .checked_add(color_count * 3)
-        .and_then(|length| length.checked_add(usize::from(loop_count >= 0) * 19))
-        .and_then(|length| length.checked_add(frame_capacity))
-        .and_then(|length| length.checked_add(1))
-        .ok_or_else(|| "Encoded GIF size overflow".to_string())?;
-    output.clear();
-    if output.capacity() < output_capacity {
-        output.reserve(output_capacity - output.capacity());
-    }
-    write_indexed_gif_header(&mut output, width, height, &palette, color_count);
-    write_loop_extension(&mut output, loop_count);
-    for frame_index in 0..frame_count {
-        write_indexed_gif_frame_header(
-            &mut output,
-            0,
-            0,
-            width,
-            height,
-            delays.get(frame_index),
-            transparent_index,
-            if transparent_index.is_some() { 2 } else { 0 },
-        );
-        let frame_start = frame_index * frame_len;
-        encode_nine_bit_literal_lzw_histogram_indices(
-            &mut output,
-            &histogram_indices[frame_start..frame_start + frame_len],
-            transparent_index.unwrap_or(0),
-            transparent_index.is_some(),
-            &histogram_to_palette,
-        )?;
-    }
-    output.push(0x3b);
-    recycle_quality_histogram_to_palette(histogram_to_palette);
-    recycle_quality_palette(palette);
-    recycle_quality_histogram_indices(histogram_indices);
     Ok(output)
 }
 
@@ -5619,7 +5489,6 @@ const QUANTIZED_SORT_COUNT_LIMIT: u64 = 1 << 48;
 struct QualityIndexPlan {
     palette: Vec<u32>,
     histogram_to_palette: Vec<u8>,
-    histogram_indices: Option<Vec<u16>>,
     transparent_index: Option<u8>,
     histogram_bits: usize,
     mapping_bits: usize,
@@ -5639,41 +5508,30 @@ impl QualityIndexPlan {
         let QualityIndexPlan {
             palette,
             histogram_to_palette,
-            histogram_indices,
             transparent_index,
             histogram_bits: _,
             mapping_bits,
         } = self;
-        let indexed = if let Some(histogram_indices) = histogram_indices {
-            // The retained histogram cells and final palette indices have
-            // the same element count. Rewrite the low byte of that existing
-            // allocation in place, then hand it to the indexed-output
-            // scratch pool. This avoids a second full-sized allocation and
-            // copy between palette planning and literal GIF emission.
-            materialize_quality_indices(histogram_indices, transparent_index, &histogram_to_palette)
-        } else {
-            let mut indexed = take_quantized_indexed(rgba_stream.len() / 4);
-            match mapping_bits {
-                4 => map_quality_pixels::<4>(
-                    rgba_stream,
-                    alpha_threshold,
-                    transparent_index.is_some(),
-                    transparent_index,
-                    &histogram_to_palette,
-                    &mut indexed,
-                ),
-                5 => map_quality_pixels::<5>(
-                    rgba_stream,
-                    alpha_threshold,
-                    transparent_index.is_some(),
-                    transparent_index,
-                    &histogram_to_palette,
-                    &mut indexed,
-                ),
-                _ => unreachable!("unsupported quality histogram precision"),
-            }
-            indexed
-        };
+        let mut indexed = take_quantized_indexed(rgba_stream.len() / 4);
+        match mapping_bits {
+            4 => map_quality_pixels::<4>(
+                rgba_stream,
+                alpha_threshold,
+                transparent_index.is_some(),
+                transparent_index,
+                &histogram_to_palette,
+                &mut indexed,
+            ),
+            5 => map_quality_pixels::<5>(
+                rgba_stream,
+                alpha_threshold,
+                transparent_index.is_some(),
+                transparent_index,
+                &histogram_to_palette,
+                &mut indexed,
+            ),
+            _ => unreachable!("unsupported quality histogram precision"),
+        }
         recycle_quality_histogram_to_palette(histogram_to_palette);
         (palette, indexed, transparent_index)
     }
@@ -6211,37 +6069,6 @@ fn quality_histogram_index_bits_const<const BITS: usize>(red: u8, green: u8, blu
     (usize::from(red >> (8 - BITS)) << (BITS * 2))
         | (usize::from(green >> (8 - BITS)) << BITS)
         | usize::from(blue >> (8 - BITS))
-}
-
-#[inline(always)]
-fn materialize_quality_indices(
-    histogram_indices: Vec<u16>,
-    transparent_index: Option<u8>,
-    histogram_to_palette: &[u8],
-) -> Vec<u8> {
-    let mut indexed = take_quantized_indexed(histogram_indices.len());
-    match transparent_index {
-        Some(transparent_index) => {
-            for (destination, histogram_index) in
-                indexed.iter_mut().zip(histogram_indices.iter().copied())
-            {
-                *destination = if histogram_index == u16::MAX {
-                    transparent_index
-                } else {
-                    histogram_to_palette[usize::from(histogram_index)]
-                };
-            }
-        }
-        None => {
-            for (destination, histogram_index) in
-                indexed.iter_mut().zip(histogram_indices.iter().copied())
-            {
-                *destination = histogram_to_palette[usize::from(histogram_index)];
-            }
-        }
-    }
-    recycle_quality_histogram_indices(histogram_indices);
-    indexed
 }
 
 #[inline(always)]
@@ -7077,7 +6904,6 @@ fn index_rgba_frames_quality_low_res_quantized_sampled_opaque(
         return QualityIndexPlan {
             palette,
             histogram_to_palette: Vec::new(),
-            histogram_indices: None,
             transparent_index: None,
             histogram_bits: 4,
             mapping_bits: 4,
@@ -7110,11 +6936,10 @@ fn index_rgba_frames_quality_low_res_quantized_opaque(
     const HISTOGRAM_BITS: usize = 4;
     const HISTOGRAM_LEN: usize = 1 << (HISTOGRAM_BITS * 3);
     let mut histogram = take_quality_histogram_u32(HISTOGRAM_LEN);
-    accumulate_quality_histogram_u32_bits_remaining_opaque::<HISTOGRAM_BITS, false, false>(
+    accumulate_quality_histogram_u32_bits_remaining_opaque::<HISTOGRAM_BITS, false>(
         &mut histogram,
         rgba_stream,
         0,
-        &mut [],
     );
     finish_quality_low_res_quantized(histogram, false, palette)
 }
@@ -7146,7 +6971,6 @@ fn finish_quality_low_res_quantized(
         has_transparent_pixels,
         colors,
         palette,
-        None,
     )
 }
 
@@ -7176,7 +7000,6 @@ fn build_quality_single_merge_plan(
         return QualityIndexPlan {
             palette,
             histogram_to_palette: Vec::new(),
-            histogram_indices: None,
             transparent_index: None,
             histogram_bits: 4,
             mapping_bits: 4,
@@ -7264,7 +7087,6 @@ fn build_quality_single_merge_plan(
     QualityIndexPlan {
         palette,
         histogram_to_palette,
-        histogram_indices: None,
         transparent_index,
         histogram_bits: 4,
         mapping_bits: 4,
@@ -7315,7 +7137,6 @@ fn build_quality_direct_cell_plan(
         return QualityIndexPlan {
             palette,
             histogram_to_palette: Vec::new(),
-            histogram_indices: None,
             transparent_index: None,
             histogram_bits: 4,
             mapping_bits: 4,
@@ -7354,7 +7175,6 @@ fn build_quality_direct_cell_plan(
     QualityIndexPlan {
         palette,
         histogram_to_palette,
-        histogram_indices: None,
         transparent_index,
         histogram_bits: 4,
         mapping_bits: 4,
@@ -7381,7 +7201,6 @@ fn build_quality_flat_grid_plan(
     QualityIndexPlan {
         palette,
         histogram_to_palette,
-        histogram_indices: None,
         transparent_index,
         histogram_bits: 4,
         mapping_bits: 4,
@@ -7566,27 +7385,6 @@ fn recycle_quality_histogram_to_palette(table: Vec<u8>) {
     });
 }
 
-fn take_quality_histogram_indices(pixel_count: usize) -> Vec<u16> {
-    REUSABLE_QUANTIZED_INDEXED.with(|scratch| {
-        let mut indices = std::mem::take(&mut *scratch.borrow_mut());
-        if indices.capacity() >= pixel_count {
-            // Both histogram accumulation variants write every cell before
-            // the indexed stream is read, so the common-size scratch range
-            // does not need a redundant zeroing pass.
-            unsafe { indices.set_len(pixel_count) };
-        } else {
-            indices.resize(pixel_count, 0);
-        }
-        indices
-    })
-}
-
-fn recycle_quality_histogram_indices(indices: Vec<u16>) {
-    REUSABLE_QUANTIZED_INDEXED.with(|scratch| {
-        *scratch.borrow_mut() = indices;
-    });
-}
-
 fn take_quantized_indexed(pixel_count: usize) -> Vec<u8> {
     REUSABLE_QUANTIZED_BYTES.with(|scratch| {
         let mut indexed = std::mem::take(&mut *scratch.borrow_mut());
@@ -7754,39 +7552,6 @@ fn add_quality_histogram_u32_bits_indexed(
 }
 
 #[inline(always)]
-fn add_quality_histogram_u32_pair_preindexed(
-    histogram: &mut [RgbHistogramBin32],
-    packed0: u32,
-    packed1: u32,
-    index0: usize,
-    index1: usize,
-) {
-    if index0 != index1 {
-        add_quality_histogram_u32_bits_indexed(histogram, packed0, index0);
-        add_quality_histogram_u32_bits_indexed(histogram, packed1, index1);
-        return;
-    }
-    let red = u32::from(packed0 as u8) + u32::from(packed1 as u8);
-    let green = u32::from((packed0 >> 8) as u8) + u32::from((packed1 >> 8) as u8);
-    let blue = u32::from((packed0 >> 16) as u8) + u32::from((packed1 >> 16) as u8);
-    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-    unsafe {
-        use core::arch::wasm32::{u32x4, u32x4_add, v128_load, v128_store};
-
-        let bin = histogram.get_unchecked_mut(index0) as *mut RgbHistogramBin32;
-        let current = v128_load(bin.cast());
-        let increment = u32x4(2, red, green, blue);
-        v128_store(bin.cast(), u32x4_add(current, increment));
-    }
-    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
-    {
-        unsafe {
-            add_quality_histogram_bin32(histogram.as_mut_ptr().add(index0), 2, red, green, blue);
-        }
-    }
-}
-
-#[inline(always)]
 fn add_quality_histogram_u32_pair<const BITS: usize>(
     histogram: &mut [RgbHistogramBin32],
     packed0: u32,
@@ -7853,85 +7618,6 @@ fn add_quality_histogram_u32_pair_with_alpha<const BITS: usize>(
         add_quality_histogram_u32_pair::<BITS>(histogram, packed0, packed1);
         false
     }
-}
-
-#[inline(always)]
-fn add_quality_histogram_u32_pair_with_alpha_record<const BITS: usize>(
-    histogram: &mut [RgbHistogramBin32],
-    histogram_indices: *mut u16,
-    pixel_index: usize,
-    packed0: u32,
-    packed1: u32,
-    alpha_threshold: u8,
-) -> bool {
-    let first_transparent = ((packed0 >> 24) as u8) < alpha_threshold;
-    let second_transparent = ((packed1 >> 24) as u8) < alpha_threshold;
-    let index0 = if first_transparent {
-        u16::MAX
-    } else {
-        quality_histogram_index_packed::<BITS>(packed0) as u16
-    };
-    let index1 = if second_transparent {
-        u16::MAX
-    } else {
-        quality_histogram_index_packed::<BITS>(packed1) as u16
-    };
-    let packed_indices = u32::from_ne_bytes([
-        index0 as u8,
-        (index0 >> 8) as u8,
-        index1 as u8,
-        (index1 >> 8) as u8,
-    ]);
-    unsafe {
-        std::ptr::write_unaligned(histogram_indices.add(pixel_index).cast(), packed_indices);
-    }
-    if !first_transparent && !second_transparent {
-        add_quality_histogram_u32_pair_preindexed(
-            histogram,
-            packed0,
-            packed1,
-            usize::from(index0),
-            usize::from(index1),
-        );
-    } else {
-        if !first_transparent {
-            add_quality_histogram_u32_bits_indexed(histogram, packed0, usize::from(index0));
-        }
-        if !second_transparent {
-            add_quality_histogram_u32_bits_indexed(histogram, packed1, usize::from(index1));
-        }
-    }
-    first_transparent || second_transparent
-}
-
-#[inline(always)]
-fn add_quality_histogram_u32_pair_record_opaque<const BITS: usize>(
-    histogram: &mut [RgbHistogramBin32],
-    histogram_indices: *mut u16,
-    pixel_index: usize,
-    packed: u64,
-) {
-    let packed0 = packed as u32;
-    let packed1 = (packed >> 32) as u32;
-    let (index0, index1) = quality_histogram_index_pair_packed::<BITS>(packed);
-    let index0 = index0 as u16;
-    let index1 = index1 as u16;
-    let packed_indices = u32::from_ne_bytes([
-        index0 as u8,
-        (index0 >> 8) as u8,
-        index1 as u8,
-        (index1 >> 8) as u8,
-    ]);
-    unsafe {
-        std::ptr::write_unaligned(histogram_indices.add(pixel_index).cast(), packed_indices);
-    }
-    add_quality_histogram_u32_pair_preindexed(
-        histogram,
-        packed0,
-        packed1,
-        usize::from(index0),
-        usize::from(index1),
-    );
 }
 
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
@@ -8174,146 +7860,16 @@ fn accumulate_quality_histogram_u32_bits_remaining_mixed<const BITS: usize>(
     has_transparent_pixels
 }
 
-fn accumulate_quality_histogram_u32_bits_remaining<
-    const BITS: usize,
-    const RECORD_INDICES: bool,
->(
-    histogram: &mut [RgbHistogramBin32],
-    rgba_stream: &[u8],
-    start_offset: usize,
-    alpha_threshold: u8,
-    histogram_indices: &mut [u16],
-) -> bool {
-    if alpha_threshold == 0 {
-        accumulate_quality_histogram_u32_bits_remaining_opaque::<BITS, RECORD_INDICES, false>(
-            histogram,
-            rgba_stream,
-            start_offset,
-            histogram_indices,
-        );
-        return false;
-    }
-    if !RECORD_INDICES {
-        return accumulate_quality_histogram_u32_bits_remaining_mixed::<BITS>(
-            histogram,
-            rgba_stream,
-            start_offset,
-            alpha_threshold,
-        );
-    }
-    let rgba_pointer = rgba_stream.as_ptr();
-    let histogram_indices_pointer = histogram_indices.as_mut_ptr();
-    let mut has_transparent_pixels = false;
-    let mut offset = start_offset;
-    // Keep eight packed pixels in flight. This is the fallback scan for the
-    // normal-sized quality path (4-bit histogram), so avoiding a loop branch
-    // and repeated offset arithmetic here matters more than the tiny prefix
-    // scan that discovers the palette overflow.
-    while offset + 32 <= rgba_stream.len() {
-        let (packed0, packed1) = unsafe { read_rgba_pair(rgba_pointer, offset) };
-        let (packed2, packed3) = unsafe { read_rgba_pair(rgba_pointer, offset + 8) };
-        let (packed4, packed5) = unsafe { read_rgba_pair(rgba_pointer, offset + 16) };
-        let (packed6, packed7) = unsafe { read_rgba_pair(rgba_pointer, offset + 24) };
-        if RECORD_INDICES {
-            let pixel_index = offset / 4;
-            has_transparent_pixels |= add_quality_histogram_u32_pair_with_alpha_record::<BITS>(
-                histogram,
-                histogram_indices_pointer,
-                pixel_index,
-                packed0,
-                packed1,
-                alpha_threshold,
-            );
-            has_transparent_pixels |= add_quality_histogram_u32_pair_with_alpha_record::<BITS>(
-                histogram,
-                histogram_indices_pointer,
-                pixel_index + 2,
-                packed2,
-                packed3,
-                alpha_threshold,
-            );
-            has_transparent_pixels |= add_quality_histogram_u32_pair_with_alpha_record::<BITS>(
-                histogram,
-                histogram_indices_pointer,
-                pixel_index + 4,
-                packed4,
-                packed5,
-                alpha_threshold,
-            );
-            has_transparent_pixels |= add_quality_histogram_u32_pair_with_alpha_record::<BITS>(
-                histogram,
-                histogram_indices_pointer,
-                pixel_index + 6,
-                packed6,
-                packed7,
-                alpha_threshold,
-            );
-        } else {
-            has_transparent_pixels |= add_quality_histogram_u32_pair_with_alpha::<BITS>(
-                histogram,
-                packed0,
-                packed1,
-                alpha_threshold,
-            );
-            has_transparent_pixels |= add_quality_histogram_u32_pair_with_alpha::<BITS>(
-                histogram,
-                packed2,
-                packed3,
-                alpha_threshold,
-            );
-            has_transparent_pixels |= add_quality_histogram_u32_pair_with_alpha::<BITS>(
-                histogram,
-                packed4,
-                packed5,
-                alpha_threshold,
-            );
-            has_transparent_pixels |= add_quality_histogram_u32_pair_with_alpha::<BITS>(
-                histogram,
-                packed6,
-                packed7,
-                alpha_threshold,
-            );
-        }
-        offset += 32;
-    }
-    while offset < rgba_stream.len() {
-        let packed =
-            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset).cast()) });
-        if RECORD_INDICES {
-            let pixel_index = offset / 4;
-            let transparent = ((packed >> 24) as u8) < alpha_threshold;
-            let index = if transparent {
-                u16::MAX
-            } else {
-                let index = quality_histogram_index_packed::<BITS>(packed) as u16;
-                add_quality_histogram_u32_bits_indexed(histogram, packed, usize::from(index));
-                index
-            };
-            unsafe { histogram_indices_pointer.add(pixel_index).write(index) };
-            has_transparent_pixels |= transparent;
-        } else if ((packed >> 24) as u8) < alpha_threshold {
-            has_transparent_pixels = true;
-        } else {
-            add_quality_histogram_u32_bits_const::<BITS>(histogram, packed);
-        }
-        offset += 4;
-    }
-    has_transparent_pixels
-}
-
 #[inline(always)]
 fn accumulate_quality_histogram_u32_bits_remaining_opaque<
     const BITS: usize,
-    const RECORD_INDICES: bool,
     const PROBE_ALPHA: bool,
 >(
     histogram: &mut [RgbHistogramBin32],
     rgba_stream: &[u8],
     start_offset: usize,
-    histogram_indices: &mut [u16],
 ) -> bool {
     let rgba_pointer = rgba_stream.as_ptr();
-    let histogram_indices_pointer = histogram_indices.as_mut_ptr();
     const ALPHA_MASK: u64 = 0xff00_0000_ff00_0000;
     let mut all_alpha_255 = true;
     let mut offset = start_offset;
@@ -8326,38 +7882,10 @@ fn accumulate_quality_histogram_u32_bits_remaining_opaque<
             u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 16).cast()) });
         let packed67 =
             u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 24).cast()) });
-        if RECORD_INDICES {
-            let pixel_index = offset / 4;
-            add_quality_histogram_u32_pair_record_opaque::<BITS>(
-                histogram,
-                histogram_indices_pointer,
-                pixel_index,
-                packed01,
-            );
-            add_quality_histogram_u32_pair_record_opaque::<BITS>(
-                histogram,
-                histogram_indices_pointer,
-                pixel_index + 2,
-                packed23,
-            );
-            add_quality_histogram_u32_pair_record_opaque::<BITS>(
-                histogram,
-                histogram_indices_pointer,
-                pixel_index + 4,
-                packed45,
-            );
-            add_quality_histogram_u32_pair_record_opaque::<BITS>(
-                histogram,
-                histogram_indices_pointer,
-                pixel_index + 6,
-                packed67,
-            );
-        } else {
-            add_quality_histogram_u32_pair_packed::<BITS>(histogram, packed01);
-            add_quality_histogram_u32_pair_packed::<BITS>(histogram, packed23);
-            add_quality_histogram_u32_pair_packed::<BITS>(histogram, packed45);
-            add_quality_histogram_u32_pair_packed::<BITS>(histogram, packed67);
-        }
+        add_quality_histogram_u32_pair_packed::<BITS>(histogram, packed01);
+        add_quality_histogram_u32_pair_packed::<BITS>(histogram, packed23);
+        add_quality_histogram_u32_pair_packed::<BITS>(histogram, packed45);
+        add_quality_histogram_u32_pair_packed::<BITS>(histogram, packed67);
         let packed89 =
             u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 32).cast()) });
         let packed1011 =
@@ -8377,38 +7905,10 @@ fn accumulate_quality_histogram_u32_bits_remaining_opaque<
                 & packed1415;
             all_alpha_255 &= combined_alpha & ALPHA_MASK == ALPHA_MASK;
         }
-        if RECORD_INDICES {
-            let pixel_index = offset / 4 + 8;
-            add_quality_histogram_u32_pair_record_opaque::<BITS>(
-                histogram,
-                histogram_indices_pointer,
-                pixel_index,
-                packed89,
-            );
-            add_quality_histogram_u32_pair_record_opaque::<BITS>(
-                histogram,
-                histogram_indices_pointer,
-                pixel_index + 2,
-                packed1011,
-            );
-            add_quality_histogram_u32_pair_record_opaque::<BITS>(
-                histogram,
-                histogram_indices_pointer,
-                pixel_index + 4,
-                packed1213,
-            );
-            add_quality_histogram_u32_pair_record_opaque::<BITS>(
-                histogram,
-                histogram_indices_pointer,
-                pixel_index + 6,
-                packed1415,
-            );
-        } else {
-            add_quality_histogram_u32_pair_packed::<BITS>(histogram, packed89);
-            add_quality_histogram_u32_pair_packed::<BITS>(histogram, packed1011);
-            add_quality_histogram_u32_pair_packed::<BITS>(histogram, packed1213);
-            add_quality_histogram_u32_pair_packed::<BITS>(histogram, packed1415);
-        }
+        add_quality_histogram_u32_pair_packed::<BITS>(histogram, packed89);
+        add_quality_histogram_u32_pair_packed::<BITS>(histogram, packed1011);
+        add_quality_histogram_u32_pair_packed::<BITS>(histogram, packed1213);
+        add_quality_histogram_u32_pair_packed::<BITS>(histogram, packed1415);
         offset += 64;
     }
     while offset < rgba_stream.len() {
@@ -8417,13 +7917,7 @@ fn accumulate_quality_histogram_u32_bits_remaining_opaque<
         if PROBE_ALPHA && (packed >> 24) as u8 != u8::MAX {
             all_alpha_255 = false;
         }
-        if RECORD_INDICES {
-            let index = quality_histogram_index_packed::<BITS>(packed) as u16;
-            unsafe { histogram_indices_pointer.add(offset / 4).write(index) };
-            add_quality_histogram_u32_bits_indexed(histogram, packed, usize::from(index));
-        } else {
-            add_quality_histogram_u32_bits_const::<BITS>(histogram, packed);
-        }
+        add_quality_histogram_u32_bits_const::<BITS>(histogram, packed);
         offset += 4;
     }
     all_alpha_255
@@ -8507,11 +8001,10 @@ fn accumulate_quality_histogram_u32_bits_opaque_adaptive<const PROBE_ALPHA: bool
             0,
         )
     } else {
-        accumulate_quality_histogram_u32_bits_remaining_opaque::<4, false, PROBE_ALPHA>(
+        accumulate_quality_histogram_u32_bits_remaining_opaque::<4, PROBE_ALPHA>(
             histogram,
             rgba_stream,
             0,
-            &mut [],
         )
     }
 }
@@ -8569,52 +8062,24 @@ fn index_rgba_frames_quality_u32<const BITS: usize>(
         // Keep the exact-prefix fast path allocation-free. Once overflow is
         // known, rebuild only that prefix and scan the remaining pixels once.
         let mut histogram = take_quality_histogram_u32(1 << (BITS * 3));
-        // Opaque 4-bit inputs can reuse the retained cells during literal
-        // emission without checking alpha or recomputing the cell index.
-        // Mixed-alpha inputs pay less by mapping directly from RGBA while
-        // the histogram is already being built, so retain cells only for the
-        // branch that can consume them most cheaply.
+        // Map pixels directly from RGBA during literal emission. Retaining a
+        // u16 histogram cell for every pixel adds a large allocation, write,
+        // and read pass on multi-megapixel inputs; recomputing the compact
+        // 4-bit cell while emitting is cheaper and produces the same indices.
         let probe_opaque =
             !all_opaque && alpha_threshold != 0 && rgba_stream_samples_alpha_255(rgba_stream);
-        let mut record_histogram_indices = all_opaque && BITS == 4;
-        let mut histogram_indices = if record_histogram_indices {
-            take_quality_histogram_indices(pixel_count)
-        } else {
-            Vec::new()
-        };
         if probe_opaque {
-            let all_alpha_255 = if BITS == 4 {
-                histogram_indices = take_quality_histogram_indices(pixel_count);
-                let all_alpha_255 = accumulate_quality_histogram_u32_bits_remaining_opaque::<
-                    BITS,
-                    true,
-                    true,
-                >(
-                    &mut histogram, rgba_stream, 0, &mut histogram_indices
-                );
-                if all_alpha_255 {
-                    record_histogram_indices = true;
-                }
-                all_alpha_255
-            } else {
-                accumulate_quality_histogram_u32_bits_remaining_opaque::<BITS, false, true>(
-                    &mut histogram,
-                    rgba_stream,
-                    0,
-                    &mut [],
-                )
-            };
+            let all_alpha_255 = accumulate_quality_histogram_u32_bits_remaining_opaque::<BITS, true>(
+                &mut histogram,
+                rgba_stream,
+                0,
+            );
             if !all_alpha_255 {
-                if !histogram_indices.is_empty() {
-                    recycle_quality_histogram_indices(histogram_indices);
-                    histogram_indices = Vec::new();
-                }
                 histogram.fill(RgbHistogramBin32::default());
-                has_transparent_pixels = accumulate_quality_histogram_u32_bits_remaining::<
+                has_transparent_pixels = accumulate_quality_histogram_u32_bits_remaining_mixed::<
                     BITS,
-                    false,
                 >(
-                    &mut histogram, rgba_stream, 0, alpha_threshold, &mut []
+                    &mut histogram, rgba_stream, 0, alpha_threshold
                 );
             }
         } else {
@@ -8627,36 +8092,21 @@ fn index_rgba_frames_quality_u32<const BITS: usize>(
                 if ((packed >> 24) as u8) >= alpha_threshold {
                     add_quality_histogram_u32_bits_const::<BITS>(&mut histogram, packed);
                 }
-                if record_histogram_indices {
-                    histogram_indices[prefix_offset / 4] =
-                        quality_histogram_index_packed::<BITS>(packed) as u16;
-                }
                 prefix_offset += 4;
             }
             if all_opaque {
-                if record_histogram_indices {
-                    accumulate_quality_histogram_u32_bits_remaining_opaque::<BITS, true, false>(
-                        &mut histogram,
-                        rgba_stream,
-                        start_offset,
-                        &mut histogram_indices,
-                    );
-                } else {
-                    accumulate_quality_histogram_u32_bits_remaining_opaque::<BITS, false, false>(
-                        &mut histogram,
-                        rgba_stream,
-                        start_offset,
-                        &mut [],
-                    );
-                }
+                accumulate_quality_histogram_u32_bits_remaining_opaque::<BITS, false>(
+                    &mut histogram,
+                    rgba_stream,
+                    start_offset,
+                );
             } else {
                 has_transparent_pixels |=
-                    accumulate_quality_histogram_u32_bits_remaining::<BITS, false>(
+                    accumulate_quality_histogram_u32_bits_remaining_mixed::<BITS>(
                         &mut histogram,
                         rgba_stream,
                         start_offset,
                         alpha_threshold,
-                        &mut [],
                     );
             }
         }
@@ -8669,7 +8119,6 @@ fn index_rgba_frames_quality_u32<const BITS: usize>(
             has_transparent_pixels,
             colors,
             palette,
-            record_histogram_indices.then_some(histogram_indices),
         );
         QualityIndexResult::Quantized(plan)
     } else {
@@ -8763,7 +8212,6 @@ fn index_rgba_frames_quality_u64(
         has_transparent_pixels,
         colors,
         palette,
-        None,
     );
     QualityIndexResult::Quantized(plan)
 }
@@ -8787,19 +8235,17 @@ fn accumulate_quality_histogram_u64_via_u32(
         let chunk = &rgba_stream[byte_start..byte_end];
         let mut chunk_histogram = take_quality_histogram_u32(QUALITY_HISTOGRAM_LEN);
         if all_opaque {
-            accumulate_quality_histogram_u32_bits_remaining_opaque::<5, false, false>(
+            accumulate_quality_histogram_u32_bits_remaining_opaque::<5, false>(
                 &mut chunk_histogram,
                 chunk,
                 0,
-                &mut [],
             );
         } else {
-            has_transparent_pixels |= accumulate_quality_histogram_u32_bits_remaining::<5, false>(
+            has_transparent_pixels |= accumulate_quality_histogram_u32_bits_remaining_mixed::<5>(
                 &mut chunk_histogram,
                 chunk,
                 0,
                 alpha_threshold,
-                &mut [],
             );
         }
         for (wide, narrow) in histogram.iter_mut().zip(chunk_histogram.iter()) {
@@ -8822,20 +8268,12 @@ fn build_quality_index_plan_from_colors<
     has_transparent_pixels: bool,
     mut colors: Vec<QuantizedColor>,
     palette_scratch: Vec<u32>,
-    histogram_indices: Option<Vec<u16>>,
 ) -> QualityIndexPlan {
     let mapping_bits = if HISTOGRAM_BITS == 5 && colors.len() > QUALITY_DOMINANT_COLOR_LIMIT {
         4
     } else {
         HISTOGRAM_BITS
     };
-    // A dense 5-bit histogram may be mapped through a compact 4-bit parent
-    // table. Its retained per-pixel 5-bit cells cannot be indexed into that
-    // compact table, so discard them and remap the RGBA stream from the
-    // parent-cell plan instead of risking an out-of-bounds lookup.
-    let histogram_indices = (mapping_bits == HISTOGRAM_BITS)
-        .then_some(histogram_indices)
-        .flatten();
     let mapping_len = 1usize << (mapping_bits * 3);
     let opaque_color_limit = if has_transparent_pixels { 255 } else { 256 };
 
@@ -8872,7 +8310,6 @@ fn build_quality_index_plan_from_colors<
         return QualityIndexPlan {
             palette,
             histogram_to_palette,
-            histogram_indices,
             transparent_index,
             histogram_bits: HISTOGRAM_BITS,
             mapping_bits,
@@ -9246,7 +8683,6 @@ fn build_quality_index_plan_from_colors<
     QualityIndexPlan {
         palette,
         histogram_to_palette,
-        histogram_indices,
         transparent_index,
         histogram_bits: HISTOGRAM_BITS,
         mapping_bits,
@@ -12239,7 +11675,6 @@ reusable_cells! {
     static REUSABLE_QUALITY_COLORS: Vec<QuantizedColor> = Vec::new();
     static REUSABLE_QUALITY_PALETTE: Vec<u32> = Vec::new();
     static REUSABLE_QUALITY_COLOR_INDEX: ColorIndexTable = ColorIndexTable::empty();
-    static REUSABLE_QUANTIZED_INDEXED: Vec<u16> = Vec::new();
     static REUSABLE_QUANTIZED_BYTES: Vec<u8> = Vec::new();
 }
 
@@ -13651,230 +13086,6 @@ fn encode_nine_bit_literal_lzw_mapped_to<const BITS: usize, const HAS_TRANSPAREN
     unsafe { output_pointer.add(output_position).write(0) };
     debug_assert_eq!(output_position + 1, encoded_length);
     Ok(())
-}
-
-#[inline(always)]
-fn append_nine_bit_histogram_quality_group<const HAS_TRANSPARENT: bool>(
-    writer: &mut DirectGifSubblockWriter,
-    bits: &mut u64,
-    bit_count: &mut usize,
-    histogram_pointer: *const u16,
-    pixel_index: usize,
-    transparent_index: u8,
-    histogram_to_palette: &[u8],
-) {
-    let packed_indices = u64::from_le(unsafe {
-        std::ptr::read_unaligned(histogram_pointer.add(pixel_index).cast::<u64>())
-    });
-    let code0 = mapped_quality_histogram_pixel::<HAS_TRANSPARENT>(
-        packed_indices as u16,
-        transparent_index,
-        histogram_to_palette,
-    );
-    let code1 = mapped_quality_histogram_pixel::<HAS_TRANSPARENT>(
-        (packed_indices >> 16) as u16,
-        transparent_index,
-        histogram_to_palette,
-    );
-    let code2 = mapped_quality_histogram_pixel::<HAS_TRANSPARENT>(
-        (packed_indices >> 32) as u16,
-        transparent_index,
-        histogram_to_palette,
-    );
-    let code3 = mapped_quality_histogram_pixel::<HAS_TRANSPARENT>(
-        (packed_indices >> 48) as u16,
-        transparent_index,
-        histogram_to_palette,
-    );
-    let code4 = mapped_quality_histogram_pixel::<HAS_TRANSPARENT>(
-        u16::from_le(unsafe {
-            std::ptr::read_unaligned(histogram_pointer.add(pixel_index + 4).cast::<u16>())
-        }),
-        transparent_index,
-        histogram_to_palette,
-    );
-    let code5 = mapped_quality_histogram_pixel::<HAS_TRANSPARENT>(
-        u16::from_le(unsafe {
-            std::ptr::read_unaligned(histogram_pointer.add(pixel_index + 5).cast::<u16>())
-        }),
-        transparent_index,
-        histogram_to_palette,
-    );
-    let code6 = mapped_quality_histogram_pixel::<HAS_TRANSPARENT>(
-        u16::from_le(unsafe {
-            std::ptr::read_unaligned(histogram_pointer.add(pixel_index + 6).cast::<u16>())
-        }),
-        transparent_index,
-        histogram_to_palette,
-    );
-    let packed_codes = u64::from(code0)
-        | (u64::from(code1) << 9)
-        | (u64::from(code2) << 18)
-        | (u64::from(code3) << 27)
-        | (u64::from(code4) << 36)
-        | (u64::from(code5) << 45)
-        | (u64::from(code6) << 54);
-    let combined = *bits | (packed_codes << *bit_count);
-    let total_bits = *bit_count + 63;
-    if total_bits >= 64 {
-        writer.write_fixed_u64(combined, 8);
-        *bits = if *bit_count == 0 {
-            0
-        } else {
-            packed_codes >> (64 - *bit_count)
-        };
-        *bit_count = total_bits - 64;
-    } else {
-        debug_assert_eq!(*bit_count, 0);
-        writer.write_fixed_u64(combined, 7);
-        *bits = combined >> 56;
-        *bit_count = total_bits - 56;
-    }
-}
-
-#[inline(always)]
-fn encode_nine_bit_literal_lzw_histogram_indices(
-    output: &mut Vec<u8>,
-    histogram_indices: &[u16],
-    transparent_index: u8,
-    has_transparent: bool,
-    histogram_to_palette: &[u8],
-) -> Result<(), String> {
-    if has_transparent {
-        encode_nine_bit_literal_lzw_histogram_indices_impl::<true>(
-            output,
-            histogram_indices,
-            transparent_index,
-            histogram_to_palette,
-        )
-    } else {
-        encode_nine_bit_literal_lzw_histogram_indices_impl::<false>(
-            output,
-            histogram_indices,
-            transparent_index,
-            histogram_to_palette,
-        )
-    }
-}
-
-#[inline(always)]
-fn encode_nine_bit_literal_lzw_histogram_indices_impl<const HAS_TRANSPARENT: bool>(
-    output: &mut Vec<u8>,
-    histogram_indices: &[u16],
-    transparent_index: u8,
-    histogram_to_palette: &[u8],
-) -> Result<(), String> {
-    if histogram_indices.is_empty() {
-        return Err("Indexed pixel stream is empty".to_string());
-    }
-    let pixel_count = histogram_indices.len();
-    let clear_count = pixel_count.div_ceil(254);
-    let raw_length = pixel_count
-        .checked_add(clear_count)
-        .and_then(|codes| codes.checked_add(1))
-        .and_then(|codes| codes.checked_mul(9))
-        .ok_or_else(|| "Encoded GIF size overflow".to_string())?
-        .div_ceil(8);
-    let block_count = raw_length.div_ceil(255);
-    let output_start = output.len();
-    resize_output_uninitialized(output, output_start + 2 + block_count + raw_length);
-    output[output_start] = 8;
-    let mut writer = DirectGifSubblockWriter {
-        output: &mut output[output_start..],
-        position: 2,
-        block_remaining: 255,
-        raw_position: 0,
-    };
-    let mut bits = 0u64;
-    let mut bit_count = 0usize;
-    let histogram_pointer = histogram_indices.as_ptr();
-
-    for chunk_start in (0..pixel_count).step_by(254) {
-        append_nine_bit_literal_code_to_direct(&mut writer, &mut bits, &mut bit_count, 256);
-        let chunk_end = (chunk_start + 254).min(pixel_count);
-        let mut pixel_index = chunk_start;
-        while pixel_index + 14 <= chunk_end {
-            append_nine_bit_histogram_quality_group::<HAS_TRANSPARENT>(
-                &mut writer,
-                &mut bits,
-                &mut bit_count,
-                histogram_pointer,
-                pixel_index,
-                transparent_index,
-                histogram_to_palette,
-            );
-            append_nine_bit_histogram_quality_group::<HAS_TRANSPARENT>(
-                &mut writer,
-                &mut bits,
-                &mut bit_count,
-                histogram_pointer,
-                pixel_index + 7,
-                transparent_index,
-                histogram_to_palette,
-            );
-            pixel_index += 14;
-        }
-        while pixel_index + 7 <= chunk_end {
-            append_nine_bit_histogram_quality_group::<HAS_TRANSPARENT>(
-                &mut writer,
-                &mut bits,
-                &mut bit_count,
-                histogram_pointer,
-                pixel_index,
-                transparent_index,
-                histogram_to_palette,
-            );
-            pixel_index += 7;
-        }
-        while pixel_index < chunk_end {
-            let code = mapped_quality_histogram_pixel::<HAS_TRANSPARENT>(
-                unsafe { *histogram_pointer.add(pixel_index) },
-                transparent_index,
-                histogram_to_palette,
-            );
-            append_nine_bit_literal_code_to_direct(
-                &mut writer,
-                &mut bits,
-                &mut bit_count,
-                u16::from(code),
-            );
-            pixel_index += 1;
-        }
-    }
-    append_nine_bit_literal_code_to_direct(&mut writer, &mut bits, &mut bit_count, 257);
-    while bit_count > 0 {
-        writer.write_byte(bits as u8);
-        bits >>= 8;
-        bit_count = bit_count.saturating_sub(8);
-    }
-    debug_assert_eq!(writer.raw_position, raw_length);
-
-    let mut raw_offset = 0usize;
-    for block in 0..block_count {
-        let length = (raw_length - raw_offset).min(255);
-        unsafe {
-            output
-                .as_mut_ptr()
-                .add(output_start + 1 + block * 256)
-                .write(length as u8);
-        }
-        raw_offset += length;
-    }
-    output[output_start + 1 + block_count + raw_length] = 0;
-    Ok(())
-}
-
-#[inline(always)]
-fn mapped_quality_histogram_pixel<const HAS_TRANSPARENT: bool>(
-    histogram_index: u16,
-    transparent_index: u8,
-    histogram_to_palette: &[u8],
-) -> u8 {
-    if HAS_TRANSPARENT && histogram_index == u16::MAX {
-        transparent_index
-    } else {
-        unsafe { *histogram_to_palette.get_unchecked(usize::from(histogram_index)) }
-    }
 }
 
 #[inline(always)]

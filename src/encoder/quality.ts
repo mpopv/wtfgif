@@ -3,6 +3,7 @@ import { getWasmQualityCoreModule } from "../wasm/qualityRuntime";
 
 const DEFAULT_ALPHA_THRESHOLD = 128;
 const QUALITY_LOW_RES_BYTE_LIMIT = 1_000_000 * 4;
+const QUALITY_INITIAL_INPUT_CAPACITY = 4 * 1024 * 1024;
 
 let scratchModule: WasmQualityCoreModule | null = null;
 let scratchMemory: WebAssembly.Memory | null = null;
@@ -42,9 +43,9 @@ export function prepareQualityWasmEncoderModule(
 	if (module && scratchMemory) {
 		module.prepare_quality_encoder_code();
 		scratchPointer = module.indexed_lzw_input_scratch_reserve(
-			QUALITY_LOW_RES_BYTE_LIMIT,
+			QUALITY_INITIAL_INPUT_CAPACITY,
 		);
-		scratchCapacity = QUALITY_LOW_RES_BYTE_LIMIT;
+		scratchCapacity = QUALITY_INITIAL_INPUT_CAPACITY;
 		// Compile the private JavaScript validation/dispatch function during the
 		// explicit initialization boundary. The sentinel exits before reading
 		// pixels, calling Wasm, or producing image-derived state.

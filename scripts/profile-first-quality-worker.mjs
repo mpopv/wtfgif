@@ -36,7 +36,9 @@ const instanceCompleted = performance.now();
 wasm.__wbindgen_start();
 wasm.prepare_quality_encoder_code?.();
 const startCompleted = performance.now();
-wasm.indexed_lzw_input_scratch_reserve(4_000_000);
+wasm.indexed_lzw_input_scratch_reserve(
+	Number(process.env.PROFILE_INITIAL_INPUT_CAPACITY ?? 4 * 1024 * 1024),
+);
 
 const started = performance.now();
 const inputPointer = wasm.indexed_lzw_input_scratch_reserve(rgba.length);
