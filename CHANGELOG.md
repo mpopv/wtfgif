@@ -4,6 +4,8 @@ All notable changes to wtfgif are documented here.
 
 ## Unreleased
 
+## 3.0.11 - 2026-08-08
+
 - Decode all eight histogram destinations before issuing scattered updates for
   fully opaque spans inside mixed-alpha images. Across 1,200 isolated fresh
   MakeEmoji pairs, the first encode improves by 1.0085x end to end and 1.0093x
@@ -14,9 +16,15 @@ All notable changes to wtfgif are documented here.
   formatting/clippy/tests, all scalar and SIMD Wasm builds, 148 JavaScript/Wasm
   assertions, independent decoder conformance, edge validation, and package
   validation.
+- Refresh the clean 40-process arbitrary-RGBA receipt. Every category remains
+  above 100x at **186.10x-885.75x**, with a **268.97x geometric mean** and
+  **194.93x** on the real MakeEmoji workload.
+- Refresh the 15-process Chrome comparison and generated SVG. wtfgif takes
+  **0.780 ms**; the five alternatives take 98.400-132.890 ms and are
+  **126.15x-170.37x slower**.
 - Simplify the README benchmark explanation while keeping latency and output
-  size together, and clarify why the current clean 3.0.9 receipt measures the
-  unchanged encoder source shipped in 3.0.10.
+  size together, and clarify why the current clean 3.0.10 receipt measures the
+  unchanged encoder source shipped in 3.0.11.
 - Make both generated charts derive their summary text and scaling from the
   committed receipts so future benchmark refreshes cannot leave stale labels.
 

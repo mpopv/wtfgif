@@ -5,7 +5,7 @@ Node.js, browsers, Workers, and edge runtimes. It is deliberately optimized for
 minimum encoding latency, not minimum file size.
 
 On the current 10-workload receipt, the first encode after initialization is
-**188.22×–893.97× faster** than image-q + omggif. The resulting files are
+**186.10×–885.75× faster** than image-q + omggif. The resulting files are
 **1.17×–22.75× larger**. The benchmark includes arbitrary RGBA photographs,
 pixel art, gradients, transparency, noise, tiny animations, and a one-megapixel
 animation—not known palettes or cached results.
@@ -102,9 +102,9 @@ separate check evicts 64 MiB of unrelated memory before encoding and retains
 the same exact-output gains. See
 [`benchmarks/runtime-preparation.json`](benchmarks/runtime-preparation.json).
 
-Across the 10 arbitrary-RGBA workloads, wtfgif is **188.22×–893.97× faster**
-than image-q + omggif, with a **270.56× geometric mean**. The real 128×128
-MakeEmoji workload is **199.35× faster** (0.679 ms vs 135.435 ms). Output files
+Across the 10 arbitrary-RGBA workloads, wtfgif is **186.10×–885.75× faster**
+than image-q + omggif, with a **268.97× geometric mean**. The real 128×128
+MakeEmoji workload is **194.93× faster** (0.680 ms vs 132.552 ms). Output files
 are **1.17×–22.75× larger**, with a **6.50× geometric mean**.
 
 ![wtfgif speedup across the arbitrary-RGBA corpus](docs/corpus-speedup.svg)
@@ -113,9 +113,9 @@ Bar length is speedup over image-q + omggif; every label also reports the
 file-size ratio. Both the chart and values above are generated from the clean
 40-process [`benchmarks/corpus.json`](benchmarks/corpus.json) receipt.
 
-The measured artifact is wtfgif 3.0.9 at clean commit
-`deb3cb7dc3a1da485ff401a40bfca1570183f81b`. Release 3.0.10 contains the same
-encoder source; the intervening commits update receipts, documentation, charts,
+The measured artifact is wtfgif 3.0.10 at clean commit
+`f5ae4ccdf65a8159305bb3411a782a74f198d8e0`. Release 3.0.11 contains the same
+encoder source; the following commit updates receipts, documentation, charts,
 and package metadata only.
 
 ## Browser comparison
@@ -124,8 +124,8 @@ and package metadata only.
 
 These are median first encodes from 15 fresh Chrome processes per encoder on
 the same eight-frame MakeEmoji workload. Package loading and wtfgif
-initialization are outside the clock. wtfgif took **0.760 ms**; the five
-alternatives took **99.425–137.845 ms** and were **130.82×–181.38× slower**.
+initialization are outside the clock. wtfgif took **0.780 ms**; the five
+alternatives took **98.400–132.890 ms** and were **126.15×–170.37× slower**.
 wtfgif emitted 149,689 bytes; the alternatives emitted 39,101–80,869 bytes.
 gif.js worker creation is part of its public timed operation. Exact settings,
 quality results, and raw samples are in [BENCHMARKS.md](BENCHMARKS.md).
