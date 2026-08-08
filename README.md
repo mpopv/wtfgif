@@ -86,32 +86,33 @@ or URL, use `new Blob([gif], { type: "image/gif" })`.
 `wtfgif` is optimized for maximum encoding speed at the cost of larger output
 files. The default benchmark starts a fresh Node process for every sample,
 runs wtfgif's one-time initialization before the clock, and times the first and
-only complete encode. Initialization reserves one generic 4 MiB Wasm input
-arena. It does not inspect or retain source pixels, palettes, or output. It also
-prepares data-independent JavaScript dispatch and Wasm code paths with empty
-sentinels. Initialization enters the real exported Wasm shims, but every codec
-sentinel returns before reading pixels or touching reusable image state. Every
-input byte is copied after the clock starts, and the first real encode still
-begins with cold data scratch. There are no encode warmups or results reused
-between samples. This moves data-independent compilation into page-load
-initialization: the measured median initialization increased from 0.893 ms to
-2.356 ms while the first MakeEmoji encode fell from 1.257 ms to 0.764 ms in the
-separate phase receipt.
+only user-input encode. Initialization reserves one generic 4 MiB Wasm input
+arena and runs fixed, source-independent synthetic inputs through the real
+encoder paths. This gives JavaScript and Wasm their one-time compilation work
+during app startup. It does not inspect, key, or retain user pixels, palettes,
+or encoded results. Every user input byte is copied after the clock starts, and
+no fixture-derived warmup or prior result is reused between samples.
 
-Across the 10-fixture arbitrary-RGBA corpus, `wtfgif` encoded **169.36×–418.68×
-faster** than image-q + omggif, with a **213.62× geometric mean**. The real
-128×128 MakeEmoji workload was **175.44× faster** (0.761 ms vs 133.432 ms).
+That preparation costs about 13 ms once on the benchmark machine. To test that
+the gain is compiled-code preparation rather than hot data cache, the paired
+profiler also touches 64 MiB of unrelated memory between initialization and
+the measured encode. The exact-output gains still hold across MakeEmoji, tiny,
+pixel-art, and one-megapixel inputs. The receipt is
+[`benchmarks/runtime-preparation.json`](benchmarks/runtime-preparation.json).
+
+Across the 10-fixture arbitrary-RGBA corpus, `wtfgif` encoded **177.84×–868.28×
+faster** than image-q + omggif, with a **271.24× geometric mean**. The real
+128×128 MakeEmoji workload was **201.46× faster** (0.679 ms vs 136.766 ms).
 Output files were 1.17×–22.75× larger, with a 6.50× geometric mean.
 These values come from the committed clean
 [`benchmarks/corpus.json`](benchmarks/corpus.json) receipt.
 The encoded artifacts were built from clean commit
-`0a83b7e953be34a24a4fcdd332df9f8e360c4050`; the receipt records the
-pre-release 3.0.8 package metadata, and 3.0.9 changes only packaging and
-documentation after that source commit.
+`e3e290d70e982963e83803529cedf9222ddf53fa`; the receipt records package
+version 3.0.9 and the complete runtime environment.
 
 Every category in this corpus now clears 100× on the first real encode after
 initialization. The narrowest margin is the photographic workload at
-**169.36×**, followed by the one-megapixel workload at **170.51×**. These are
+**177.84×**, followed by the real MakeEmoji workload at **201.46×**. These are
 honest arbitrary images: no known palette, source cache, previous result, or
 reduced-quality mode.
 
@@ -123,8 +124,8 @@ These are median first encodes from 15 fresh Chrome processes per encoder on
 the documented eight-frame small-image workload. Package loading and wtfgif's
 one-time initialization are outside the clock. Output size and quality
 results are reported alongside the raw timings in [BENCHMARKS.md](BENCHMARKS.md).
-On this run, `wtfgif` took **0.850 ms**; the five alternatives took
-**88.755–124.255 ms** and were **104.42×–146.18× slower**. wtfgif emitted
+On this run, `wtfgif` took **0.805 ms**; the five alternatives took
+**98.335–132.500 ms** and were **122.16×–164.60× slower**. wtfgif emitted
 149,689 bytes; the alternatives emitted 39,101–80,869 bytes. For the two
 gif.js implementations, their public API's worker creation is part of the
 timed encode.

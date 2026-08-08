@@ -1,0 +1,73 @@
+{
+	"schemaVersion": 1,
+	"createdAt": "2026-08-08T20:43:25Z",
+	"boundary": "First user-input encode after source-independent runtime preparation. Candidate and baseline use identical Wasm; only the candidate runs fixed synthetic encoder inputs during initialization.",
+	"environment": {
+		"platform": "darwin",
+		"arch": "arm64",
+		"node": "v22.23.2",
+		"cpu": "Apple M3 Pro",
+		"sourceCommit": "b9981cef3b267f94fe9aa248629c25edf2971c3a",
+		"wasmSha256": "3df29ac6d856cd9c49af586b600a56fdf0618004fd2c127a9c1d9460cc6f9a32"
+	},
+	"initialization": {
+		"pairs": 40,
+		"fixture": "makeemoji-real",
+		"baselinePreparationMedianMs": 0.002,
+		"candidatePreparationMedianMs": 12.929,
+		"baselineTotalEncodeMedianMs": 0.817,
+		"candidateTotalEncodeMedianMs": 0.748,
+		"pairedTotalEncodeSpeedup": 1.1302
+	},
+	"coldCache": {
+		"pairsPerFixture": 120,
+		"cacheEvictionBytes": 67108864,
+		"method": "Touch one byte per 64-byte cache line in a new 64 MiB array after initialization and before the encode timer.",
+		"results": [
+			{
+				"fixture": "makeemoji-real",
+				"baselineWasmMedianMs": 0.815,
+				"candidateWasmMedianMs": 0.682,
+				"pairedWasmSpeedup": 1.1784,
+				"baselineTotalMedianMs": 1.209,
+				"candidateTotalMedianMs": 1.027,
+				"pairedTotalSpeedup": 1.1581,
+				"baselineOutputSha256": "e997926c952bf2a374b3304debbe7bacb56894b3990101c996c5426b855c6c2d",
+				"candidateOutputSha256": "e997926c952bf2a374b3304debbe7bacb56894b3990101c996c5426b855c6c2d"
+			},
+			{
+				"fixture": "tiny",
+				"baselineWasmMedianMs": 0.201,
+				"candidateWasmMedianMs": 0.055,
+				"pairedWasmSpeedup": 3.5166,
+				"baselineTotalMedianMs": 0.488,
+				"candidateTotalMedianMs": 0.36,
+				"pairedTotalSpeedup": 1.4805,
+				"baselineOutputSha256": "090ae48597e3d8d0a2eeb5f4e886a1f1f77ce211037c6c29aa3ad2b17f0fdcca",
+				"candidateOutputSha256": "090ae48597e3d8d0a2eeb5f4e886a1f1f77ce211037c6c29aa3ad2b17f0fdcca"
+			},
+			{
+				"fixture": "pixel-art",
+				"baselineWasmMedianMs": 0.167,
+				"candidateWasmMedianMs": 0.06,
+				"pairedWasmSpeedup": 2.7211,
+				"baselineTotalMedianMs": 0.468,
+				"candidateTotalMedianMs": 0.38,
+				"pairedTotalSpeedup": 1.371,
+				"baselineOutputSha256": "757f5bb43934f899c849117f41a102093811e9981b94e0f1b15f29c953444069",
+				"candidateOutputSha256": "757f5bb43934f899c849117f41a102093811e9981b94e0f1b15f29c953444069"
+			},
+			{
+				"fixture": "large",
+				"baselineWasmMedianMs": 4.582,
+				"candidateWasmMedianMs": 2.779,
+				"pairedWasmSpeedup": 1.6374,
+				"baselineTotalMedianMs": 5.197,
+				"candidateTotalMedianMs": 3.249,
+				"pairedTotalSpeedup": 1.5894,
+				"baselineOutputSha256": "07cf25332028a4031240a6607f1e0fa927eebdfad1c3f8800c202916f97292d4",
+				"candidateOutputSha256": "07cf25332028a4031240a6607f1e0fa927eebdfad1c3f8800c202916f97292d4"
+			}
+		]
+	}
+}

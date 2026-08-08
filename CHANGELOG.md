@@ -4,6 +4,24 @@ All notable changes to wtfgif are documented here.
 
 ## Unreleased
 
+- Prepare the quality encoder's real large-input, mixed-alpha, Cartesian-grid,
+  and exact-palette paths with fixed synthetic inputs during explicit Wasm
+  initialization. The preparation is source-independent and retains no user
+  pixels, palettes, or encoded results.
+- Verify the optimization after 64 MiB of cache eviction: paired first
+  user-encode latency improves by 1.16x-1.59x across MakeEmoji, tiny,
+  pixel-art, and one-megapixel fixtures, with byte-for-byte identical GIFs.
+- Refresh the clean 40-process arbitrary-RGBA receipt. Every category remains
+  above 100x at **177.84x-868.28x**, with a **271.24x geometric mean** and
+  **201.46x** on the real MakeEmoji workload.
+- Refresh the 15-process browser comparison and generated SVG. wtfgif takes
+  **0.805 ms**; the five alternatives take 98.335-132.500 ms and are
+  **122.16x-164.60x slower**.
+- Pass the complete release gate: lint, type checking, dependency audit, Rust
+  formatting/clippy/tests, all scalar and SIMD Wasm builds, 148 JavaScript/Wasm
+  assertions, independent decoder conformance, edge validation, and package
+  validation.
+
 ## 3.0.9 - 2026-08-08
 
 - Compile every Wasm function needed by the ordinary first quality encode

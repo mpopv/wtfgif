@@ -368,8 +368,8 @@ try {
 	}
 
 	const receipt = {
-	boundary:
-		"First user-input encode from arbitrary RGBA after package loading and source-independent wtfgif Wasm runtime preparation; zero fixture-derived warmups; includes palette creation, pixel mapping, compression, and output assembly",
+		boundary:
+			"First user-input encode from arbitrary RGBA after package loading and source-independent wtfgif Wasm runtime preparation; zero fixture-derived warmups; includes palette creation, pixel mapping, compression, and output assembly",
 		environment: {
 			browser: browserVersion.trim(),
 			cpu: cpus()[0]?.model ?? "unknown CPU",
