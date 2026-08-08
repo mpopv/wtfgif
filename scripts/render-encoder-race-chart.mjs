@@ -41,7 +41,8 @@ export function renderEncoderRaceChart(receipt) {
 	const width = 960;
 	const labelWidth = 220;
 	const chartLeft = 250;
-	const chartRight = 885;
+	// Leave enough room for the value label after the longest bar.
+	const chartRight = 790;
 	const chartWidth = chartRight - chartLeft;
 	const rowHeight = 50;
 	const firstRowY = 130;

@@ -20,6 +20,10 @@ All notable changes to wtfgif are documented here.
   lower MakeEmoji latency (280 pairs), 13.95% lower pixel-art latency (320
   pairs), and 13.18% lower nearly-static latency (260 pairs). Every compared
   GIF has the same SHA-256 hash as 3.0.7.
+- Refresh the clean 25-process corpus receipt and 15-process Chrome race. The
+  corpus spans **74.17x to 127.55x** with a **95.37x geometric mean**; the real
+  MakeEmoji workload is **112.38x faster**. In fresh Chrome processes, wtfgif
+  takes 1.345 ms and the five alternatives are **62.83x to 89.13x slower**.
 
 ## 3.0.7 - 2026-08-07
 
