@@ -57,6 +57,12 @@ followed by the real MakeEmoji workload at 201.46×.
 No result depends on a known palette, source cache, previous result, or
 reduced-quality mode.
 
+![wtfgif speedup across the arbitrary-RGBA corpus](docs/corpus-speedup.svg)
+
+The chart is generated from the same receipt as the table with
+`npm run bench:charts`. Bar length represents speedup over image-q + omggif;
+the secondary label reports the output file-size ratio.
+
 The baseline uses image-q `rgbquant` palette generation and nearest-color
 mapping followed by omggif LZW. wtfgif uses its global quality quantizer and
 literal LZW. The algorithms can select different indexed pixels, so the receipt
@@ -153,6 +159,12 @@ measures RGB PSNR on source-opaque pixels, and measures binary alpha agreement
 over every pixel. Raw timings and interquartile values are committed in
 [`benchmarks/encoder-race.json`](benchmarks/encoder-race.json); the README chart
 is generated from that receipt by `scripts/render-encoder-race-chart.mjs`.
+
+Regenerate both committed SVG charts from their receipts with:
+
+```bash
+npm run bench:charts
+```
 
 The adapters use each package's highest-color normal path:
 

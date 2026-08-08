@@ -21,6 +21,8 @@ All notable changes to wtfgif are documented here.
   formatting/clippy/tests, all scalar and SIMD Wasm builds, 148 JavaScript/Wasm
   assertions, independent decoder conformance, edge validation, and package
   validation.
+- Add generated corpus and browser comparison charts whose speed, output-size,
+  workload, and timing-boundary labels come directly from committed receipts.
 
 ## 3.0.9 - 2026-08-08
 

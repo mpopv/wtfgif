@@ -116,6 +116,13 @@ initialization. The narrowest margin is the photographic workload at
 honest arbitrary images: no known palette, source cache, previous result, or
 reduced-quality mode.
 
+![wtfgif speedup across the arbitrary-RGBA corpus](docs/corpus-speedup.svg)
+
+Bar length is speedup over image-q + omggif. Each label also shows the emitted
+file-size ratio, because wtfgif deliberately trades compression ratio for
+encoding latency. The chart is generated directly from
+[`benchmarks/corpus.json`](benchmarks/corpus.json).
+
 ## Browser comparison
 
 ![Browser GIF encoder benchmark](docs/encoder-race.svg)
@@ -137,6 +144,7 @@ and the chart above is generated from it by
 ```bash
 npm run bench
 npm run bench:race
+npm run bench:charts
 ```
 
 Exact conditions, raw samples, output sizes, PSNR, SSIM, independent-decoder
