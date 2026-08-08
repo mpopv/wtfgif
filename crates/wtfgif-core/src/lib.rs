@@ -8008,6 +8008,61 @@ fn accumulate_quality_histogram_u32_bits_remaining_mixed_transparent_dense<const
     has_transparent_pixels
 }
 
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[inline(never)]
+/// Skip 32-pixel canvas blocks whose alpha bytes are all exactly zero. The
+/// ordinary mixed-alpha scanner handles every nonzero block and the tail, so
+/// threshold semantics and histogram sums remain identical.
+fn accumulate_quality_histogram_u32_bits_remaining_mixed_zero_dense<const BITS: usize>(
+    histogram: &mut [RgbHistogramBin32],
+    rgba_stream: &[u8],
+    start_offset: usize,
+    alpha_threshold: u8,
+) -> bool {
+    use core::arch::wasm32::{u32x4_shr, v128_any_true, v128_load, v128_or};
+
+    let rgba_pointer = rgba_stream.as_ptr();
+    let mut has_transparent_pixels = false;
+    let mut offset = start_offset;
+    while offset + 128 <= rgba_stream.len() {
+        let pixels03 = unsafe { v128_load(rgba_pointer.add(offset).cast()) };
+        let pixels47 = unsafe { v128_load(rgba_pointer.add(offset + 16).cast()) };
+        let pixels811 = unsafe { v128_load(rgba_pointer.add(offset + 32).cast()) };
+        let pixels1215 = unsafe { v128_load(rgba_pointer.add(offset + 48).cast()) };
+        let pixels1619 = unsafe { v128_load(rgba_pointer.add(offset + 64).cast()) };
+        let pixels2023 = unsafe { v128_load(rgba_pointer.add(offset + 80).cast()) };
+        let pixels2427 = unsafe { v128_load(rgba_pointer.add(offset + 96).cast()) };
+        let pixels2831 = unsafe { v128_load(rgba_pointer.add(offset + 112).cast()) };
+        let combined = v128_or(
+            v128_or(v128_or(pixels03, pixels47), v128_or(pixels811, pixels1215)),
+            v128_or(
+                v128_or(pixels1619, pixels2023),
+                v128_or(pixels2427, pixels2831),
+            ),
+        );
+        if !v128_any_true(u32x4_shr(combined, 24)) {
+            has_transparent_pixels = true;
+            offset += 128;
+            continue;
+        }
+        has_transparent_pixels |=
+            accumulate_quality_histogram_u32_bits_remaining_mixed_transparent_dense::<BITS>(
+                histogram,
+                &rgba_stream[offset..offset + 32],
+                0,
+                alpha_threshold,
+            );
+        offset += 32;
+    }
+    has_transparent_pixels
+        | accumulate_quality_histogram_u32_bits_remaining_mixed_transparent_dense::<BITS>(
+            histogram,
+            rgba_stream,
+            offset,
+            alpha_threshold,
+        )
+}
+
 #[inline(never)]
 fn accumulate_quality_histogram_u32_bits_remaining_mixed<const BITS: usize>(
     histogram: &mut [RgbHistogramBin32],
@@ -8019,6 +8074,15 @@ fn accumulate_quality_histogram_u32_bits_remaining_mixed<const BITS: usize>(
     // Transparent-canvas inputs conventionally begin in the clear background.
     // Dispatch once so sparse foregrounds skip clear blocks without charging
     // mixed/opaque-leading images for a SIMD alpha mask on every block.
+    if rgba_stream.get(start_offset + 3) == Some(&0) {
+        return accumulate_quality_histogram_u32_bits_remaining_mixed_zero_dense::<BITS>(
+            histogram,
+            rgba_stream,
+            start_offset,
+            alpha_threshold,
+        );
+    }
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     if rgba_stream
         .get(start_offset + 3)
         .is_some_and(|alpha| *alpha < alpha_threshold)

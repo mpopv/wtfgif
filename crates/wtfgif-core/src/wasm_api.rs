@@ -166,6 +166,15 @@ pub fn prepare_quality_encoder_code() {
     let mut histogram = [];
     let mixed =
         accumulate_quality_histogram_u32_bits_remaining_mixed::<4>(&mut histogram, empty, 0, 128);
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    let zero_dense = accumulate_quality_histogram_u32_bits_remaining_mixed_zero_dense::<4>(
+        &mut histogram,
+        empty,
+        0,
+        128,
+    );
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+    let zero_dense = false;
     let opaque = accumulate_quality_histogram_u32_bits_remaining_opaque::<4, false, false>(
         &mut histogram,
         empty,
@@ -276,6 +285,7 @@ pub fn prepare_quality_encoder_code() {
             ^ usize::from(impossible)
             ^ usize::from(alpha_255)
             ^ usize::from(mixed)
+            ^ usize::from(zero_dense)
             ^ usize::from(opaque)
             ^ usize::from(opaque_lzw.is_ok())
             ^ usize::from(alpha_lzw.is_ok())
