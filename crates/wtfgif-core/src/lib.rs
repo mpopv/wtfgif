@@ -7086,11 +7086,8 @@ fn index_rgba_frames_quality_low_res_quantized_sampled_opaque(
     const HISTOGRAM_BITS: usize = 4;
     const HISTOGRAM_LEN: usize = 1 << (HISTOGRAM_BITS * 3);
     let mut histogram = take_quality_histogram_u32(HISTOGRAM_LEN);
-    let all_alpha_255 = accumulate_quality_histogram_u32_bits_remaining_opaque::<
-        HISTOGRAM_BITS,
-        false,
-        true,
-    >(&mut histogram, rgba_stream, 0, &mut []);
+    let all_alpha_255 =
+        accumulate_quality_histogram_u32_bits_opaque_adaptive::<true>(&mut histogram, rgba_stream);
     let has_transparent_pixels = if all_alpha_255 {
         false
     } else {
@@ -8277,6 +8274,93 @@ fn accumulate_quality_histogram_u32_bits_remaining_opaque<
         offset += 4;
     }
     all_alpha_255
+}
+
+#[inline(always)]
+fn add_quality_histogram_u32_pair_packed_split<const BITS: usize>(
+    histogram: &mut [RgbHistogramBin32],
+    packed: u64,
+) {
+    let packed0 = packed as u32;
+    let packed1 = (packed >> 32) as u32;
+    let (index0, index1) = quality_histogram_index_pair_packed::<BITS>(packed);
+    add_quality_histogram_u32_bits_indexed(histogram, packed0, index0);
+    add_quality_histogram_u32_bits_indexed(histogram, packed1, index1);
+}
+
+#[inline(never)]
+fn accumulate_quality_histogram_u32_bits_remaining_opaque_split<const PROBE_ALPHA: bool>(
+    histogram: &mut [RgbHistogramBin32],
+    rgba_stream: &[u8],
+    start_offset: usize,
+) -> bool {
+    let rgba_pointer = rgba_stream.as_ptr();
+    const ALPHA_MASK: u64 = 0xff00_0000_ff00_0000;
+    let mut all_alpha_255 = true;
+    let mut offset = start_offset;
+    while offset + 32 <= rgba_stream.len() {
+        let packed01 =
+            u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset).cast()) });
+        let packed23 =
+            u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 8).cast()) });
+        let packed45 =
+            u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 16).cast()) });
+        let packed67 =
+            u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 24).cast()) });
+        if PROBE_ALPHA {
+            all_alpha_255 &= (packed01 & packed23 & packed45 & packed67) & ALPHA_MASK == ALPHA_MASK;
+        }
+        add_quality_histogram_u32_pair_packed_split::<4>(histogram, packed01);
+        add_quality_histogram_u32_pair_packed_split::<4>(histogram, packed23);
+        add_quality_histogram_u32_pair_packed_split::<4>(histogram, packed45);
+        add_quality_histogram_u32_pair_packed_split::<4>(histogram, packed67);
+        offset += 32;
+    }
+    while offset < rgba_stream.len() {
+        let packed =
+            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset).cast()) });
+        if PROBE_ALPHA && (packed >> 24) as u8 != u8::MAX {
+            all_alpha_255 = false;
+        }
+        add_quality_histogram_u32_bits_const::<4>(histogram, packed);
+        offset += 4;
+    }
+    all_alpha_255
+}
+
+/// A repeated leading pair followed by variation is a cheap signal for the
+/// mixed runs that make the ordinary pair-coalescing branch unpredictable.
+/// Both complete passes build identical bins; two read-only pair probes keep
+/// the selected hot loop aligned at byte zero.
+#[inline(always)]
+fn accumulate_quality_histogram_u32_bits_opaque_adaptive<const PROBE_ALPHA: bool>(
+    histogram: &mut [RgbHistogramBin32],
+    rgba_stream: &[u8],
+) -> bool {
+    const VARIATION_PROBE_OFFSET: usize = 12 * 4;
+    const PROBE_BYTES: usize = 16 * 4;
+    let split_pairs = rgba_stream.len() >= PROBE_BYTES && {
+        let rgba_pointer = rgba_stream.as_ptr();
+        let first = u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.cast()) });
+        let later = u64::from_le(unsafe {
+            std::ptr::read_unaligned(rgba_pointer.add(VARIATION_PROBE_OFFSET).cast())
+        });
+        first as u32 == (first >> 32) as u32 && later as u32 != (later >> 32) as u32
+    };
+    if split_pairs {
+        accumulate_quality_histogram_u32_bits_remaining_opaque_split::<PROBE_ALPHA>(
+            histogram,
+            rgba_stream,
+            0,
+        )
+    } else {
+        accumulate_quality_histogram_u32_bits_remaining_opaque::<4, false, PROBE_ALPHA>(
+            histogram,
+            rgba_stream,
+            0,
+            &mut [],
+        )
+    }
 }
 
 fn index_rgba_frames_quality_u32<const BITS: usize>(

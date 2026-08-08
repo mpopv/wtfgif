@@ -635,6 +635,45 @@ fn uniform_run_hint_is_conservative_and_keeps_the_small_palette_route_exact() {
 }
 
 #[test]
+fn adaptive_histogram_matches_the_general_pair_scan() {
+    for matching_probe_pairs in [0usize, 7, 8] {
+        let mut rgba: Vec<u8> = (0..4_096u32)
+            .flat_map(|pixel| {
+                [
+                    pixel.wrapping_mul(17) as u8,
+                    pixel.wrapping_mul(31) as u8,
+                    pixel.wrapping_mul(47) as u8,
+                    255,
+                ]
+            })
+            .collect();
+        for pair in 0..matching_probe_pairs {
+            let first = pair * 8;
+            rgba.copy_within(first..first + 4, first + 4);
+        }
+        rgba[100 * 4 + 3] = 17;
+        let mut expected = vec![RgbHistogramBin32::default(); 1 << 12];
+        let mut actual = vec![RgbHistogramBin32::default(); 1 << 12];
+        let expected_alpha = accumulate_quality_histogram_u32_bits_remaining_opaque::<4, false, true>(
+            &mut expected,
+            &rgba,
+            0,
+            &mut [],
+        );
+        let actual_alpha =
+            accumulate_quality_histogram_u32_bits_opaque_adaptive::<true>(&mut actual, &rgba);
+        assert_eq!(actual_alpha, expected_alpha);
+        assert!(!actual_alpha);
+        for (expected, actual) in expected.iter().zip(&actual) {
+            assert_eq!(
+                (expected.count, expected.red, expected.green, expected.blue),
+                (actual.count, actual.red, actual.green, actual.blue)
+            );
+        }
+    }
+}
+
+#[test]
 fn transparent_long_sample_can_prove_quantization_without_an_occupancy_scan() {
     let pixel_count = 40_000usize;
     let mut rgba = [0, 0, 0, 0].repeat(pixel_count);
