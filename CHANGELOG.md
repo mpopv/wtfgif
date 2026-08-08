@@ -4,6 +4,17 @@ All notable changes to wtfgif are documented here.
 
 ## Unreleased
 
+## 3.0.9 - 2026-08-08
+
+- Compile every Wasm function needed by the ordinary first quality encode
+  during explicit initialization using only empty, data-independent sentinels.
+  The real exported encoder and output-pointer shims are entered, but no source
+  pixels are read and no palette, histogram, mapping table, or output is
+  retained. A lazy-compilation trace now shows zero Liftoff compilations after
+  the timed encode begins. Across 500 paired fresh MakeEmoji processes, the
+  first encode is 1.23x faster with the exact same GIF hash. Initialization
+  increases from 0.893 ms to 2.356 ms while the separate first-encode phase
+  falls from 1.257 ms to 0.764 ms.
 - Map high-resolution quantized pixels directly from RGBA while writing literal
   LZW instead of retaining one 16-bit histogram cell per pixel. This removes
   the obsolete full-image scratch path and about 800 net lines of code, shrinks
@@ -76,12 +87,12 @@ All notable changes to wtfgif are documented here.
   by 857 bytes and improves paired fresh-process tiny by a further 4.7% and
   noise by 1.3%, with identical GIF bytes.
 - Refresh the clean 40-process arbitrary-RGBA receipt. Every category now
-  exceeds 100x on its first real encode after initialization: **144.13x to
-  311.99x**, with a **180.90x geometric mean** and **144.13x** on the real
+  exceeds 100x on its first real encode after initialization: **169.36x to
+  418.68x**, with a **213.62x geometric mean** and **175.44x** on the real
   MakeEmoji workload.
 - Refresh the 15-process Chrome comparison and generated SVG. wtfgif takes
-  **1.095 ms**; the five alternatives take 88.775-123.400 ms and are
-  **81.07x-112.69x slower**.
+  **0.850 ms**; the five alternatives take 88.755-124.255 ms and are
+  **104.42x-146.18x slower**.
 - Pass the complete release gate: lint, type checking, dependency audit, Rust
   formatting/clippy/tests, all scalar and SIMD Wasm builds, 148 JavaScript/Wasm
   assertions, independent decoder conformance, edge validation, and package
