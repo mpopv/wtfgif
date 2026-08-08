@@ -4,6 +4,16 @@ All notable changes to wtfgif are documented here.
 
 ## Unreleased
 
+- Map high-resolution quantized pixels directly from RGBA while writing literal
+  LZW instead of retaining one 16-bit histogram cell per pixel. This removes
+  the obsolete full-image scratch path and about 800 net lines of code, shrinks
+  the SIMD quality Wasm by 17.5 KB, and improves the one-megapixel fresh-process
+  encode by 19.4%. Five adversarial megapixel inputs retain identical frame
+  metadata and a maximum decoded-channel difference of zero.
+- Reserve a true 4 MiB source-independent Wasm input arena during explicit
+  initialization. The one-megapixel fixture contains exactly 4 MiB of RGBA, so
+  this avoids a timed memory growth that the prior decimal 4 MB reservation
+  missed without inspecting or retaining source pixels.
 - Prepare the public encoder's data-independent JavaScript validation and
   dispatch during explicit initialization. Its private empty sentinel returns
   before reading pixels, calling Wasm, or creating output state, so the timed
@@ -50,12 +60,12 @@ All notable changes to wtfgif are documented here.
   avoids redundant scans and bit packing without changing decoded pixels or
   corpus GIF hashes.
 - Refresh the clean 40-process arbitrary-RGBA receipt. Every category now
-  exceeds 100x on its first real encode after initialization: **133.64x to
-  289.90x**, with a **174.29x geometric mean** and **139.74x** on the real
+  exceeds 100x on its first real encode after initialization: **143.40x to
+  298.14x**, with a **183.12x geometric mean** and **143.40x** on the real
   MakeEmoji workload.
 - Refresh the 15-process Chrome comparison and generated SVG. wtfgif takes
-  **1.075 ms**; the five alternatives take 92.655-126.180 ms and are
-  **86.19x-117.38x slower**.
+  **1.135 ms**; the five alternatives take 86.730-123.120 ms and are
+  **76.41x-108.48x slower**.
 - Pass the complete release gate: lint, type checking, dependency audit, Rust
   formatting/clippy/tests, all scalar and SIMD Wasm builds, 148 JavaScript/Wasm
   assertions, independent decoder conformance, edge validation, and package
