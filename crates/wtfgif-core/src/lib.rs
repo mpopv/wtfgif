@@ -7791,6 +7791,8 @@ fn accumulate_quality_histogram_u32_bits_remaining_mixed_opaque_spans_four_bit(
             add_quality_histogram_u32_pair_packed::<4>(histogram, packed23);
             add_quality_histogram_u32_pair_packed::<4>(histogram, packed45);
             add_quality_histogram_u32_pair_packed::<4>(histogram, packed67);
+        } else if (packed01 | packed23 | packed45 | packed67) & ALPHA_MASK == 0 {
+            has_transparent_pixels = true;
         } else {
             has_transparent_pixels |= add_quality_histogram_u32_pair_packed_with_alpha::<4>(
                 histogram,
