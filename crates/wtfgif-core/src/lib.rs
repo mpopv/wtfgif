@@ -4413,7 +4413,11 @@ fn encode_rgba_quality_low_res_exact_gif_inner_with_output<const COALESCE_RUNS: 
             return encoded;
         }
     }
-    match index_rgba_frames_quality_low_res_exact::<COALESCE_RUNS>(rgba_stream, alpha_threshold) {
+    match index_rgba_frames_quality_low_res_exact::<COALESCE_RUNS>(
+        rgba_stream,
+        alpha_threshold,
+        usize::from(width),
+    ) {
         QualityIndexResult::Exact((palette, indexed, transparent_index)) => {
             let encoded = encode_indexed_literal_gif_inner_with_output_unchecked(
                 output,
@@ -6560,7 +6564,7 @@ fn index_rgba_frames_quality_low_res(
             take_quality_palette(256),
         ));
     }
-    index_rgba_frames_quality_low_res_exact::<false>(rgba_stream, alpha_threshold)
+    index_rgba_frames_quality_low_res_exact::<false>(rgba_stream, alpha_threshold, 0)
 }
 
 /// The delta encoder is already a distinct advanced path, so give flat source
@@ -6583,7 +6587,7 @@ fn index_rgba_frames_quality_low_res_delta(
             take_quality_palette(256),
         ))
     } else {
-        index_rgba_frames_quality_low_res_exact::<true>(rgba_stream, alpha_threshold)
+        index_rgba_frames_quality_low_res_exact::<true>(rgba_stream, alpha_threshold, 0)
     };
     match result {
         QualityIndexResult::Exact(exact) => exact,
@@ -6789,10 +6793,112 @@ fn quality_low_res_hints(rgba_stream: &[u8], alpha_threshold: u8) -> QualityLowR
     }
 }
 
+#[inline(always)]
+fn rgba_run_end(
+    rgba_pointer: *const u8,
+    pixel_index: usize,
+    pixel_count: usize,
+    packed: u32,
+) -> usize {
+    let mut run_end = pixel_index;
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        use core::arch::wasm32::{u32x4_splat, v128_any_true, v128_load, v128_xor};
+
+        let repeated = u32x4_splat(packed);
+        while run_end + 4 <= pixel_count {
+            let block = unsafe { v128_load(rgba_pointer.add(run_end * 4).cast()) };
+            if v128_any_true(v128_xor(block, repeated)) {
+                break;
+            }
+            run_end += 4;
+        }
+    }
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+    {
+        let repeated = u128::from(packed) * 0x0000_0001_0000_0001_0000_0001_0000_0001;
+        while run_end + 4 <= pixel_count {
+            let block = u128::from_le(unsafe {
+                std::ptr::read_unaligned(rgba_pointer.add(run_end * 4).cast())
+            });
+            if block != repeated {
+                break;
+            }
+            run_end += 4;
+        }
+    }
+    if run_end == pixel_index {
+        run_end += 1;
+    }
+    while run_end < pixel_count {
+        let next =
+            u32::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(run_end * 4).cast()) });
+        if next != packed {
+            break;
+        }
+        run_end += 1;
+    }
+    run_end
+}
+
+#[inline(always)]
+unsafe fn write_index_run(output: *mut u8, index: u8, length: usize) {
+    if length > 16 {
+        unsafe { std::ptr::write_bytes(output, index, length) };
+        return;
+    }
+    let repeated = u64::from(index) * 0x0101_0101_0101_0101;
+    let mut offset = 0usize;
+    while offset + 8 <= length {
+        unsafe { std::ptr::write_unaligned(output.add(offset).cast(), repeated) };
+        offset += 8;
+    }
+    if offset + 4 <= length {
+        unsafe { std::ptr::write_unaligned(output.add(offset).cast(), repeated as u32) };
+        offset += 4;
+    }
+    if offset + 2 <= length {
+        unsafe { std::ptr::write_unaligned(output.add(offset).cast(), repeated as u16) };
+        offset += 2;
+    }
+    if offset < length {
+        unsafe { output.add(offset).write(index) };
+    }
+}
+
+#[inline(always)]
+fn rgba_ranges_equal(left: *const u8, right: *const u8, pixel_count: usize) -> bool {
+    let byte_count = pixel_count * 4;
+    let mut offset = 0usize;
+    while offset + 64 <= byte_count {
+        if !rgba_blocks_equal_64(unsafe { left.add(offset) }, unsafe { right.add(offset) }) {
+            return false;
+        }
+        offset += 64;
+    }
+    while offset + 16 <= byte_count {
+        if !rgba_blocks_equal_16(unsafe { left.add(offset) }, unsafe { right.add(offset) }) {
+            return false;
+        }
+        offset += 16;
+    }
+    while offset < byte_count {
+        let left_pixel = u32::from_le(unsafe { std::ptr::read_unaligned(left.add(offset).cast()) });
+        let right_pixel =
+            u32::from_le(unsafe { std::ptr::read_unaligned(right.add(offset).cast()) });
+        if left_pixel != right_pixel {
+            return false;
+        }
+        offset += 4;
+    }
+    true
+}
+
 #[inline(never)]
 fn index_rgba_frames_quality_low_res_exact<const COALESCE_RUNS: bool>(
     rgba_stream: &[u8],
     alpha_threshold: u8,
+    row_pixel_count: usize,
 ) -> QualityIndexResult {
     let pixel_count = rgba_stream.len() / 4;
     // The initialization hook enters with an empty stream solely to compile
@@ -6822,19 +6928,30 @@ fn index_rgba_frames_quality_low_res_exact<const COALESCE_RUNS: bool>(
     if COALESCE_RUNS {
         let mut pixel_index = 0usize;
         while pixel_index < pixel_count {
+            if row_pixel_count > 0
+                && pixel_index >= row_pixel_count
+                && pixel_index + row_pixel_count <= pixel_count
+                && pixel_index.is_multiple_of(row_pixel_count)
+                && rgba_ranges_equal(
+                    unsafe { rgba_pointer.add(pixel_index * 4) },
+                    unsafe { rgba_pointer.add((pixel_index - row_pixel_count) * 4) },
+                    row_pixel_count,
+                )
+            {
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        indexed_pointer.add(pixel_index - row_pixel_count),
+                        indexed_pointer.add(pixel_index),
+                        row_pixel_count,
+                    );
+                }
+                pixel_index += row_pixel_count;
+                continue;
+            }
             let packed = u32::from_le(unsafe {
                 std::ptr::read_unaligned(rgba_pointer.add(pixel_index * 4).cast())
             });
-            let mut run_end = pixel_index + 1;
-            while run_end < pixel_count {
-                let next = u32::from_le(unsafe {
-                    std::ptr::read_unaligned(rgba_pointer.add(run_end * 4).cast())
-                });
-                if next != packed {
-                    break;
-                }
-                run_end += 1;
-            }
+            let run_end = rgba_run_end(rgba_pointer, pixel_index, pixel_count, packed);
             let run_length = run_end - pixel_index;
             let alpha = (packed >> 24) as u8;
             let index = if alpha < alpha_threshold {
@@ -6860,7 +6977,7 @@ fn index_rgba_frames_quality_low_res_exact<const COALESCE_RUNS: bool>(
                     index
                 }
             };
-            unsafe { std::ptr::write_bytes(indexed_pointer.add(pixel_index), index, run_length) };
+            unsafe { write_index_run(indexed_pointer.add(pixel_index), index, run_length) };
             pixel_index = run_end;
         }
     } else {

@@ -546,16 +546,79 @@ fn quality_exact_direct_buffer_preserves_runs_and_transparency() {
         expected.push(if transparent { 3 } else { color_index as u8 });
     }
 
-    let QualityIndexResult::Exact((palette, indexed, transparent_index)) =
-        index_rgba_frames_quality_low_res_exact::<false>(&rgba, TRANSPARENT_ALPHA_THRESHOLD)
+    for result in [
+        index_rgba_frames_quality_low_res_exact::<false>(&rgba, TRANSPARENT_ALPHA_THRESHOLD, 0),
+        index_rgba_frames_quality_low_res_exact::<true>(&rgba, TRANSPARENT_ALPHA_THRESHOLD, 0),
+    ] {
+        let QualityIndexResult::Exact((palette, indexed, transparent_index)) = result else {
+            panic!("three opaque colors plus transparency must remain exact");
+        };
+        assert_eq!(palette, vec![0xf02010, 0x10e030, 0x2040f0, 0]);
+        assert_eq!(transparent_index, Some(3));
+        assert_eq!(indexed, expected);
+        recycle_quality_palette(palette);
+        recycle_quantized_indexed(indexed);
+    }
+}
+
+#[test]
+fn rgba_run_end_matches_scalar_boundaries() {
+    const RUN_PIXEL: u32 = 0xff30_2010;
+    const OTHER_PIXEL: u32 = 0xff60_5040;
+    for prefix in 0..5usize {
+        for run_length in 1..20usize {
+            let mut pixels = vec![OTHER_PIXEL; prefix];
+            pixels.extend(std::iter::repeat_n(RUN_PIXEL, run_length));
+            pixels.push(OTHER_PIXEL);
+            let mut rgba = Vec::with_capacity(pixels.len() * 4);
+            for pixel in pixels {
+                rgba.extend_from_slice(&pixel.to_le_bytes());
+            }
+            assert_eq!(
+                rgba_run_end(rgba.as_ptr(), prefix, rgba.len() / 4, RUN_PIXEL),
+                prefix + run_length,
+                "prefix {prefix}, run length {run_length}",
+            );
+        }
+    }
+
+    let rgba = RUN_PIXEL.to_le_bytes().repeat(17);
+    assert_eq!(rgba_run_end(rgba.as_ptr(), 0, 17, RUN_PIXEL), 17);
+}
+
+#[test]
+fn exact_row_reuse_matches_full_run_scan() {
+    const WIDTH: usize = 17;
+    let mut first_row = Vec::with_capacity(WIDTH * 4);
+    for x in 0..WIDTH {
+        let color = if x < 8 {
+            [0x10, 0x20, 0x30, 255]
+        } else {
+            [0x90, 0x80, 0x70, 255]
+        };
+        first_row.extend_from_slice(&color);
+    }
+    first_row[5 * 4 + 3] = 0;
+    let mut rgba = first_row.repeat(3);
+    rgba[(WIDTH * 2 + 12) * 4..(WIDTH * 2 + 12) * 4 + 4].copy_from_slice(&[0x40, 0x50, 0x60, 255]);
+
+    let QualityIndexResult::Exact(without_reuse) =
+        index_rgba_frames_quality_low_res_exact::<true>(&rgba, TRANSPARENT_ALPHA_THRESHOLD, 0)
     else {
-        panic!("three opaque colors plus transparency must remain exact");
+        panic!("test image must remain exact");
     };
-    assert_eq!(palette, vec![0xf02010, 0x10e030, 0x2040f0, 0]);
-    assert_eq!(transparent_index, Some(3));
-    assert_eq!(indexed, expected);
-    recycle_quality_palette(palette);
-    recycle_quantized_indexed(indexed);
+    let QualityIndexResult::Exact(with_reuse) =
+        index_rgba_frames_quality_low_res_exact::<true>(&rgba, TRANSPARENT_ALPHA_THRESHOLD, WIDTH)
+    else {
+        panic!("test image must remain exact with row reuse");
+    };
+    assert_eq!(with_reuse.0, without_reuse.0);
+    assert_eq!(with_reuse.1, without_reuse.1);
+    assert_eq!(with_reuse.2, without_reuse.2);
+    recycle_quality_palette(without_reuse.0);
+    recycle_quantized_indexed(without_reuse.1);
+    recycle_quality_palette(with_reuse.0);
+    recycle_quantized_indexed(with_reuse.1);
 }
 
 #[test]

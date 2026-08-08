@@ -184,8 +184,8 @@ pub fn prepare_quality_encoder_code() {
     recycle_quality_palette(merge_plan.palette);
     recycle_quality_histogram_to_palette(merge_plan.histogram_to_palette);
     for result in [
-        index_rgba_frames_quality_low_res_exact::<false>(empty, 128),
-        index_rgba_frames_quality_low_res_exact::<true>(empty, 128),
+        index_rgba_frames_quality_low_res_exact::<false>(empty, 128, 0),
+        index_rgba_frames_quality_low_res_exact::<true>(empty, 128, 0),
     ] {
         match result {
             QualityIndexResult::Exact((palette, indexed, _)) => {
