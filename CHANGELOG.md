@@ -28,6 +28,10 @@ All notable changes to wtfgif are documented here.
   that an eight-pixel group is fully opaque in the SIMD four-bit mixed
   histogram. Any group containing a non-255 alpha value retains the exact
   pairwise threshold path, and accepted GIF bytes remain unchanged.
+- Skip the remaining pairwise alpha checks when one packed decision proves an
+  eight-pixel mixed-histogram group is entirely clear. The real MakeEmoji
+  workload is 1.68% faster over 500 paired fresh processes, with identical GIF
+  bytes and no credible regression across the other nine corpus categories.
 - Seed dense SIMD nearest-palette mapping from the exact Wu-cube candidates,
   then skip red slices and red/green rows whose distance lower bound cannot
   beat any requested cell. Full-occupancy tables retain the original dense
@@ -64,12 +68,12 @@ All notable changes to wtfgif are documented here.
   avoids redundant scans and bit packing without changing decoded pixels or
   corpus GIF hashes.
 - Refresh the clean 40-process arbitrary-RGBA receipt. Every category now
-  exceeds 100x on its first real encode after initialization: **143.57x to
-  287.16x**, with a **183.44x geometric mean** and **143.57x** on the real
+  exceeds 100x on its first real encode after initialization: **150.75x to
+  295.82x**, with a **184.18x geometric mean** and **150.80x** on the real
   MakeEmoji workload.
 - Refresh the 15-process Chrome comparison and generated SVG. wtfgif takes
-  **1.070 ms**; the five alternatives take 92.645-128.090 ms and are
-  **86.58x-119.71x slower**.
+  **1.095 ms**; the five alternatives take 99.055-135.800 ms and are
+  **90.46x-124.02x slower**.
 - Pass the complete release gate: lint, type checking, dependency audit, Rust
   formatting/clippy/tests, all scalar and SIMD Wasm builds, 148 JavaScript/Wasm
   assertions, independent decoder conformance, edge validation, and package
