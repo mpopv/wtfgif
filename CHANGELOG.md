@@ -4,6 +4,8 @@ All notable changes to wtfgif are documented here.
 
 ## Unreleased
 
+## 3.0.10 - 2026-08-08
+
 - Prepare the quality encoder's real large-input, mixed-alpha, Cartesian-grid,
   and exact-palette paths with fixed synthetic inputs during explicit Wasm
   initialization. The preparation is source-independent and retains no user
