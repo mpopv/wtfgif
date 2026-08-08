@@ -4380,9 +4380,11 @@ fn encode_rgba_quality_low_res_exact_gif_inner_with_output<const COALESCE_RUNS: 
         usize::from(width) * usize::from(height) * frame_count * 4
     );
     if try_small_palette {
-        if let Some((palette, indexed, transparent_index)) =
-            index_rgba_frames_quality_small_exact(rgba_stream, alpha_threshold)
-        {
+        if let Some((palette, indexed, transparent_index)) = index_rgba_frames_quality_small_exact(
+            rgba_stream,
+            alpha_threshold,
+            usize::from(width) * usize::from(height),
+        ) {
             let encoded = encode_indexed_literal_gif_inner_with_output_unchecked(
                 output,
                 &indexed,
@@ -4430,13 +4432,70 @@ fn encode_rgba_quality_low_res_exact_gif_inner_with_output<const COALESCE_RUNS: 
     }
 }
 
+#[inline(always)]
+fn rgba_blocks_equal_16(left: *const u8, right: *const u8) -> bool {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        use core::arch::wasm32::{v128_any_true, v128_load, v128_xor};
+        let left = unsafe { v128_load(left.cast()) };
+        let right = unsafe { v128_load(right.cast()) };
+        !v128_any_true(v128_xor(left, right))
+    }
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+    {
+        let left = unsafe { std::ptr::read_unaligned(left.cast::<u128>()) };
+        let right = unsafe { std::ptr::read_unaligned(right.cast::<u128>()) };
+        left == right
+    }
+}
+
+#[inline(always)]
+fn rgba_blocks_equal_64(left: *const u8, right: *const u8) -> bool {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        use core::arch::wasm32::{v128_any_true, v128_load, v128_or, v128_xor};
+        let difference0 = v128_xor(unsafe { v128_load(left.cast()) }, unsafe {
+            v128_load(right.cast())
+        });
+        let difference1 = v128_xor(unsafe { v128_load(left.add(16).cast()) }, unsafe {
+            v128_load(right.add(16).cast())
+        });
+        let difference2 = v128_xor(unsafe { v128_load(left.add(32).cast()) }, unsafe {
+            v128_load(right.add(32).cast())
+        });
+        let difference3 = v128_xor(unsafe { v128_load(left.add(48).cast()) }, unsafe {
+            v128_load(right.add(48).cast())
+        });
+        !v128_any_true(v128_or(
+            v128_or(difference0, difference1),
+            v128_or(difference2, difference3),
+        ))
+    }
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+    {
+        rgba_blocks_equal_16(left, right)
+            && rgba_blocks_equal_16(unsafe { left.add(16) }, unsafe { right.add(16) })
+            && rgba_blocks_equal_16(unsafe { left.add(32) }, unsafe { right.add(32) })
+            && rgba_blocks_equal_16(unsafe { left.add(48) }, unsafe { right.add(48) })
+    }
+}
+
 #[inline(never)]
 fn index_rgba_frames_quality_small_exact(
     rgba_stream: &[u8],
     alpha_threshold: u8,
+    frame_pixel_count: usize,
 ) -> Option<(Vec<u32>, Vec<u8>, Option<u8>)> {
     const SMALL_COLOR_LIMIT: usize = 16;
     let pixel_count = rgba_stream.len() / 4;
+    debug_assert!(frame_pixel_count > 0);
+    debug_assert_eq!(pixel_count % frame_pixel_count, 0);
+    // The initialization hook enters with an empty stream solely to compile
+    // this hot function. Keep that data-independent preparation from warming
+    // any reusable palette or index allocation.
+    if pixel_count == 0 {
+        return Some((Vec::new(), Vec::new(), None));
+    }
     let mut palette = take_quality_palette(SMALL_COLOR_LIMIT);
     let mut indexed = take_quantized_indexed(pixel_count);
     let indexed_pointer = indexed.as_mut_ptr();
@@ -4444,7 +4503,49 @@ fn index_rgba_frames_quality_small_exact(
     let mut has_transparent_pixels = false;
     let mut previous_rgb = u32::MAX;
     let mut previous_index = 0u8;
-    for pixel_index in 0..pixel_count {
+    let mut pixel_index = 0usize;
+    let mut frame_remaining = frame_pixel_count;
+    while pixel_index < pixel_count {
+        if pixel_index >= frame_pixel_count && frame_remaining >= 16 {
+            let previous_pixel = pixel_index - frame_pixel_count;
+            if rgba_blocks_equal_64(unsafe { rgba_pointer.add(pixel_index * 4) }, unsafe {
+                rgba_pointer.add(previous_pixel * 4)
+            }) {
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        indexed_pointer.add(previous_pixel),
+                        indexed_pointer.add(pixel_index),
+                        16,
+                    );
+                }
+                pixel_index += 16;
+                frame_remaining -= 16;
+                if frame_remaining == 0 {
+                    frame_remaining = frame_pixel_count;
+                }
+                continue;
+            }
+        }
+        if pixel_index >= frame_pixel_count && frame_remaining >= 4 {
+            let previous_pixel = pixel_index - frame_pixel_count;
+            if rgba_blocks_equal_16(unsafe { rgba_pointer.add(pixel_index * 4) }, unsafe {
+                rgba_pointer.add(previous_pixel * 4)
+            }) {
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        indexed_pointer.add(previous_pixel),
+                        indexed_pointer.add(pixel_index),
+                        4,
+                    );
+                }
+                pixel_index += 4;
+                frame_remaining -= 4;
+                if frame_remaining == 0 {
+                    frame_remaining = frame_pixel_count;
+                }
+                continue;
+            }
+        }
         let packed = u32::from_le(unsafe {
             std::ptr::read_unaligned(rgba_pointer.add(pixel_index * 4).cast())
         });
@@ -4456,11 +4557,21 @@ fn index_rgba_frames_quality_small_exact(
             }
             has_transparent_pixels = true;
             unsafe { *indexed_pointer.add(pixel_index) = u8::MAX };
+            pixel_index += 1;
+            frame_remaining -= 1;
+            if frame_remaining == 0 {
+                frame_remaining = frame_pixel_count;
+            }
             continue;
         }
         let rgb = rgb_key(packed as u8, (packed >> 8) as u8, (packed >> 16) as u8);
         if rgb == previous_rgb {
             unsafe { *indexed_pointer.add(pixel_index) = previous_index };
+            pixel_index += 1;
+            frame_remaining -= 1;
+            if frame_remaining == 0 {
+                frame_remaining = frame_pixel_count;
+            }
             continue;
         }
         let index = palette.iter().position(|&color| color == rgb);
@@ -4481,6 +4592,11 @@ fn index_rgba_frames_quality_small_exact(
         previous_rgb = rgb;
         previous_index = index;
         unsafe { *indexed_pointer.add(pixel_index) = index };
+        pixel_index += 1;
+        frame_remaining -= 1;
+        if frame_remaining == 0 {
+            frame_remaining = frame_pixel_count;
+        }
     }
     let transparent_index = if has_transparent_pixels {
         let index = palette.len() as u8;
@@ -6445,8 +6561,9 @@ fn index_rgba_frames_quality_low_res_delta(
     alpha_threshold: u8,
 ) -> (Vec<u32>, Vec<u8>, Option<u8>) {
     let hints = quality_low_res_hints(rgba_stream, alpha_threshold);
-    let result = if !hints.likely_exact
-        && quality_low_res_exact_is_impossible(rgba_stream, alpha_threshold)
+    let result = if hints.exact_impossible
+        || (!hints.likely_exact
+            && quality_low_res_exact_is_impossible(rgba_stream, alpha_threshold))
     {
         QualityIndexResult::Quantized(index_rgba_frames_quality_low_res_quantized(
             rgba_stream,
@@ -6504,6 +6621,7 @@ struct QualityLowResHints {
     likely_exact: bool,
     likely_small_palette: bool,
     prefers_run_coalescing: bool,
+    exact_impossible: bool,
 }
 
 #[inline(always)]
@@ -6533,22 +6651,27 @@ fn quality_low_res_has_uniform_sampled_runs(rgba_stream: &[u8]) -> bool {
 
 #[inline(never)]
 fn quality_low_res_hints(rgba_stream: &[u8], alpha_threshold: u8) -> QualityLowResHints {
-    // Flat art commonly repeats a small color set over a large canvas. Sample
-    // the complete stream first so those inputs can enter the authoritative
-    // exact scan without paying for this second full pass. A false "likely
-    // exact" result is safe: the exact scan still detects overflow and falls
-    // back to quantization.
-    const SAMPLE_COUNT: usize = 256;
-    const SAMPLE_BUCKETS: usize = 128;
-    const SAMPLE_COLOR_LIMIT: usize = 48;
+    // Classify common inputs while sampling the complete stream. Finding more
+    // colors than GIF can represent proves quantization is required and skips
+    // the separate occupancy pass. A small sampled set can enter the complete
+    // exact scanner directly; that scanner still catches every missed color.
+    const SHORT_SAMPLE_COUNT: usize = 256;
+    const LONG_SAMPLE_COUNT: usize = 512;
+    const LONG_SAMPLE_PIXEL_THRESHOLD: usize = 40_000;
+    const SAMPLE_TABLE_SIZE: usize = 512;
+    const LIKELY_EXACT_COLOR_LIMIT: usize = 192;
+    const TRANSPARENT_EARLY_REJECT_COLOR_LIMIT: usize = 48;
     const SMALL_COLOR_LIMIT: usize = 12;
     let pixel_count = rgba_stream.len() / 4;
-    let sample_count = pixel_count.min(SAMPLE_COUNT);
-    let mut sample_occupied = [0u64; SAMPLE_BUCKETS / u64::BITS as usize];
-    let mut sample_colors = 0usize;
-    let mut small_colors = [u32::MAX; SMALL_COLOR_LIMIT];
-    let mut small_color_count = 0usize;
-    let mut likely_small_palette = true;
+    let sample_limit = if pixel_count >= LONG_SAMPLE_PIXEL_THRESHOLD {
+        LONG_SAMPLE_COUNT
+    } else {
+        SHORT_SAMPLE_COUNT
+    };
+    let sample_count = pixel_count.min(sample_limit);
+    let mut sample_colors = [u32::MAX; SAMPLE_TABLE_SIZE];
+    let mut sample_color_count = 0usize;
+    let mut opaque_color_limit = 256usize;
     let mut adjacent_matches = 0usize;
     let rgba_pointer = rgba_stream.as_ptr();
     let mut sample_pixel = 0usize;
@@ -6577,46 +6700,71 @@ fn quality_low_res_hints(rgba_stream: &[u8], alpha_threshold: u8) -> QualityLowR
             sample_pixel -= pixel_count;
         }
         if ((packed >> 24) as u8) < alpha_threshold {
-            continue;
-        }
-        let rgb = packed & 0x00ff_ffff;
-        if sample_index < 64
-            && likely_small_palette
-            && !small_colors[..small_color_count].contains(&rgb)
-        {
-            if small_color_count == SMALL_COLOR_LIMIT {
-                likely_small_palette = false;
-            } else {
-                small_colors[small_color_count] = rgb;
-                small_color_count += 1;
-            }
-        }
-        if sample_index == 7 && small_color_count <= 2 && adjacent_matches >= 7 {
-            return QualityLowResHints {
-                likely_exact: true,
-                likely_small_palette: true,
-                prefers_run_coalescing: true,
-            };
-        }
-        let bucket = (rgb.wrapping_mul(2_654_435_761) >> (u32::BITS as usize - 7)) as usize;
-        let word = bucket / u64::BITS as usize;
-        let mask = 1u64 << (bucket % u64::BITS as usize);
-        if sample_occupied[word] & mask == 0 {
-            sample_occupied[word] |= mask;
-            sample_colors += 1;
-            if sample_colors > SAMPLE_COLOR_LIMIT {
+            opaque_color_limit = 255;
+            if sample_color_count > opaque_color_limit {
                 return QualityLowResHints {
                     likely_exact: false,
                     likely_small_palette: false,
                     prefers_run_coalescing: false,
+                    exact_impossible: true,
                 };
             }
+            if sample_color_count > TRANSPARENT_EARLY_REJECT_COLOR_LIMIT {
+                return QualityLowResHints {
+                    likely_exact: false,
+                    likely_small_palette: false,
+                    prefers_run_coalescing: false,
+                    exact_impossible: false,
+                };
+            }
+            continue;
+        }
+        let rgb = packed & 0x00ff_ffff;
+        let mut bucket = (rgb.wrapping_mul(2_654_435_761) >> (u32::BITS as usize - 9)) as usize;
+        loop {
+            let sampled = sample_colors[bucket];
+            if sampled == rgb {
+                break;
+            }
+            if sampled == u32::MAX {
+                sample_colors[bucket] = rgb;
+                sample_color_count += 1;
+                if sample_color_count > opaque_color_limit {
+                    return QualityLowResHints {
+                        likely_exact: false,
+                        likely_small_palette: false,
+                        prefers_run_coalescing: false,
+                        exact_impossible: true,
+                    };
+                }
+                if opaque_color_limit == 255
+                    && sample_color_count > TRANSPARENT_EARLY_REJECT_COLOR_LIMIT
+                {
+                    return QualityLowResHints {
+                        likely_exact: false,
+                        likely_small_palette: false,
+                        prefers_run_coalescing: false,
+                        exact_impossible: false,
+                    };
+                }
+                break;
+            }
+            bucket = (bucket + 1) & (SAMPLE_TABLE_SIZE - 1);
+        }
+        if sample_index == 7 && sample_color_count <= 2 && adjacent_matches >= 7 {
+            return QualityLowResHints {
+                likely_exact: true,
+                likely_small_palette: true,
+                prefers_run_coalescing: true,
+                exact_impossible: false,
+            };
         }
     }
     QualityLowResHints {
-        likely_exact: true,
-        likely_small_palette,
+        likely_exact: sample_color_count <= LIKELY_EXACT_COLOR_LIMIT,
+        likely_small_palette: sample_color_count <= SMALL_COLOR_LIMIT,
         prefers_run_coalescing: sample_count > 0 && adjacent_matches * 4 >= sample_count * 3,
+        exact_impossible: false,
     }
 }
 
@@ -6626,6 +6774,12 @@ fn index_rgba_frames_quality_low_res_exact<const COALESCE_RUNS: bool>(
     alpha_threshold: u8,
 ) -> QualityIndexResult {
     let pixel_count = rgba_stream.len() / 4;
+    // The initialization hook enters with an empty stream solely to compile
+    // this hot function. The first real encode must still allocate cold
+    // scratch, so do not touch the reusable color table here.
+    if pixel_count == 0 {
+        return QualityIndexResult::Exact((Vec::new(), Vec::new(), None));
+    }
     let mut table = take_quality_color_index_table(COLOR_INDEX_CAP);
     let mut palette = take_quality_palette(256);
     // Delay histogram updates until the exact-color probe overflows. Exact
@@ -6892,6 +7046,16 @@ fn build_quality_single_merge_plan(
     colors: Vec<QuantizedColor>,
     mut palette: Vec<u32>,
 ) -> QualityIndexPlan {
+    if colors.is_empty() {
+        return QualityIndexPlan {
+            palette,
+            histogram_to_palette: Vec::new(),
+            histogram_indices: None,
+            transparent_index: None,
+            histogram_bits: 4,
+            mapping_bits: 4,
+        };
+    }
     let opaque_color_limit = if has_transparent_pixels { 255 } else { 256 };
     debug_assert_eq!(colors.len(), opaque_color_limit + 1);
     let excluded_position = colors
@@ -7021,6 +7185,16 @@ fn build_quality_direct_cell_plan(
     colors: Vec<QuantizedColor>,
     mut palette: Vec<u32>,
 ) -> QualityIndexPlan {
+    if colors.is_empty() {
+        return QualityIndexPlan {
+            palette,
+            histogram_to_palette: Vec::new(),
+            histogram_indices: None,
+            transparent_index: None,
+            histogram_bits: 4,
+            mapping_bits: 4,
+        };
+    }
     debug_assert!(!colors.is_empty());
     let opaque_color_limit = if has_transparent_pixels { 255 } else { 256 };
     debug_assert!(colors.len() <= opaque_color_limit);
@@ -9093,6 +9267,9 @@ fn build_quality_wu_palette(
     opaque_color_limit: usize,
     mut palette: Vec<u32>,
 ) -> (Vec<u32>, Vec<u8>) {
+    if colors.is_empty() {
+        return (palette, Vec::new());
+    }
     #[inline(always)]
     fn heap_entry_is_greater(cubes: &[WuCubeVariance], left: u16, right: u16) -> bool {
         let left_variance = cubes[usize::from(left)].variance;
@@ -10653,6 +10830,9 @@ fn encode_indexed_literal_gif_inner_with_output_impl<const VALIDATE: bool>(
     loop_count: i32,
     transparent_index: Option<u8>,
 ) -> Result<Vec<u8>, String> {
+    if frame_count == 0 && index_stream.is_empty() && palette_rgb.is_empty() {
+        return Ok(output);
+    }
     if width == 0 || height == 0 {
         return Err("Width/Height invalid".to_string());
     }
@@ -12019,11 +12199,11 @@ fn encode_eight_bit_literal_lzw_direct_to<const VALIDATE: bool>(
     index_stream: &[u8],
     color_count: usize,
 ) -> Result<(), String> {
+    if index_stream.is_empty() {
+        return Ok(());
+    }
     if color_count == 0 || color_count > 128 {
         return Err("Invalid color count".to_string());
-    }
-    if index_stream.is_empty() {
-        return Err("Indexed pixel stream is empty".to_string());
     }
     if VALIDATE && !indices_fit_color_count(index_stream, color_count) {
         return Err("Pixel index out of range".to_string());
@@ -12698,7 +12878,10 @@ fn encode_nine_bit_literal_lzw_mapped_to<const BITS: usize, const HAS_TRANSPAREN
     transparent_index: u8,
     histogram_to_palette: &[u8],
 ) -> Result<(), String> {
-    if rgba_stream.is_empty() || !rgba_stream.len().is_multiple_of(4) {
+    if rgba_stream.is_empty() {
+        return Ok(());
+    }
+    if !rgba_stream.len().is_multiple_of(4) {
         return Err("RGBA frame stream is empty or misaligned".to_string());
     }
     let pixel_count = rgba_stream.len() / 4;

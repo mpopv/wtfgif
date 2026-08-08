@@ -55,6 +55,7 @@ const fakeCoreModule = {
 	prepare_composited_delta_rgba: () => new Uint32Array(),
 	prepare_composited_delta_bgra: () => new Uint32Array(),
 	encode_indexed_literal_lzw_scratch: zero,
+	prepare_quality_encoder_code: () => undefined,
 	indexed_lzw_input_scratch_reserve: zero,
 	quality_delay_scratch_reserve: zero,
 	encode_indexed_lzw_scratch_from_input: zero,

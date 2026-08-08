@@ -62,6 +62,7 @@ export interface WasmCoreModule {
 		minCodeSize: number,
 		colorCount: number,
 	) => number;
+	prepare_quality_encoder_code: () => void;
 	indexed_lzw_input_scratch_reserve: (length: number) => number;
 	encode_indexed_lzw_scratch_from_input: (
 		length: number,
@@ -231,6 +232,7 @@ export type WasmEncodeCoreModule = Pick<
 	WasmCoreModule,
 	| "core_version"
 	| "encode_indexed_literal_lzw_scratch"
+	| "prepare_quality_encoder_code"
 	| "indexed_lzw_input_scratch_reserve"
 	| "encode_indexed_lzw_scratch_from_input"
 	| "indexed_lzw_scratch_ptr"
@@ -256,6 +258,7 @@ export type WasmEncodeCoreModule = Pick<
 
 /** Minimal ABI exported by the encode-only quality Wasm artifact. */
 export interface WasmQualityCoreModule {
+	prepare_quality_encoder_code: () => void;
 	indexed_lzw_input_scratch_reserve: (length: number) => number;
 	wasm_memory: () => WebAssembly.Memory;
 	encode_rgba_quality_low_res_constant_delay_scratch_from_input: (

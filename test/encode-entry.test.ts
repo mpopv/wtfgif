@@ -40,16 +40,19 @@ afterAll(() => {
 });
 
 describe("encode-only quality entry", () => {
-	test("reserves the ordinary input arena during initialization", () => {
+	test("prepares code and reserves the ordinary input arena during initialization", () => {
 		const module = getWasmCoreModule();
 		if (!module) throw new Error("Expected initialized encode module.");
+		const prepare = vi.fn(module.prepare_quality_encoder_code);
 		const reserve = vi.fn(module.indexed_lzw_input_scratch_reserve);
 		setWasmCoreModule({
 			...module,
+			prepare_quality_encoder_code: prepare,
 			indexed_lzw_input_scratch_reserve: reserve,
 		});
 
 		try {
+			expect(prepare).toHaveBeenCalledTimes(1);
 			expect(reserve).toHaveBeenCalledExactlyOnceWith(4_000_000);
 			encodeRgbaGifFrames({
 				width: 2,
@@ -58,6 +61,7 @@ describe("encode-only quality entry", () => {
 				frameCount: 2,
 				delay: 10,
 			});
+			expect(prepare).toHaveBeenCalledTimes(1);
 			expect(reserve).toHaveBeenCalledTimes(1);
 		} finally {
 			setWasmCoreModule(module);

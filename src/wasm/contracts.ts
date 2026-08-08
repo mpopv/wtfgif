@@ -5,6 +5,7 @@ import type {
 } from "../types";
 
 const QUALITY_EXPORTS = [
+	"prepare_quality_encoder_code",
 	"indexed_lzw_input_scratch_reserve",
 	"wasm_memory",
 	"encode_rgba_quality_low_res_constant_delay_scratch_from_input",

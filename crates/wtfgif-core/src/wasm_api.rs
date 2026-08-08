@@ -149,6 +149,120 @@ pub fn indexed_lzw_input_scratch_reserve(length: usize) -> usize {
     })
 }
 
+#[wasm_bindgen]
+/// Compile representative quality-encoder call graphs during explicit Wasm
+/// initialization. Every probe is empty and the codec's empty sentinels avoid
+/// populating reusable data arenas, so the first user encode keeps cold data.
+pub fn prepare_quality_encoder_code() {
+    let empty = std::hint::black_box(&[][..]);
+    let hints = quality_low_res_hints(empty, 128);
+    let impossible = quality_low_res_exact_is_impossible(empty, 128);
+    let alpha_255 = rgba_stream_samples_alpha_255(empty);
+    let small = index_rgba_frames_quality_small_exact(empty, 128, 1);
+    if let Some((palette, indexed, _)) = small {
+        recycle_quality_palette(palette);
+        recycle_quantized_indexed(indexed);
+    }
+    let mut histogram = [];
+    let mixed =
+        accumulate_quality_histogram_u32_bits_remaining_mixed::<4>(&mut histogram, empty, 0, 128);
+    let opaque = accumulate_quality_histogram_u32_bits_remaining_opaque::<4, false, false>(
+        &mut histogram,
+        empty,
+        0,
+        &mut [],
+    );
+    let colors = quality_colors_from_histogram_u32::<true>(&mut histogram);
+    recycle_quality_colors(colors);
+    let direct_plan = finish_quality_low_res_quantized(Vec::new(), false, Vec::new());
+    recycle_quality_palette(direct_plan.palette);
+    recycle_quality_histogram_to_palette(direct_plan.histogram_to_palette);
+    let merge_plan = build_quality_single_merge_plan(true, Vec::new(), Vec::new());
+    recycle_quality_palette(merge_plan.palette);
+    recycle_quality_histogram_to_palette(merge_plan.histogram_to_palette);
+    for result in [
+        index_rgba_frames_quality_low_res_exact::<false>(empty, 128),
+        index_rgba_frames_quality_low_res_exact::<true>(empty, 128),
+    ] {
+        match result {
+            QualityIndexResult::Exact((palette, indexed, _)) => {
+                recycle_quality_palette(palette);
+                recycle_quantized_indexed(indexed);
+            }
+            QualityIndexResult::Quantized(plan) => {
+                recycle_quality_palette(plan.palette);
+                recycle_quality_histogram_to_palette(plan.histogram_to_palette);
+            }
+        }
+    }
+    let exact_plain = encode_rgba_quality_low_res_exact_gif_inner_with_output::<false>(
+        empty,
+        1,
+        1,
+        0,
+        DelaySource::Constant(0),
+        0,
+        128,
+        false,
+        Vec::new(),
+    );
+    let exact_runs = encode_rgba_quality_low_res_exact_gif_inner_with_output::<true>(
+        empty,
+        1,
+        1,
+        0,
+        DelaySource::Constant(0),
+        0,
+        128,
+        false,
+        Vec::new(),
+    );
+    let mut lzw_output = Vec::new();
+    let opaque_lzw =
+        encode_nine_bit_literal_lzw_mapped_to::<4, false>(&mut lzw_output, empty, 128, 0, empty);
+    let alpha_lzw =
+        encode_nine_bit_literal_lzw_mapped_to::<4, true>(&mut lzw_output, empty, 128, 0, empty);
+    let exact_lzw = encode_indexed_literal_lzw_direct_to_unchecked(&mut lzw_output, empty, 7, 128);
+    let (palette, mapping) = build_quality_wu_palette(
+        false,
+        std::hint::black_box(Vec::new()),
+        1 << 12,
+        256,
+        Vec::new(),
+    );
+    let cube = WuCube {
+        minimum: [0; 3],
+        maximum: [0; 3],
+    };
+    let split = split_wu_cube(std::hint::black_box(&[]), std::hint::black_box(&[]), cube);
+    let tree = PaletteKdTree::new(std::hint::black_box(&[]));
+    let nearest = tree.nearest_with_hint_split(0, 0, 0, None);
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    let dense = {
+        let requested = [false; 1 << 12];
+        dense_coarse_nearest_table_simd(std::hint::black_box(&[]), &requested)[0]
+    };
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+    let dense = 0u8;
+    let _ = std::hint::black_box(
+        palette.capacity()
+            ^ mapping.capacity()
+            ^ split.is_some() as usize
+            ^ usize::from(nearest)
+            ^ usize::from(dense)
+            ^ usize::from(hints.likely_exact)
+            ^ usize::from(impossible)
+            ^ usize::from(alpha_255)
+            ^ usize::from(mixed)
+            ^ usize::from(opaque)
+            ^ usize::from(opaque_lzw.is_ok())
+            ^ usize::from(alpha_lzw.is_ok())
+            ^ usize::from(exact_lzw.is_ok())
+            ^ usize::from(exact_plain.is_ok())
+            ^ usize::from(exact_runs.is_ok()),
+    );
+}
+
 #[cfg(not(feature = "quality-only"))]
 #[wasm_bindgen]
 pub fn encode_indexed_lzw_scratch_from_input(
@@ -587,15 +701,18 @@ pub fn encode_rgba_quality_low_res_constant_delay_scratch_from_input(
             likely_exact: true,
             likely_small_palette: true,
             prefers_run_coalescing: true,
+            exact_impossible: false,
         }
     } else {
         quality_low_res_hints(rgba_stream, alpha_threshold)
     };
     let tried_small_exact = rgba_stream.len() >= 40_000 * 4 && hints.likely_small_palette;
     if tried_small_exact {
-        if let Some((palette, indexed, transparent_index)) =
-            index_rgba_frames_quality_small_exact(rgba_stream, alpha_threshold)
-        {
+        if let Some((palette, indexed, transparent_index)) = index_rgba_frames_quality_small_exact(
+            rgba_stream,
+            alpha_threshold,
+            usize::from(width) * usize::from(height),
+        ) {
             let encoded = encode_small_exact_constant_delay_gif_with_output(
                 output,
                 &indexed,
@@ -617,8 +734,9 @@ pub fn encode_rgba_quality_low_res_constant_delay_scratch_from_input(
             return length;
         }
     }
-    let encoded = if !hints.likely_exact
-        && quality_low_res_exact_is_impossible(rgba_stream, alpha_threshold)
+    let encoded = if hints.exact_impossible
+        || (!hints.likely_exact
+            && quality_low_res_exact_is_impossible(rgba_stream, alpha_threshold))
     {
         encode_rgba_quality_low_res_quantized_gif_inner_with_output::<true>(
             rgba_stream,
@@ -692,7 +810,9 @@ pub fn encode_rgba_quality_gif_constant_delay_scratch_from_input(
         rgba_stream.len() % 4 == 0 && rgba_stream.len() / 4 <= QUALITY_LOW_RES_PIXEL_LIMIT;
     let encoded = if low_res {
         let hints = quality_low_res_hints(rgba_stream, alpha_threshold);
-        if !hints.likely_exact && quality_low_res_exact_is_impossible(rgba_stream, alpha_threshold)
+        if hints.exact_impossible
+            || (!hints.likely_exact
+                && quality_low_res_exact_is_impossible(rgba_stream, alpha_threshold))
         {
             encode_rgba_quality_low_res_quantized_gif_inner_with_output::<true>(
                 rgba_stream,
@@ -809,7 +929,9 @@ pub fn encode_rgba_quality_gif_scratch_from_input(
         rgba_stream.len() % 4 == 0 && rgba_stream.len() / 4 <= QUALITY_LOW_RES_PIXEL_LIMIT;
     let encoded = if low_res {
         let hints = quality_low_res_hints(rgba_stream, alpha_threshold);
-        if !hints.likely_exact && quality_low_res_exact_is_impossible(rgba_stream, alpha_threshold)
+        if hints.exact_impossible
+            || (!hints.likely_exact
+                && quality_low_res_exact_is_impossible(rgba_stream, alpha_threshold))
         {
             encode_rgba_quality_low_res_quantized_gif_inner_with_output::<false>(
                 rgba_stream,

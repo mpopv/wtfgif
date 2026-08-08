@@ -34,6 +34,7 @@ const imports = {
 wasm = new WebAssembly.Instance(module, imports).exports;
 const instanceCompleted = performance.now();
 wasm.__wbindgen_start();
+wasm.prepare_quality_encoder_code?.();
 const startCompleted = performance.now();
 wasm.indexed_lzw_input_scratch_reserve(4_000_000);
 

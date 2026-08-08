@@ -38,6 +38,7 @@ export function prepareQualityWasmEncoderModule(
 	scratchModule = module;
 	scratchMemory = module?.wasm_memory() ?? null;
 	if (module && scratchMemory) {
+		module.prepare_quality_encoder_code();
 		scratchPointer = module.indexed_lzw_input_scratch_reserve(
 			QUALITY_LOW_RES_BYTE_LIMIT,
 		);

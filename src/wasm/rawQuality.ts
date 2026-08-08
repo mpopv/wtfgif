@@ -24,6 +24,7 @@ type RawQualityExports = WebAssembly.Exports & {
 	memory: WebAssembly.Memory;
 	__wbindgen_externrefs: WebAssembly.Table;
 	__wbindgen_start: () => void;
+	prepare_quality_encoder_code: () => void;
 	indexed_lzw_input_scratch_reserve: (length: number) => number;
 	encode_rgba_quality_low_res_constant_delay_scratch_from_input: (
 		length: number,
@@ -85,6 +86,7 @@ function wasmImports(getRaw: () => RawQualityExports | undefined) {
 function createRawQualityModule(raw: RawQualityExports): WasmQualityCoreModule {
 	const memory = raw.memory;
 	return {
+		prepare_quality_encoder_code: raw.prepare_quality_encoder_code,
 		indexed_lzw_input_scratch_reserve: raw.indexed_lzw_input_scratch_reserve,
 		encode_rgba_quality_low_res_constant_delay_scratch_from_input:
 			raw.encode_rgba_quality_low_res_constant_delay_scratch_from_input,
