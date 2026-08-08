@@ -636,7 +636,9 @@ fn uniform_run_hint_is_conservative_and_keeps_the_small_palette_route_exact() {
 
 #[test]
 fn adaptive_histogram_matches_the_general_pair_scan() {
-    for matching_probe_pairs in [0usize, 7, 8] {
+    // One matching leading pair and a varied later probe selects the dedicated
+    // split-bin scanner; the other cases retain the general scanner.
+    for matching_probe_pairs in [0usize, 1, 7, 8] {
         let mut rgba: Vec<u8> = (0..4_096u32)
             .flat_map(|pixel| {
                 [

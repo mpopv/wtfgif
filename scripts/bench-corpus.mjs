@@ -15,7 +15,7 @@ import { percentile, validateAndMeasure } from "./benchmark/metrics.mjs";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const require = createRequire(import.meta.url);
 const worker = join(root, "scripts", "bench-corpus-worker.mjs");
-const iterations = Number(process.env.BENCH_ITERATIONS ?? 15);
+const iterations = Number(process.env.BENCH_ITERATIONS ?? 40);
 const includeStress = process.env.BENCH_CORPUS_INCLUDE_STRESS === "1";
 const fixtureFilter = process.env.BENCH_CORPUS_FIXTURE;
 const writeReceipt = process.env.BENCH_WRITE_RECEIPT !== "0";

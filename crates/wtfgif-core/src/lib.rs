@@ -7525,6 +7525,37 @@ unsafe fn add_quality_histogram_bin32(
 }
 
 #[inline(always)]
+unsafe fn add_quality_histogram_bin32_packed(
+    bin: *mut RgbHistogramBin32,
+    count: u32,
+    red: u32,
+    green: u32,
+    blue: u32,
+) {
+    #[cfg(target_endian = "little")]
+    {
+        // The split-pair scanner has already proved that adjacent pixels use
+        // different bins. Two scalar read-modify-writes beat a SIMD update for
+        // this scattered access pattern, while preserving the same four sums.
+        let packed = bin.cast::<u64>();
+        let count_red =
+            std::ptr::read(packed).wrapping_add(u64::from(count) | (u64::from(red) << 32));
+        let green_blue =
+            std::ptr::read(packed.add(1)).wrapping_add(u64::from(green) | (u64::from(blue) << 32));
+        std::ptr::write(packed, count_red);
+        std::ptr::write(packed.add(1), green_blue);
+    }
+    #[cfg(not(target_endian = "little"))]
+    {
+        let bin = &mut *bin;
+        bin.count = bin.count.wrapping_add(count);
+        bin.red = bin.red.wrapping_add(red);
+        bin.green = bin.green.wrapping_add(green);
+        bin.blue = bin.blue.wrapping_add(blue);
+    }
+}
+
+#[inline(always)]
 fn add_quality_histogram_u32_bits_const<const BITS: usize>(
     histogram: &mut [RgbHistogramBin32],
     packed: u32,
@@ -8037,8 +8068,17 @@ fn add_quality_histogram_u32_pair_packed_split<const BITS: usize>(
     let packed0 = packed as u32;
     let packed1 = (packed >> 32) as u32;
     let (index0, index1) = quality_histogram_index_pair_packed::<BITS>(packed);
-    add_quality_histogram_u32_bits_indexed(histogram, packed0, index0);
-    add_quality_histogram_u32_bits_indexed(histogram, packed1, index1);
+    for (pixel, index) in [(packed0, index0), (packed1, index1)] {
+        unsafe {
+            add_quality_histogram_bin32_packed(
+                histogram.as_mut_ptr().add(index),
+                1,
+                u32::from(pixel as u8),
+                u32::from((pixel >> 8) as u8),
+                u32::from((pixel >> 16) as u8),
+            );
+        }
+    }
 }
 
 #[inline(never)]
