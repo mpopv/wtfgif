@@ -76,12 +76,12 @@ All notable changes to wtfgif are documented here.
   by 857 bytes and improves paired fresh-process tiny by a further 4.7% and
   noise by 1.3%, with identical GIF bytes.
 - Refresh the clean 40-process arbitrary-RGBA receipt. Every category now
-  exceeds 100x on its first real encode after initialization: **145.70x to
-  297.61x**, with a **179.34x geometric mean** and **145.70x** on the real
+  exceeds 100x on its first real encode after initialization: **144.13x to
+  311.99x**, with a **180.90x geometric mean** and **144.13x** on the real
   MakeEmoji workload.
 - Refresh the 15-process Chrome comparison and generated SVG. wtfgif takes
-  **1.130 ms**; the five alternatives take 100.400-141.935 ms and are
-  **88.85x-125.61x slower**.
+  **1.095 ms**; the five alternatives take 88.775-123.400 ms and are
+  **81.07x-112.69x slower**.
 - Pass the complete release gate: lint, type checking, dependency audit, Rust
   formatting/clippy/tests, all scalar and SIMD Wasm builds, 148 JavaScript/Wasm
   assertions, independent decoder conformance, edge validation, and package
