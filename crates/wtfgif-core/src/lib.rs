@@ -9989,7 +9989,7 @@ struct PaletteKdNode {
     max_red: u8,
     max_green: u8,
     max_blue: u8,
-    right: u16,
+    parent: u16,
     escape: u16,
 }
 
@@ -10055,6 +10055,7 @@ impl PaletteKdTree {
             indices: &mut [usize],
             palette_rgb: &[u32],
             nodes: &mut Vec<PaletteKdNode>,
+            parent: u16,
         ) -> u16 {
             if indices.is_empty() {
                 return PALETTE_KD_EMPTY;
@@ -10103,16 +10104,14 @@ impl PaletteKdTree {
                 max_red,
                 max_green,
                 max_blue,
-                right: PALETTE_KD_EMPTY,
+                parent,
                 escape: PALETTE_KD_EMPTY,
             });
-            let left = build(&mut indices[..midpoint], palette_rgb, nodes);
+            let left = build(&mut indices[..midpoint], palette_rgb, nodes, node_index);
             debug_assert!(left == PALETTE_KD_EMPTY || left == node_index + 1);
-            let right = build(&mut indices[midpoint + 1..], palette_rgb, nodes);
+            build(&mut indices[midpoint + 1..], palette_rgb, nodes, node_index);
             let escape = nodes.len() as u16;
-            let node = &mut nodes[usize::from(node_index)];
-            node.right = right;
-            node.escape = escape;
+            nodes[usize::from(node_index)].escape = escape;
             node_index
         }
 
@@ -10129,7 +10128,12 @@ impl PaletteKdTree {
             }
             nodes
         });
-        let root = build(&mut indices[..palette_rgb.len()], palette_rgb, &mut nodes);
+        let root = build(
+            &mut indices[..palette_rgb.len()],
+            palette_rgb,
+            &mut nodes,
+            PALETTE_KD_EMPTY,
+        );
         Self { nodes, root }
     }
 
@@ -10140,60 +10144,30 @@ impl PaletteKdTree {
     /// from the current colors so pruning remains exact even when a
     /// representative crosses an old split plane.
     fn recolor(&mut self, palette_rgb: &[u32]) {
-        fn visit(
-            nodes: &mut [PaletteKdNode],
-            node_index: u16,
-            palette_rgb: &[u32],
-        ) -> ([u8; 3], [u8; 3]) {
-            let index = usize::from(node_index);
-            let (right, escape, palette_index) = {
-                let node = &nodes[index];
-                (node.right, node.escape, node.palette_index)
-            };
-            let left_candidate = node_index + 1;
-            let left_limit = if right == PALETTE_KD_EMPTY {
-                escape
-            } else {
-                right
-            };
-            let left = if left_candidate < left_limit {
-                left_candidate
-            } else {
-                PALETTE_KD_EMPTY
-            };
-            let color = palette_rgb[usize::from(palette_index)];
-            let current = [(color >> 16) as u8, (color >> 8) as u8, color as u8];
-            let mut min = current;
-            let mut max = current;
-            if left != PALETTE_KD_EMPTY {
-                let bounds = visit(nodes, left, palette_rgb);
-                for channel in 0..3 {
-                    min[channel] = min[channel].min(bounds.0[channel]);
-                    max[channel] = max[channel].max(bounds.1[channel]);
-                }
-            }
-            if right != PALETTE_KD_EMPTY {
-                let bounds = visit(nodes, right, palette_rgb);
-                for channel in 0..3 {
-                    min[channel] = min[channel].min(bounds.0[channel]);
-                    max[channel] = max[channel].max(bounds.1[channel]);
-                }
-            }
-            let node = &mut nodes[index];
-            node.red = current[0];
-            node.green = current[1];
-            node.blue = current[2];
-            node.min_red = min[0];
-            node.min_green = min[1];
-            node.min_blue = min[2];
-            node.max_red = max[0];
-            node.max_green = max[1];
-            node.max_blue = max[2];
-            (min, max)
+        for node in &mut self.nodes {
+            let color = palette_rgb[usize::from(node.palette_index)];
+            node.red = (color >> 16) as u8;
+            node.green = (color >> 8) as u8;
+            node.blue = color as u8;
+            node.min_red = node.red;
+            node.min_green = node.green;
+            node.min_blue = node.blue;
+            node.max_red = node.red;
+            node.max_green = node.green;
+            node.max_blue = node.blue;
         }
-
-        if self.root != PALETTE_KD_EMPTY {
-            visit(&mut self.nodes, self.root, palette_rgb);
+        for index in (0..self.nodes.len()).rev() {
+            let child = self.nodes[index];
+            if child.parent == PALETTE_KD_EMPTY {
+                continue;
+            }
+            let parent = &mut self.nodes[usize::from(child.parent)];
+            parent.min_red = parent.min_red.min(child.min_red);
+            parent.min_green = parent.min_green.min(child.min_green);
+            parent.min_blue = parent.min_blue.min(child.min_blue);
+            parent.max_red = parent.max_red.max(child.max_red);
+            parent.max_green = parent.max_green.max(child.max_green);
+            parent.max_blue = parent.max_blue.max(child.max_blue);
         }
     }
 

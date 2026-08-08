@@ -4,6 +4,11 @@ All notable changes to wtfgif are documented here.
 
 ## Unreleased
 
+- Replace recursive palette-tree recoloring with two flat passes: update each
+  centroid, then propagate exact subtree bounds through parent links in reverse
+  preorder. Alternating fresh-process A/B runs improved the KD-heavy
+  MakeEmoji fixture by 0.40% and the one-megapixel fixture by 0.36%; all ten
+  corpus GIF hashes are unchanged.
 - Tie the README and benchmark claims to their clean committed receipts, and
   update the browser chart to show emitted GIF size alongside encode time and
   disclose that gif.js worker creation is inside its public-API timing.
