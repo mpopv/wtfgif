@@ -174,6 +174,9 @@ pub fn prepare_quality_encoder_code() {
     );
     let colors = quality_colors_from_histogram_u32::<true>(&mut histogram);
     recycle_quality_colors(colors);
+    let sampled_opaque_plan =
+        index_rgba_frames_quality_low_res_quantized_sampled_opaque(empty, 128, Vec::new());
+    recycle_quality_palette(sampled_opaque_plan.palette);
     let direct_plan = finish_quality_low_res_quantized(Vec::new(), false, Vec::new());
     recycle_quality_palette(direct_plan.palette);
     recycle_quality_histogram_to_palette(direct_plan.histogram_to_palette);
@@ -217,6 +220,20 @@ pub fn prepare_quality_encoder_code() {
         false,
         Vec::new(),
     );
+    let quantized = encode_rgba_quality_low_res_quantized_gif_inner_with_output::<true>(
+        empty,
+        1,
+        1,
+        0,
+        DelaySource::Constant(0),
+        0,
+        0,
+        128,
+        true,
+        Vec::new(),
+    );
+    let public_quality =
+        encode_rgba_quality_low_res_constant_delay_scratch_from_input(0, 1, 1, 0, 0, 0, 128);
     let mut lzw_output = Vec::new();
     let opaque_lzw =
         encode_nine_bit_literal_lzw_mapped_to::<4, false>(&mut lzw_output, empty, 128, 0, empty);
@@ -262,7 +279,9 @@ pub fn prepare_quality_encoder_code() {
             ^ usize::from(exact_lzw.is_ok())
             ^ usize::from(aligned_four_bit_lzw.is_ok())
             ^ usize::from(exact_plain.is_ok())
-            ^ usize::from(exact_runs.is_ok()),
+            ^ usize::from(exact_runs.is_ok())
+            ^ usize::from(quantized.is_ok())
+            ^ public_quality,
     );
 }
 
@@ -676,6 +695,9 @@ pub fn encode_rgba_gif_advanced_scratch_from_input(
 /// scalar delay scalar across the Wasm boundary avoids allocating a temporary
 /// per-frame delay array for the common animation API.
 #[wasm_bindgen]
+// Keep the exported wrapper as its own Wasm function so explicit preparation
+// can compile the exact function JavaScript will enter on the first image.
+#[inline(never)]
 pub fn encode_rgba_quality_low_res_constant_delay_scratch_from_input(
     length: usize,
     width: u16,
@@ -685,6 +707,11 @@ pub fn encode_rgba_quality_low_res_constant_delay_scratch_from_input(
     loop_count: i32,
     alpha_threshold: u8,
 ) -> usize {
+    // `prepare_quality_encoder_code` uses this sentinel before any user data
+    // exists. No reusable input, output, palette, or histogram is touched.
+    if length == 0 {
+        return 0;
+    }
     let input_ptr = REUSABLE_LZW_SCRATCH.with(|scratch| {
         let scratch = scratch.borrow();
         (length <= scratch.input.len() * std::mem::size_of::<u32>())

@@ -4311,6 +4311,11 @@ fn encode_rgba_quality_low_res_quantized_gif_inner_with_output<const CONSTANT_DE
     sampled_alpha_255: bool,
     output: Vec<u8>,
 ) -> Result<Vec<u8>, String> {
+    // Explicit Wasm initialization enters with an empty sentinel solely to
+    // compile this quantized wrapper. Keep that preparation data-independent.
+    if rgba_stream.is_empty() {
+        return Ok(output);
+    }
     #[cfg(not(target_arch = "wasm32"))]
     validate_rgba_stream(rgba_stream, width, height, frame_count, delays, loop_count)?;
     #[cfg(target_arch = "wasm32")]
@@ -6970,6 +6975,18 @@ fn index_rgba_frames_quality_low_res_quantized_sampled_opaque(
     alpha_threshold: u8,
     palette: Vec<u32>,
 ) -> QualityIndexPlan {
+    // See `prepare_quality_encoder_code`: compile this real opaque-probe
+    // wrapper without allocating or retaining its histogram scratch.
+    if rgba_stream.is_empty() {
+        return QualityIndexPlan {
+            palette,
+            histogram_to_palette: Vec::new(),
+            histogram_indices: None,
+            transparent_index: None,
+            histogram_bits: 4,
+            mapping_bits: 4,
+        };
+    }
     const HISTOGRAM_BITS: usize = 4;
     const HISTOGRAM_LEN: usize = 1 << (HISTOGRAM_BITS * 3);
     let mut histogram = take_quality_histogram_u32(HISTOGRAM_LEN);
