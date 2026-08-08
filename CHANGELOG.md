@@ -2,7 +2,7 @@
 
 All notable changes to wtfgif are documented here.
 
-## Unreleased
+## 3.0.7 - 2026-08-07
 
 - Replace recursive palette-tree recoloring with two flat passes: update each
   centroid, then propagate exact subtree bounds through parent links in reverse
@@ -31,9 +31,9 @@ All notable changes to wtfgif are documented here.
   pixel-art median improved from 0.507 ms to 0.457 ms in that change's paired
   receipt.
 - Refresh the 10-fixture first-encode receipt and six-library browser chart.
-  The corpus spans **62.68x to 125.58x** with a **91.63x geometric mean**;
-  the real MakeEmoji workload is **110.14x faster**, and the five browser
-  alternatives are **71.36x to 108.78x slower** than wtfgif.
+  The corpus spans **66.32x to 129.14x** with a **92.06x geometric mean**;
+  the real MakeEmoji workload is **109.54x faster**, and the five browser
+  alternatives are **64.32x to 92.14x slower** than wtfgif.
 - Make encoding latency the only compression policy. Remove the public
   `compression` option and delete the balanced dictionary encoder from the
   JavaScript, Rust, Wasm, and native paths; all encoders now use literal LZW.
