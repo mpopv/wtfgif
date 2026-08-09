@@ -2,7 +2,15 @@
 
 All notable changes to wtfgif are documented here.
 
-## Unreleased
+## 3.0.16 - 2026-08-09
+
+- Scan the dominant 255/256-color quality palette as one fixed, padded SIMD
+  table, unroll two 16-color groups per loop, and reduce the winning lanes
+  entirely in registers. Also expand the packed two-pixel histogram update
+  directly instead of constructing and iterating a temporary pair. Across 160
+  paired fresh MakeEmoji processes, the complete encode improves **1.0931x**
+  (0.680 ms to 0.623 ms), with byte-identical GIF output. More aggressive
+  unrolling was rejected because it regressed the disjoint-palette control.
 
 - Add a selective second Binaryen optimization pass to quality-only Wasm
   builds while protecting the high-resolution quantizer and planner from the

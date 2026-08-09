@@ -8137,16 +8137,22 @@ fn add_quality_histogram_u32_pair_packed_split<const BITS: usize>(
     let packed0 = packed as u32;
     let packed1 = (packed >> 32) as u32;
     let (index0, index1) = quality_histogram_index_pair_packed::<BITS>(packed);
-    for (pixel, index) in [(packed0, index0), (packed1, index1)] {
-        unsafe {
-            add_quality_histogram_bin32_packed(
-                histogram.as_mut_ptr().add(index),
-                1,
-                u32::from(pixel as u8),
-                u32::from((pixel >> 8) as u8),
-                u32::from((pixel >> 16) as u8),
-            );
-        }
+    unsafe {
+        let histogram = histogram.as_mut_ptr();
+        add_quality_histogram_bin32_packed(
+            histogram.add(index0),
+            1,
+            u32::from(packed0 as u8),
+            u32::from((packed0 >> 8) as u8),
+            u32::from((packed0 >> 16) as u8),
+        );
+        add_quality_histogram_bin32_packed(
+            histogram.add(index1),
+            1,
+            u32::from(packed1 as u8),
+            u32::from((packed1 >> 8) as u8),
+            u32::from((packed1 >> 16) as u8),
+        );
     }
 }
 
@@ -10211,18 +10217,16 @@ struct SimdPaletteChannels {
     red: [u32; 256],
     green: [u32; 256],
     blue: [u32; 256],
-    len: usize,
 }
 
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 impl SimdPaletteChannels {
     #[inline(always)]
-    fn empty(len: usize) -> Self {
+    fn empty() -> Self {
         Self {
             red: [0; 256],
             green: [0; 256],
             blue: [0; 256],
-            len,
         }
     }
 
@@ -10232,6 +10236,18 @@ impl SimdPaletteChannels {
         self.green[index] = (color >> 8) & 0xff;
         self.blue[index] = color & 0xff;
     }
+
+    #[inline(always)]
+    fn pad_with_last(&mut self, len: usize) {
+        debug_assert!((255..=256).contains(&len));
+        if len == 255 {
+            // The packed comparison breaks equal-distance ties by palette index,
+            // so this duplicate SIMD lane can never beat the real entry at 254.
+            self.red[255] = self.red[254];
+            self.green[255] = self.green[254];
+            self.blue[255] = self.blue[254];
+        }
+    }
 }
 
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
@@ -10239,8 +10255,8 @@ impl SimdPaletteChannels {
 #[inline(never)]
 fn nearest_palette_index_simd(r: u8, g: u8, b: u8, palette: &SimdPaletteChannels) -> u8 {
     use core::arch::wasm32::{
-        i32x4_add, i32x4_lt, i32x4_min, i32x4_mul, i32x4_shl, i32x4_splat, i32x4_sub, u32x4,
-        v128_bitselect, v128_load, v128_store,
+        i32x4_add, i32x4_extract_lane, i32x4_lt, i32x4_min, i32x4_mul, i32x4_shl, i32x4_shuffle,
+        i32x4_splat, i32x4_sub, u32x4, v128_bitselect, v128_load,
     };
 
     let red = i32x4_splat(i32::from(r));
@@ -10276,45 +10292,30 @@ fn nearest_palette_index_simd(r: u8, g: u8, b: u8, palette: &SimdPaletteChannels
             $best = v128_bitselect(candidate, $best, closer);
         }};
     }
+    macro_rules! update_sixteen {
+        ($offset:expr) => {{
+            update_four!($offset, palette_indices0, best0);
+            update_four!($offset + 4, palette_indices1, best1);
+            update_four!($offset + 8, palette_indices2, best2);
+            update_four!($offset + 12, palette_indices3, best3);
+            palette_indices0 = i32x4_add(palette_indices0, i32x4_splat(16));
+            palette_indices1 = i32x4_add(palette_indices1, i32x4_splat(16));
+            palette_indices2 = i32x4_add(palette_indices2, i32x4_splat(16));
+            palette_indices3 = i32x4_add(palette_indices3, i32x4_splat(16));
+        }};
+    }
+    // Two groups per iteration was the best measured balance between loop
+    // overhead and generated Wasm code size on the quality corpus.
     let mut offset = 0usize;
-    while offset + 16 <= palette.len {
-        update_four!(offset, palette_indices0, best0);
-        update_four!(offset + 4, palette_indices1, best1);
-        update_four!(offset + 8, palette_indices2, best2);
-        update_four!(offset + 12, palette_indices3, best3);
-        palette_indices0 = i32x4_add(palette_indices0, i32x4_splat(16));
-        palette_indices1 = i32x4_add(palette_indices1, i32x4_splat(16));
-        palette_indices2 = i32x4_add(palette_indices2, i32x4_splat(16));
-        palette_indices3 = i32x4_add(palette_indices3, i32x4_splat(16));
-        offset += 16;
-    }
-    if offset + 8 <= palette.len {
-        update_four!(offset, palette_indices0, best0);
-        update_four!(offset + 4, palette_indices1, best1);
-        palette_indices0 = i32x4_add(palette_indices0, i32x4_splat(8));
-        offset += 8;
-    }
-    if offset + 4 <= palette.len {
-        update_four!(offset, palette_indices0, best0);
-        offset += 4;
+    while offset < 256 {
+        update_sixteen!(offset);
+        update_sixteen!(offset + 16);
+        offset += 32;
     }
     best0 = i32x4_min(i32x4_min(best0, best1), i32x4_min(best2, best3));
-    let mut lanes = [u32::MAX; 4];
-    unsafe {
-        v128_store(lanes.as_mut_ptr().cast(), best0);
-    }
-    let mut packed = *lanes.iter().min().unwrap_or(&u32::MAX);
-    while offset < palette.len {
-        let red_delta = i32::from(r) - palette.red[offset] as i32;
-        let green_delta = i32::from(g) - palette.green[offset] as i32;
-        let blue_delta = i32::from(b) - palette.blue[offset] as i32;
-        let distance =
-            (red_delta * red_delta + green_delta * green_delta + blue_delta * blue_delta) as u32;
-        let candidate = (distance << 8) | offset as u32;
-        packed = packed.min(candidate);
-        offset += 1;
-    }
-    packed as u8
+    best0 = i32x4_min(best0, i32x4_shuffle::<2, 3, 0, 1>(best0, best0));
+    best0 = i32x4_min(best0, i32x4_shuffle::<1, 0, 3, 2>(best0, best0));
+    i32x4_extract_lane::<0>(best0) as u8
 }
 
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
@@ -10370,13 +10371,14 @@ fn build_quality_dominant_index_plan_simd<const HISTOGRAM_BITS: usize>(
     if palette.capacity() < palette_len + usize::from(has_transparent_pixels) {
         palette.reserve(palette_len + usize::from(has_transparent_pixels) - palette.capacity());
     }
-    let mut palette_channels = SimdPaletteChannels::empty(palette_len);
+    let mut palette_channels = SimdPaletteChannels::empty();
     for (index, &position) in palette_positions[..palette_len].iter().enumerate() {
         let color = &colors[usize::from(position)];
         let rgb = rgb_key(color.red, color.green, color.blue);
         palette.push(rgb);
         palette_channels.set(index, rgb);
     }
+    palette_channels.pad_with_last(palette_len);
 
     let mapping_len = 1usize << (HISTOGRAM_BITS * 3);
     let mut histogram_to_palette = take_quality_histogram_to_palette(mapping_len);
@@ -10423,6 +10425,7 @@ fn build_quality_dominant_index_plan_simd<const HISTOGRAM_BITS: usize>(
         palette_channels.set(index, representative);
     }
     if palette_changed {
+        palette_channels.pad_with_last(palette_len);
         for color in &colors {
             let cell = usize::from(color.histogram_index);
             let hint_index = histogram_to_palette[cell];
