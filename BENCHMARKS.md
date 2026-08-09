@@ -22,8 +22,9 @@ public `wtfgif/encode` entry point and the equivalent image-q + omggif pipeline.
 Each sample runs in a fresh Node process. Package loading and wtfgif
 initialization happen before the clock; the first and only synchronous encode
 of user input is timed. Initialization reserves a fixed 4 MiB input arena and
-runs fixed synthetic high-color, mixed-alpha, Cartesian-grid, and exact-palette
-inputs through the real encoder paths. These source-independent calls prepare
+runs fixed synthetic high-color, leading-opaque mixed-alpha, clear-canvas,
+normal-resolution Wu-planner, Cartesian-grid, and exact-palette inputs through
+the real encoder paths. These source-independent calls prepare
 JavaScript and Wasm code during app startup. They do not inspect, key, or retain
 the fixture, user pixels, palettes, or encoded results. wtfgif copies every
 fixture byte into its Wasm arena after the clock starts; the baseline likewise
@@ -37,25 +38,25 @@ quality measurement are outside the clock. Results below are medians from 40
 processes per implementation on an Apple M3 Pro with Node.js 22.23.2.
 
 The encoded artifacts were built from clean commit
-`b5faf9383ef5fe2a4a94cc9a5d53dc7be019644b`. The receipt records package
+`dd625989b498709237a91dd9fb0c2c4f76062ddd`. The receipt records package
 version 3.0.19, a clean worktree, and the complete runtime environment. The
 benchmark command rebuilds both scalar and SIMD quality Wasm before bundling,
 so the timed artifact is produced from that recorded source commit.
 
 | Fixture | Shape | wtfgif | image-q + omggif | Speedup | File-size ratio |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| MakeEmoji production sample | 128×128×8 | 0.459 ms | 149.675 ms | **325.94×** | 3.80× |
-| Photographic animation | 128×96×8 | 0.256 ms | 76.718 ms | **299.48×** | 1.84× |
-| Pixel art | 64×64×12 | 0.107 ms | 28.824 ms | **268.97×** | 6.35× |
-| Smooth gradients | 128×128×8 | 0.423 ms | 133.278 ms | **314.80×** | 8.00× |
-| Random noise | 128×128×8 | 0.270 ms | 108.665 ms | **402.40×** | 7.28× |
-| Transparency | 128×128×8 | 0.195 ms | 48.442 ms | **248.58×** | 20.85× |
-| Disjoint frame palettes | 128×128×8 | 0.179 ms | 69.044 ms | **385.72×** | 7.64× |
-| Nearly static animation | 128×128×12 | 0.233 ms | 87.294 ms | **374.32×** | 12.19× |
-| Tiny animation | 16×16×6 | 0.084 ms | 55.901 ms | **666.15×** | 1.17× |
-| One-megapixel animation | 512×512×4 | 1.968 ms | 577.668 ms | **293.61×** | 22.75× |
+| MakeEmoji production sample | 128×128×8 | 0.388 ms | 143.660 ms | **370.22×** | 3.80× |
+| Photographic animation | 128×96×8 | 0.218 ms | 71.561 ms | **328.20×** | 1.84× |
+| Pixel art | 64×64×12 | 0.094 ms | 26.824 ms | **284.35×** | 6.35× |
+| Smooth gradients | 128×128×8 | 0.421 ms | 125.908 ms | **298.83×** | 8.00× |
+| Random noise | 128×128×8 | 0.246 ms | 102.388 ms | **415.51×** | 7.28× |
+| Transparency | 128×128×8 | 0.169 ms | 45.565 ms | **269.42×** | 20.85× |
+| Disjoint frame palettes | 128×128×8 | 0.154 ms | 65.311 ms | **424.67×** | 7.64× |
+| Nearly static animation | 128×128×12 | 0.215 ms | 81.405 ms | **378.85×** | 12.19× |
+| Tiny animation | 16×16×6 | 0.066 ms | 52.967 ms | **807.61×** | 1.17× |
+| One-megapixel animation | 512×512×4 | 1.866 ms | 539.675 ms | **289.18×** | 22.75× |
 
-The observed range is 248.58×–666.15×, with a 344.21× geometric-mean speedup.
+The observed range is 269.42×–807.61×, with a 366.25× geometric-mean speedup.
 The corresponding files are 1.17×–22.75× larger, with a 6.50× geometric mean.
 This is the library's intended tradeoff: encode latency takes priority over
 compression ratio.
@@ -65,8 +66,8 @@ Pro and Node.js runtime. They do not claim codec-only performance, equal output
 size, or unmeasured hardware and runtimes.
 
 Every category exceeds the 100× floor on its first real encode after
-initialization. Transparency has the narrowest margin at 248.58×, followed by
-pixel art at 268.97×.
+initialization. Transparency has the narrowest margin at 269.42×, followed by
+pixel art at 284.35×.
 No result depends on a known palette, source cache, previous result, or
 reduced-quality mode.
 
@@ -104,16 +105,35 @@ the clock starts.
 
 | Fixture | Reserve | RGBA copy in | Wasm encoder | GIF copy out | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| MakeEmoji production sample | 0.006 ms | 0.021 ms | 0.449 ms | 0.024 ms | 0.502 ms |
-| Photographic animation | 0.006 ms | 0.018 ms | 0.183 ms | 0.025 ms | 0.235 ms |
+| MakeEmoji production sample | 0.003 ms | 0.015 ms | 0.332 ms | 0.024 ms | 0.376 ms |
+| Photographic animation | 0.003 ms | 0.012 ms | 0.168 ms | 0.022 ms | 0.207 ms |
 
-Wasm therefore accounts for about 89% of the MakeEmoji boundary. A separate
+Wasm therefore accounts for about 88% of the MakeEmoji boundary. A separate
 sampling run repeated only the already-timed encode so the profiler could
 resolve native Wasm symbols; it was used for relative hotspot attribution, not
 as a latency result. Approximately 44% of those samples were in quality
 histogram construction, 28% in nearest-palette search, 22% in literal-LZW
 mapping and emission, and 6% elsewhere. The next material speedup must come
 from those three kernels rather than arena reservation or JavaScript copies.
+
+## Mixed-alpha and Wu initialization A/B
+
+The current initialization now enters two additional real encoder call graphs
+with fixed synthetic pixels: one begins opaque and contains sparse transparent
+pixels, while the other occupies 2,560 coarse cells with unequal counts so it
+reaches the normal-resolution Wu planner. These calls happen during explicit
+app initialization. They do not inspect or retain user pixels, palettes, or
+encoded results.
+
+Against the previous committed initialization, alternating fresh-process A/B
+runs measured paired-median first-encode improvements of **1.1896×** on
+MakeEmoji, **1.0384×** on photographic content, **1.0750×** on pixel art,
+**1.0160×** on gradients, **1.0327×** on noise, **1.0676×** on transparency,
+**1.0859×** on disjoint palettes, **1.0256×** on nearly-static animation,
+**1.0701×** on tiny animation, and **1.0050×** on the one-megapixel control.
+The MakeEmoji, gradient, and exact/small controls used 80–120 pairs after 64
+MiB cache eviction. Every candidate emitted the same complete-GIF SHA-256 as
+its baseline before timing was considered.
 
 Several exact-output screens were rejected rather than folded into the public
 encoder:
@@ -346,15 +366,15 @@ agreement beside the time.
 
 | Implementation | Version | Median | wtfgif advantage | Bytes | PSNR | Alpha match |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| **wtfgif** | 3.0.19 | **0.580 ms** | — | 149,689 | 34.12 dB | 100% |
-| gif.js | 0.2.0 | 97.295 ms | **167.75×** | 80,869 | 33.08 dB | 99.78% |
-| image-q + omggif | 2.1.2 + 1.0.10 | 103.535 ms | **178.51×** | 39,350 | 31.84 dB | 100% |
-| gif.js.optimized | 1.0.1 | 113.650 ms | **195.95×** | 80,304 | 32.20 dB | 99.76% |
-| gifenc | 1.0.3 | 128.330 ms | **221.26×** | 39,101 | 34.54 dB | 100% |
-| modern-gif | 2.1.0 | 139.080 ms | **239.79×** | 43,114 | 32.65 dB | 100% |
+| **wtfgif** | 3.0.19 | **0.430 ms** | — | 149,689 | 34.12 dB | 100% |
+| gif.js | 0.2.0 | 83.290 ms | **193.70×** | 80,869 | 33.08 dB | 99.78% |
+| image-q + omggif | 2.1.2 + 1.0.10 | 91.835 ms | **213.57×** | 39,350 | 31.84 dB | 100% |
+| gif.js.optimized | 1.0.1 | 96.115 ms | **223.52×** | 80,304 | 32.20 dB | 99.76% |
+| modern-gif | 2.1.0 | 118.220 ms | **274.93×** | 43,114 | 32.65 dB | 100% |
+| gifenc | 1.0.3 | 123.270 ms | **286.67×** | 39,101 | 34.54 dB | 100% |
 
 The browser receipt records wtfgif 3.0.19 at clean commit
-`472595e7dca677c4aedcb5a2eb4f0c3b7ecd7954`, together with the package-lock
+`0968d6ff29bbc539272c3c94ba1c176ff4a94f5c`, together with the package-lock
 hash and complete runtime environment.
 
 Every output must parse as an eight-frame 128×128 animation with exact 100 ms
@@ -457,8 +477,9 @@ BENCH_ITERATIONS=500 BENCH_INITIALIZED_FIRST=1 BENCH_PHASES=1 npm run bench:rgba
 That run starts a fresh Node process for every sample, initializes Wasm, and
 then times exactly one real encode with no warmup. Across 500 processes the
 median was 127.979 ms for image-q + omggif versus 1.257 ms for wtfgif
-(**101.83×**). There is no synthetic encode, retained source pixel, palette, or
-output result in initialization. The parent-observed wall clock, which also
+(**101.83×**). That historical run predated the current fixed synthetic code
+preparation; it retained no source pixel, palette, or output result in
+initialization. The parent-observed wall clock, which also
 includes launching and shutting down Node, was 171.766 ms versus 29.610 ms
 (**5.80×**). Median wtfgif phases were 0.212 ms to load the fixture, 0.430 ms
 to import the package, 0.893 ms to initialize Wasm, and 1.257 ms for the first

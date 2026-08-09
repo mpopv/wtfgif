@@ -119,6 +119,42 @@ if (process.env.PROFILE_JS_TIER === "1") {
 		}
 	}
 	for (let pixel = 0; pixel < tierPixels.length; pixel += 1) {
+		if (pixel % 31 === 1) {
+			tierPixels[pixel] = 0;
+			continue;
+		}
+		const cell = (pixel * 4051) & 2047;
+		const red = ((cell >> 8) << 4) | 8;
+		const green = (((cell >> 4) & 15) << 4) | 8;
+		const blue = ((cell & 15) << 4) | 8;
+		tierPixels[pixel] = 0xff000000 | (blue << 16) | (green << 8) | red;
+	}
+	wasm.encode_rgba_quality_low_res_constant_delay_scratch_from_input(
+		tierPixelCount * 4,
+		128,
+		128,
+		8,
+		0,
+		0,
+		179,
+	);
+	for (let pixel = 0; pixel < tierPixels.length; pixel += 1) {
+		const cell = (pixel * 4051) % 2560;
+		const red = ((cell >> 8) << 4) | 8;
+		const green = (((cell >> 4) & 15) << 4) | 8;
+		const blue = ((cell & 15) << 4) | 8;
+		tierPixels[pixel] = 0xff000000 | (blue << 16) | (green << 8) | red;
+	}
+	wasm.encode_rgba_quality_low_res_constant_delay_scratch_from_input(
+		tierPixelCount * 4,
+		128,
+		128,
+		8,
+		0,
+		0,
+		179,
+	);
+	for (let pixel = 0; pixel < tierPixels.length; pixel += 1) {
 		if (pixel % 31 === 0) {
 			tierPixels[pixel] = 0;
 			continue;
