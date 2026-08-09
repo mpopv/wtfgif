@@ -2,6 +2,18 @@
 
 All notable changes to wtfgif are documented here.
 
+## 3.0.17 - 2026-08-09
+
+- Pack dominant-palette SIMD channels into signed 16-bit lanes and widen exact
+  squared-distance products back to 32 bits. This searches eight colors per
+  three channel loads instead of four, without changing Euclidean distance,
+  palette-index tie order, indexed pixels, or complete GIF bytes. Across 80
+  alternating fresh-process pairs, the MakeEmoji encode improves **1.0295x**
+  (0.518 ms to 0.503 ms). Photographic input is neutral; 120-pair disjoint and
+  tiny controls measure **0.9981x** and **0.9995x**, respectively. One- and
+  four-group unroll variants were measured and rejected because they were flat
+  or slower than the retained two-group loop.
+
 ## 3.0.16 - 2026-08-09
 
 - Scan the dominant 255/256-color quality palette as one fixed, padded SIMD

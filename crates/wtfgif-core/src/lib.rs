@@ -10214,9 +10214,9 @@ fn palette_color_distance(color: u32, r: u8, g: u8, b: u8) -> u32 {
 
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 struct SimdPaletteChannels {
-    red: [u32; 256],
-    green: [u32; 256],
-    blue: [u32; 256],
+    red: [i16; 256],
+    green: [i16; 256],
+    blue: [i16; 256],
 }
 
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
@@ -10232,9 +10232,9 @@ impl SimdPaletteChannels {
 
     #[inline(always)]
     fn set(&mut self, index: usize, color: u32) {
-        self.red[index] = (color >> 16) & 0xff;
-        self.green[index] = (color >> 8) & 0xff;
-        self.blue[index] = color & 0xff;
+        self.red[index] = ((color >> 16) & 0xff) as i16;
+        self.green[index] = ((color >> 8) & 0xff) as i16;
+        self.blue[index] = (color & 0xff) as i16;
     }
 
     #[inline(always)]
@@ -10255,13 +10255,14 @@ impl SimdPaletteChannels {
 #[inline(never)]
 fn nearest_palette_index_simd(r: u8, g: u8, b: u8, palette: &SimdPaletteChannels) -> u8 {
     use core::arch::wasm32::{
-        i32x4_add, i32x4_extract_lane, i32x4_lt, i32x4_min, i32x4_mul, i32x4_shl, i32x4_shuffle,
-        i32x4_splat, i32x4_sub, u32x4, v128_bitselect, v128_load,
+        i16x8_splat, i16x8_sub, i32x4_add, i32x4_extmul_high_i16x8, i32x4_extmul_low_i16x8,
+        i32x4_extract_lane, i32x4_lt, i32x4_min, i32x4_shl, i32x4_shuffle, i32x4_splat, u32x4,
+        v128_bitselect, v128_load,
     };
 
-    let red = i32x4_splat(i32::from(r));
-    let green = i32x4_splat(i32::from(g));
-    let blue = i32x4_splat(i32::from(b));
+    let red = i16x8_splat(i16::from(r));
+    let green = i16x8_splat(i16::from(g));
+    let blue = i16x8_splat(i16::from(b));
     // Four independent accumulators hide palette-load latency. Collapse them
     // once after the scan instead of adding a dependency between iterations.
     let mut palette_indices0 = u32x4(0, 1, 2, 3);
@@ -10272,40 +10273,57 @@ fn nearest_palette_index_simd(r: u8, g: u8, b: u8, palette: &SimdPaletteChannels
     let mut best1 = i32x4_splat(i32::MAX);
     let mut best2 = i32x4_splat(i32::MAX);
     let mut best3 = i32x4_splat(i32::MAX);
-    macro_rules! update_four {
-        ($offset:expr, $indices:ident, $best:ident) => {{
+    macro_rules! update_eight {
+        ($offset:expr, $low_indices:ident, $high_indices:ident, $low_best:ident, $high_best:ident) => {{
             let palette_red = unsafe { v128_load(palette.red.as_ptr().add($offset).cast()) };
             let palette_green = unsafe { v128_load(palette.green.as_ptr().add($offset).cast()) };
             let palette_blue = unsafe { v128_load(palette.blue.as_ptr().add($offset).cast()) };
-            let red_delta = i32x4_sub(red, palette_red);
-            let green_delta = i32x4_sub(green, palette_green);
-            let blue_delta = i32x4_sub(blue, palette_blue);
-            let distance = i32x4_add(
+            let red_delta = i16x8_sub(red, palette_red);
+            let green_delta = i16x8_sub(green, palette_green);
+            let blue_delta = i16x8_sub(blue, palette_blue);
+            let low_distance = i32x4_add(
                 i32x4_add(
-                    i32x4_mul(red_delta, red_delta),
-                    i32x4_mul(green_delta, green_delta),
+                    i32x4_extmul_low_i16x8(red_delta, red_delta),
+                    i32x4_extmul_low_i16x8(green_delta, green_delta),
                 ),
-                i32x4_mul(blue_delta, blue_delta),
+                i32x4_extmul_low_i16x8(blue_delta, blue_delta),
             );
-            let candidate = i32x4_add($indices, i32x4_shl(distance, 8));
-            let closer = i32x4_lt(candidate, $best);
-            $best = v128_bitselect(candidate, $best, closer);
+            let high_distance = i32x4_add(
+                i32x4_add(
+                    i32x4_extmul_high_i16x8(red_delta, red_delta),
+                    i32x4_extmul_high_i16x8(green_delta, green_delta),
+                ),
+                i32x4_extmul_high_i16x8(blue_delta, blue_delta),
+            );
+            let low_candidate = i32x4_add($low_indices, i32x4_shl(low_distance, 8));
+            let high_candidate = i32x4_add($high_indices, i32x4_shl(high_distance, 8));
+            $low_best =
+                v128_bitselect(low_candidate, $low_best, i32x4_lt(low_candidate, $low_best));
+            $high_best = v128_bitselect(
+                high_candidate,
+                $high_best,
+                i32x4_lt(high_candidate, $high_best),
+            );
         }};
     }
     macro_rules! update_sixteen {
         ($offset:expr) => {{
-            update_four!($offset, palette_indices0, best0);
-            update_four!($offset + 4, palette_indices1, best1);
-            update_four!($offset + 8, palette_indices2, best2);
-            update_four!($offset + 12, palette_indices3, best3);
+            update_eight!($offset, palette_indices0, palette_indices1, best0, best1);
+            update_eight!(
+                $offset + 8,
+                palette_indices2,
+                palette_indices3,
+                best2,
+                best3
+            );
             palette_indices0 = i32x4_add(palette_indices0, i32x4_splat(16));
             palette_indices1 = i32x4_add(palette_indices1, i32x4_splat(16));
             palette_indices2 = i32x4_add(palette_indices2, i32x4_splat(16));
             palette_indices3 = i32x4_add(palette_indices3, i32x4_splat(16));
         }};
     }
-    // Two groups per iteration was the best measured balance between loop
-    // overhead and generated Wasm code size on the quality corpus.
+    // Two groups per iteration balance loop control and generated code size
+    // for the packed 16-bit palette scan.
     let mut offset = 0usize;
     while offset < 256 {
         update_sixteen!(offset);
