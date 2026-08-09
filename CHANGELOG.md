@@ -13,6 +13,10 @@ All notable changes to wtfgif are documented here.
   tiny controls measure **0.9981x** and **0.9995x**, respectively. One- and
   four-group unroll variants were measured and rejected because they were flat
   or slower than the retained two-group loop.
+- Refresh the clean 40-process Node receipt at **248.09x-655.65x**, with a
+  **334.93x geometric mean** and **313.61x** MakeEmoji result. The fresh-Chrome
+  comparison measures wtfgif at **0.505 ms** and the five alternatives at
+  **193.62x-262.29x slower**.
 
 ## 3.0.16 - 2026-08-09
 
