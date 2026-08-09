@@ -12,6 +12,11 @@ All notable changes to wtfgif are documented here.
   array per frame, evict 64 MiB of unrelated memory before timing, and yield
   one event-loop turn after eviction. This measures the image-stitching API
   shape without fixture-derived preparation or immediate allocator aftermath.
+- Refresh the clean receipts and generated charts under that stricter boundary.
+  The 40-process Node corpus spans **219.40x-661.38x**, with a **312.34x
+  geometric mean** and **242.86x** on MakeEmoji. In 15 fresh Chrome processes,
+  wtfgif takes **0.725 ms** and the five alternatives are **131.11x-191.01x
+  slower**.
 - Keep the browser encoder comparison chart in the README and add a direct
   100x-wtfgif latency reference line. Clarify the latency-only output-size
   tradeoff and the exact relationship between the 3.0.11 benchmark receipt and
