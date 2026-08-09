@@ -93,6 +93,48 @@ function prepareQualityEncoderRuntime(
 		0,
 		DEFAULT_ALPHA_THRESHOLD,
 	);
+	// Tier the ordinary leading-opaque mixed-alpha scanner separately from the
+	// clear-canvas scanner below. Both feeds are source-independent and the
+	// clear-canvas feed remains last so its reusable data state is unchanged.
+	for (let pixel = 0; pixel < tierPixels.length; pixel += 1) {
+		if (pixel % 31 === 1) {
+			tierPixels[pixel] = 0;
+			continue;
+		}
+		const cell = (pixel * 4051) & 2047;
+		const red = ((cell >> 8) << 4) | 8;
+		const green = (((cell >> 4) & 15) << 4) | 8;
+		const blue = ((cell & 15) << 4) | 8;
+		tierPixels[pixel] = 0xff000000 | (blue << 16) | (green << 8) | red;
+	}
+	module.encode_rgba_quality_low_res_constant_delay_scratch_from_input(
+		QUALITY_TIER_PIXEL_COUNT * 4,
+		128,
+		128,
+		8,
+		0,
+		0,
+		DEFAULT_ALPHA_THRESHOLD,
+	);
+	// Tier the normal-resolution Wu planner used once a 4-bit histogram has
+	// more than 2,048 occupied cells. Unequal deterministic cell counts avoid
+	// the separate Cartesian-grid shortcut.
+	for (let pixel = 0; pixel < tierPixels.length; pixel += 1) {
+		const cell = (pixel * 4051) % 2560;
+		const red = ((cell >> 8) << 4) | 8;
+		const green = (((cell >> 4) & 15) << 4) | 8;
+		const blue = ((cell & 15) << 4) | 8;
+		tierPixels[pixel] = 0xff000000 | (blue << 16) | (green << 8) | red;
+	}
+	module.encode_rgba_quality_low_res_constant_delay_scratch_from_input(
+		QUALITY_TIER_PIXEL_COUNT * 4,
+		128,
+		128,
+		8,
+		0,
+		0,
+		DEFAULT_ALPHA_THRESHOLD,
+	);
 	for (let pixel = 0; pixel < tierPixels.length; pixel += 1) {
 		if (pixel % 31 === 0) {
 			tierPixels[pixel] = 0;

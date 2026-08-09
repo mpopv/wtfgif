@@ -76,7 +76,7 @@ describe("encode-only quality entry", () => {
 				0,
 				128,
 			);
-			expect(prepareEncode).toHaveBeenCalledTimes(21);
+			expect(prepareEncode).toHaveBeenCalledTimes(23);
 			expect(prepareEncode).toHaveBeenLastCalledWith(8, 1, 1, 2, 0, 0, 128);
 			expect(prepareLargeEncode).toHaveBeenCalledExactlyOnceWith(
 				1001 * 1000 * 4,
@@ -97,7 +97,7 @@ describe("encode-only quality entry", () => {
 				delay: 10,
 			});
 			expect(prepare).toHaveBeenCalledTimes(1);
-			expect(prepareEncode).toHaveBeenCalledTimes(22);
+			expect(prepareEncode).toHaveBeenCalledTimes(24);
 			expect(prepareLargeEncode).toHaveBeenCalledTimes(1);
 			expect(prepareOutputPointer).toHaveBeenCalledTimes(3);
 			expect(reserve).toHaveBeenCalledTimes(1);
