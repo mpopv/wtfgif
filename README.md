@@ -10,8 +10,9 @@ resulting files are **1.17×–22.75× larger**. The benchmark includes arbitrar
 pixel art, gradients, transparency, noise, tiny animations, and a one-megapixel
 animation—not known palettes, cached pixels, reused palettes, or cached results.
 wtfgif receives one independently allocated RGBA array per frame, matching a
-normal image-stitching app. Both encoders use their normal adaptive 256-color
-path, and every GIF is decoded and checked before its timing is accepted.
+normal image-stitching app. Neither encoder is given a palette: each must
+discover and map its own palette from the RGBA pixels. Every GIF is decoded and
+checked before its timing is accepted.
 
 - To make a GIF, give it one or more images as RGBA pixel arrays.
 - To read a GIF, give it the file bytes and get RGBA pixel arrays back.

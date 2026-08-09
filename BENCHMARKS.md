@@ -9,11 +9,12 @@ npm run bench
 
 ## Representative corpus
 
-Both implementations receive the same RGBA pixels and must build a global
-adaptive palette of up to 256 colors, map every pixel, encode the same animation
-shape and delays, and return a complete GIF. wtfgif receives one independently
-allocated typed array per frame, matching the public API shape used by an app
-that stitches decoded images together. Those arrays are created before timing.
+Both implementations receive the same RGBA pixels and must discover a global
+palette of up to 256 colors, map every pixel, encode the same animation shape
+and delays, and return a complete GIF. No fixture supplies a known palette.
+wtfgif receives one independently allocated typed array per frame, matching the
+public API shape used by an app that stitches decoded images together. Those
+arrays are created before timing.
 The image-q + omggif baseline receives its normal contiguous RGBA input. Both
 use an alpha threshold of 179. Every fixture encodes complete frames through the
 public `wtfgif/encode` entry point and the equivalent image-q + omggif pipeline.
