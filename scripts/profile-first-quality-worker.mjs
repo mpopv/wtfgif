@@ -6,7 +6,24 @@ import { loadBenchmarkCorpus } from "./benchmark/corpus.mjs";
 const fixtureId = process.env.PROFILE_FIXTURE ?? "makeemoji-real";
 const fixture = loadBenchmarkCorpus().find((value) => value.id === fixtureId);
 if (!fixture) throw new Error(`Unknown PROFILE_FIXTURE: ${fixtureId}`);
-const { rgba, width, height, frameCount } = fixture;
+let { rgba } = fixture;
+const { width, height, frameCount } = fixture;
+if (process.env.PROFILE_TRANSPARENT_PERCENT !== undefined) {
+	const transparentPercent = Number(process.env.PROFILE_TRANSPARENT_PERCENT);
+	if (
+		!Number.isFinite(transparentPercent) ||
+		transparentPercent < 0 ||
+		transparentPercent > 100
+	) {
+		throw new Error("PROFILE_TRANSPARENT_PERCENT must be between 0 and 100");
+	}
+	rgba = rgba.slice();
+	const transparentThreshold = Math.round(transparentPercent * 10_000);
+	for (let pixel = 0; pixel < rgba.length / 4; pixel += 1) {
+		const sample = (Math.imul(pixel, 2_654_435_761) >>> 0) % 1_000_000;
+		rgba[pixel * 4 + 3] = sample < transparentThreshold ? 0 : 255;
+	}
+}
 const wasmBytes = readFileSync(
 	process.env.PROFILE_WASM_PATH ??
 		new URL(

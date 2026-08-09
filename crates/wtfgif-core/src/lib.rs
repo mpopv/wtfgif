@@ -10212,15 +10212,42 @@ fn palette_color_distance(color: u32, r: u8, g: u8, b: u8) -> u32 {
 }
 
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+struct SimdPaletteChannels {
+    red: [u32; 256],
+    green: [u32; 256],
+    blue: [u32; 256],
+    len: usize,
+}
+
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+impl SimdPaletteChannels {
+    #[inline(always)]
+    fn empty(len: usize) -> Self {
+        Self {
+            red: [0; 256],
+            green: [0; 256],
+            blue: [0; 256],
+            len,
+        }
+    }
+
+    #[inline(always)]
+    fn set(&mut self, index: usize, color: u32) {
+        self.red[index] = (color >> 16) & 0xff;
+        self.green[index] = (color >> 8) & 0xff;
+        self.blue[index] = color & 0xff;
+    }
+}
+
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 #[cold]
 #[inline(never)]
-fn nearest_palette_index_simd(r: u8, g: u8, b: u8, palette_rgb: &[u32]) -> u8 {
+fn nearest_palette_index_simd(r: u8, g: u8, b: u8, palette: &SimdPaletteChannels) -> u8 {
     use core::arch::wasm32::{
-        i32x4_add, i32x4_lt, i32x4_mul, i32x4_shl, i32x4_splat, i32x4_sub, u32x4_shr, v128_and,
-        v128_bitselect, v128_load, v128_store,
+        i32x4_add, i32x4_lt, i32x4_mul, i32x4_shl, i32x4_splat, i32x4_sub, v128_bitselect,
+        v128_load, v128_store,
     };
 
-    let mask = i32x4_splat(0xff);
     let red = i32x4_splat(i32::from(r));
     let green = i32x4_splat(i32::from(g));
     let blue = i32x4_splat(i32::from(b));
@@ -10230,10 +10257,9 @@ fn nearest_palette_index_simd(r: u8, g: u8, b: u8, palette_rgb: &[u32]) -> u8 {
     let mut best1 = i32x4_splat(i32::MAX);
     macro_rules! update_four {
         ($offset:expr, $indices:ident, $best:ident) => {{
-            let colors = unsafe { v128_load(palette_rgb.as_ptr().add($offset).cast()) };
-            let palette_red = v128_and(u32x4_shr(colors, 16), mask);
-            let palette_green = v128_and(u32x4_shr(colors, 8), mask);
-            let palette_blue = v128_and(colors, mask);
+            let palette_red = unsafe { v128_load(palette.red.as_ptr().add($offset).cast()) };
+            let palette_green = unsafe { v128_load(palette.green.as_ptr().add($offset).cast()) };
+            let palette_blue = unsafe { v128_load(palette.blue.as_ptr().add($offset).cast()) };
             let red_delta = i32x4_sub(red, palette_red);
             let green_delta = i32x4_sub(green, palette_green);
             let blue_delta = i32x4_sub(blue, palette_blue);
@@ -10250,14 +10276,14 @@ fn nearest_palette_index_simd(r: u8, g: u8, b: u8, palette_rgb: &[u32]) -> u8 {
         }};
     }
     let mut offset = 0usize;
-    while offset + 8 <= palette_rgb.len() {
+    while offset + 8 <= palette.len {
         update_four!(offset, palette_indices0, best0);
         update_four!(offset + 4, palette_indices1, best1);
         palette_indices0 = i32x4_add(palette_indices0, i32x4_splat(8));
         palette_indices1 = i32x4_add(palette_indices1, i32x4_splat(8));
         offset += 8;
     }
-    if offset + 4 <= palette_rgb.len() {
+    if offset + 4 <= palette.len {
         update_four!(offset, palette_indices0, best0);
         offset += 4;
     }
@@ -10267,8 +10293,13 @@ fn nearest_palette_index_simd(r: u8, g: u8, b: u8, palette_rgb: &[u32]) -> u8 {
         v128_store(lanes.as_mut_ptr().add(4).cast(), best1);
     }
     let mut packed = *lanes.iter().min().unwrap_or(&u32::MAX);
-    while offset < palette_rgb.len() {
-        let candidate = (palette_color_distance(palette_rgb[offset], r, g, b) << 8) | offset as u32;
+    while offset < palette.len {
+        let red_delta = i32::from(r) - palette.red[offset] as i32;
+        let green_delta = i32::from(g) - palette.green[offset] as i32;
+        let blue_delta = i32::from(b) - palette.blue[offset] as i32;
+        let distance =
+            (red_delta * red_delta + green_delta * green_delta + blue_delta * blue_delta) as u32;
+        let candidate = (distance << 8) | offset as u32;
         packed = packed.min(candidate);
         offset += 1;
     }
@@ -10328,9 +10359,12 @@ fn build_quality_dominant_index_plan_simd<const HISTOGRAM_BITS: usize>(
     if palette.capacity() < palette_len + usize::from(has_transparent_pixels) {
         palette.reserve(palette_len + usize::from(has_transparent_pixels) - palette.capacity());
     }
-    for &position in &palette_positions[..palette_len] {
+    let mut palette_channels = SimdPaletteChannels::empty(palette_len);
+    for (index, &position) in palette_positions[..palette_len].iter().enumerate() {
         let color = &colors[usize::from(position)];
-        palette.push(rgb_key(color.red, color.green, color.blue));
+        let rgb = rgb_key(color.red, color.green, color.blue);
+        palette.push(rgb);
+        palette_channels.set(index, rgb);
     }
 
     let mapping_len = 1usize << (HISTOGRAM_BITS * 3);
@@ -10340,7 +10374,6 @@ fn build_quality_dominant_index_plan_simd<const HISTOGRAM_BITS: usize>(
         histogram_to_palette[usize::from(color.histogram_index)] = index as u8;
         color.histogram_index |= DIRECT_PALETTE_CELL;
     }
-
     let mut counts = [0u32; 256];
     let mut red_sums = [0u32; 256];
     let mut green_sums = [0u32; 256];
@@ -10351,7 +10384,7 @@ fn build_quality_dominant_index_plan_simd<const HISTOGRAM_BITS: usize>(
             color.histogram_index &= !DIRECT_PALETTE_CELL;
             histogram_to_palette[cell]
         } else {
-            nearest_palette_index_simd(color.red, color.green, color.blue, &palette)
+            nearest_palette_index_simd(color.red, color.green, color.blue, &palette_channels)
         };
         histogram_to_palette[cell] = index;
         let count = color.count;
@@ -10376,18 +10409,20 @@ fn build_quality_dominant_index_plan_simd<const HISTOGRAM_BITS: usize>(
         );
         palette_changed |= palette[index] != representative;
         palette[index] = representative;
+        palette_channels.set(index, representative);
     }
     if palette_changed {
         for color in &colors {
             let cell = usize::from(color.histogram_index);
             let hint_index = histogram_to_palette[cell];
             let hint_color = palette[usize::from(hint_index)];
-            histogram_to_palette[cell] =
-                if hint_color == rgb_key(color.red, color.green, color.blue) {
-                    hint_index
-                } else {
-                    nearest_palette_index_simd(color.red, color.green, color.blue, &palette)
-                };
+            histogram_to_palette[cell] = if hint_color
+                == rgb_key(color.red, color.green, color.blue)
+            {
+                hint_index
+            } else {
+                nearest_palette_index_simd(color.red, color.green, color.blue, &palette_channels)
+            };
         }
     }
     recycle_quality_colors(colors);
