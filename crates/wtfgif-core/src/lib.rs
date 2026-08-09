@@ -7898,17 +7898,12 @@ fn accumulate_quality_histogram_u32_bits_remaining_mixed_opaque_spans_four_bit(
             u64::from_le(unsafe { std::ptr::read_unaligned(rgba_pointer.add(offset + 24).cast()) });
         let combined_alpha = packed01 & packed23 & packed45 & packed67;
         if combined_alpha & ALPHA_MASK == ALPHA_MASK {
-            // Decode every destination before issuing the scattered bin
-            // updates. Keeping those addresses independent gives the CPU
-            // enough memory-level parallelism to overlap the random writes.
-            let indices01 = quality_histogram_index_pair_packed::<4>(packed01);
-            let indices23 = quality_histogram_index_pair_packed::<4>(packed23);
-            let indices45 = quality_histogram_index_pair_packed::<4>(packed45);
-            let indices67 = quality_histogram_index_pair_packed::<4>(packed67);
-            add_quality_histogram_u32_pair_packed_indexed::<4>(histogram, packed01, indices01);
-            add_quality_histogram_u32_pair_packed_indexed::<4>(histogram, packed23, indices23);
-            add_quality_histogram_u32_pair_packed_indexed::<4>(histogram, packed45, indices45);
-            add_quality_histogram_u32_pair_packed_indexed::<4>(histogram, packed67, indices67);
+            // Keep opaque mixed-image spans branch-free. Checking whether the
+            // two pixels share a bin costs more here than issuing both updates.
+            add_quality_histogram_u32_pair_packed_split::<4>(histogram, packed01);
+            add_quality_histogram_u32_pair_packed_split::<4>(histogram, packed23);
+            add_quality_histogram_u32_pair_packed_split::<4>(histogram, packed45);
+            add_quality_histogram_u32_pair_packed_split::<4>(histogram, packed67);
         } else if (packed01 | packed23 | packed45 | packed67) & ALPHA_MASK == 0 {
             has_transparent_pixels = true;
         } else {
@@ -10244,17 +10239,23 @@ impl SimdPaletteChannels {
 #[inline(never)]
 fn nearest_palette_index_simd(r: u8, g: u8, b: u8, palette: &SimdPaletteChannels) -> u8 {
     use core::arch::wasm32::{
-        i32x4_add, i32x4_lt, i32x4_mul, i32x4_shl, i32x4_splat, i32x4_sub, v128_bitselect,
-        v128_load, v128_store,
+        i32x4_add, i32x4_lt, i32x4_min, i32x4_mul, i32x4_shl, i32x4_splat, i32x4_sub, u32x4,
+        v128_bitselect, v128_load, v128_store,
     };
 
     let red = i32x4_splat(i32::from(r));
     let green = i32x4_splat(i32::from(g));
     let blue = i32x4_splat(i32::from(b));
-    let mut palette_indices0 = unsafe { v128_load([0u32, 1, 2, 3].as_ptr().cast()) };
-    let mut palette_indices1 = unsafe { v128_load([4u32, 5, 6, 7].as_ptr().cast()) };
+    // Four independent accumulators hide palette-load latency. Collapse them
+    // once after the scan instead of adding a dependency between iterations.
+    let mut palette_indices0 = u32x4(0, 1, 2, 3);
+    let mut palette_indices1 = u32x4(4, 5, 6, 7);
+    let mut palette_indices2 = u32x4(8, 9, 10, 11);
+    let mut palette_indices3 = u32x4(12, 13, 14, 15);
     let mut best0 = i32x4_splat(i32::MAX);
     let mut best1 = i32x4_splat(i32::MAX);
+    let mut best2 = i32x4_splat(i32::MAX);
+    let mut best3 = i32x4_splat(i32::MAX);
     macro_rules! update_four {
         ($offset:expr, $indices:ident, $best:ident) => {{
             let palette_red = unsafe { v128_load(palette.red.as_ptr().add($offset).cast()) };
@@ -10276,21 +10277,31 @@ fn nearest_palette_index_simd(r: u8, g: u8, b: u8, palette: &SimdPaletteChannels
         }};
     }
     let mut offset = 0usize;
-    while offset + 8 <= palette.len {
+    while offset + 16 <= palette.len {
+        update_four!(offset, palette_indices0, best0);
+        update_four!(offset + 4, palette_indices1, best1);
+        update_four!(offset + 8, palette_indices2, best2);
+        update_four!(offset + 12, palette_indices3, best3);
+        palette_indices0 = i32x4_add(palette_indices0, i32x4_splat(16));
+        palette_indices1 = i32x4_add(palette_indices1, i32x4_splat(16));
+        palette_indices2 = i32x4_add(palette_indices2, i32x4_splat(16));
+        palette_indices3 = i32x4_add(palette_indices3, i32x4_splat(16));
+        offset += 16;
+    }
+    if offset + 8 <= palette.len {
         update_four!(offset, palette_indices0, best0);
         update_four!(offset + 4, palette_indices1, best1);
         palette_indices0 = i32x4_add(palette_indices0, i32x4_splat(8));
-        palette_indices1 = i32x4_add(palette_indices1, i32x4_splat(8));
         offset += 8;
     }
     if offset + 4 <= palette.len {
         update_four!(offset, palette_indices0, best0);
         offset += 4;
     }
-    let mut lanes = [u32::MAX; 8];
+    best0 = i32x4_min(i32x4_min(best0, best1), i32x4_min(best2, best3));
+    let mut lanes = [u32::MAX; 4];
     unsafe {
         v128_store(lanes.as_mut_ptr().cast(), best0);
-        v128_store(lanes.as_mut_ptr().add(4).cast(), best1);
     }
     let mut packed = *lanes.iter().min().unwrap_or(&u32::MAX);
     while offset < palette.len {
