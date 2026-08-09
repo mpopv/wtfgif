@@ -93,12 +93,59 @@ function prepareQualityEncoderRuntime(
 		const blue = ((Math.floor(pixel / (8 * 12)) << 4) | 8) & 255;
 		tierPixels[pixel] = 0xff000000 | (blue << 16) | (green << 8) | red;
 	}
-	for (let iteration = 0; iteration < 8; iteration += 1) {
+	for (let iteration = 0; iteration < 3; iteration += 1) {
 		module.encode_rgba_quality_low_res_constant_delay_scratch_from_input(
 			gridPixelCount * 4,
 			32,
 			16,
 			3,
+			0,
+			0,
+			DEFAULT_ALPHA_THRESHOLD,
+		);
+	}
+
+	// Tier the quantized direct-cell route separately from the exact-source
+	// route. Three shades per 4-bit cell create more than 256 exact RGB values
+	// while collapsing to 128 histogram representatives.
+	const directPixelCount = 32 * 16 * 2;
+	const directShades = [2, 8, 14];
+	for (let pixel = 0; pixel < directPixelCount; pixel += 1) {
+		const cell = (pixel * 73) & 127;
+		const shade = directShades[Math.floor(pixel / 128) % 3]!;
+		const red = ((cell >> 4) << 4) | shade;
+		const green = (((cell >> 2) & 3) << 4) | shade;
+		const blue = ((cell & 3) << 4) | shade;
+		tierPixels[pixel] = 0xff000000 | (blue << 16) | (green << 8) | red;
+	}
+	for (let iteration = 0; iteration < 3; iteration += 1) {
+		module.encode_rgba_quality_low_res_constant_delay_scratch_from_input(
+			directPixelCount * 4,
+			32,
+			16,
+			2,
+			0,
+			0,
+			DEFAULT_ALPHA_THRESHOLD,
+		);
+	}
+	// A transparent input with all 256 coarse cells exercises the exact
+	// one-cell merge selected when transparency leaves 255 palette slots.
+	const singleMergePixelCount = 32 * 16 * 2;
+	for (let pixel = 0; pixel < singleMergePixelCount; pixel += 1) {
+		const cell = pixel & 255;
+		const red = ((cell >> 5) << 5) | 16;
+		const green = (((cell >> 2) & 7) << 5) | 16;
+		const blue = ((cell & 3) << 6) | 32;
+		const alpha = pixel < 768 ? 255 : 0;
+		tierPixels[pixel] = (alpha << 24) | (blue << 16) | (green << 8) | red;
+	}
+	for (let iteration = 0; iteration < 3; iteration += 1) {
+		module.encode_rgba_quality_low_res_constant_delay_scratch_from_input(
+			singleMergePixelCount * 4,
+			32,
+			16,
+			2,
 			0,
 			0,
 			DEFAULT_ALPHA_THRESHOLD,
@@ -116,7 +163,7 @@ function prepareQualityEncoderRuntime(
 		const frame = pixel >> 12;
 		tierPixels[pixel] = exactPalette[((x >> 3) + (y >> 3) + frame * 3) & 7]!;
 	}
-	for (let iteration = 0; iteration < 2; iteration += 1) {
+	for (let iteration = 0; iteration < 4; iteration += 1) {
 		module.encode_rgba_quality_low_res_constant_delay_scratch_from_input(
 			exactPixelCount * 4,
 			64,
@@ -127,6 +174,24 @@ function prepareQualityEncoderRuntime(
 			DEFAULT_ALPHA_THRESHOLD,
 		);
 	}
+	// A larger three-color animation finishes tiering the small exact-palette
+	// call graph without reading or retaining any user pixels.
+	const stablePixelCount = 128 * 128 * 12;
+	for (let pixel = 0; pixel < stablePixelCount; pixel += 1) {
+		const x = pixel & 127;
+		const y = (pixel >> 7) & 127;
+		const frame = pixel >> 14;
+		tierPixels[pixel] = exactPalette[((x >> 4) + (y >> 4) + frame) % 3]!;
+	}
+	module.encode_rgba_quality_low_res_constant_delay_scratch_from_input(
+		stablePixelCount * 4,
+		128,
+		128,
+		12,
+		0,
+		0,
+		DEFAULT_ALPHA_THRESHOLD,
+	);
 }
 
 export function prepareQualityWasmEncoderModule(

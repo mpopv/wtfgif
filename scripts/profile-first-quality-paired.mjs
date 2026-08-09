@@ -27,7 +27,11 @@ const pairedRatios = { totalMs: [], wasmMs: [] };
 const outputSha256 = {};
 
 function run(name, wasmPath) {
-	const result = spawnSync(process.execPath, [worker], {
+	const nodeArguments =
+		process.env.PROFILE_EAGER === "1"
+			? ["--no-wasm-lazy-compilation", worker]
+			: [worker];
+	const result = spawnSync(process.execPath, nodeArguments, {
 		cwd: root,
 		encoding: "utf8",
 		env: {
