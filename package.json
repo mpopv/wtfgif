@@ -1,6 +1,6 @@
 {
 	"name": "wtfgif",
-	"version": "3.0.18",
+	"version": "3.0.19",
 	"main": "dist/index.cjs",
 	"module": "dist/index.mjs",
 	"types": "dist/index.d.ts",
@@ -107,7 +107,7 @@
 		"test:conformance:browsers": "node scripts/validate-browser-conformance.mjs",
 		"fuzz:smoke": "node scripts/run-fuzz-smoke.mjs",
 		"bench": "npm run bench:corpus",
-		"bench:corpus": "npm run build && node scripts/bench-corpus.mjs",
+		"bench:corpus": "npm run build:wasm:node:quality && npm run build:wasm:node:quality:simd && npm run build && node scripts/bench-corpus.mjs",
 		"bench:corpus:stress": "BENCH_CORPUS_INCLUDE_STRESS=1 npm run bench:corpus",
 		"bench:charts": "node scripts/render-corpus-speedup-chart.mjs && node scripts/render-encoder-race-chart.mjs",
 		"bench:micro": "npm run bench:rgba",
