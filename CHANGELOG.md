@@ -18,7 +18,7 @@ All notable changes to wtfgif are documented here.
 - Refresh the clean 40-process Node receipt at **246.86x-658.41x**, with a
   **324.63x geometric mean** and **283.45x** MakeEmoji result. The fresh-Chrome
   comparison measures wtfgif at **0.620 ms** and the five alternatives at
-  **159.66x-220.41x slower**.
+  **159.57x-221.41x slower**.
 
 - Keep the README focused on the public encode/decode workflow and move runtime
   preparation detail to the benchmark guide. Label both generated comparison

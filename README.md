@@ -151,8 +151,8 @@ These are public-API time-to-result medians from 15 fresh Chrome processes per
 encoder on the same eight-frame MakeEmoji workload. Package loading and wtfgif
 initialization are outside the clock. Each process evicts 64 MiB of unrelated
 memory and waits one animation frame before timing. wtfgif took **0.620 ms**;
-the five alternatives took **98.990–136.655 ms** and were
-**159.66×–220.41× slower**.
+the five alternatives took **98.935–137.275 ms** and were
+**159.57×–221.41× slower**.
 wtfgif emitted 149,689 bytes; the alternatives emitted 39,101–80,869 bytes.
 The dashed line marks 100× wtfgif's measured latency. The chart reports output
 size, PSNR, and alpha agreement beside every timing, so the speed claim is not
