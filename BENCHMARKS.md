@@ -94,6 +94,47 @@ gradients, noise, transparency, disjoint frame palettes, similar adjacent
 frames, tiny animations, and a one-megapixel workload. Add the optional
 three-megapixel fixture with `npm run bench:corpus:stress`.
 
+## Current optimization profile
+
+A source-built 3.0.19 SIMD Wasm profile split the first public encode into its
+JavaScript and Wasm phases. Each median below comes from 120 fresh Node
+processes after normal source-independent initialization, a 64 MiB unrelated
+memory eviction, and one event-loop yield. The fixture is first touched after
+the clock starts.
+
+| Fixture | Reserve | RGBA copy in | Wasm encoder | GIF copy out | Total |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| MakeEmoji production sample | 0.006 ms | 0.021 ms | 0.449 ms | 0.024 ms | 0.502 ms |
+| Photographic animation | 0.006 ms | 0.018 ms | 0.183 ms | 0.025 ms | 0.235 ms |
+
+Wasm therefore accounts for about 89% of the MakeEmoji boundary. A separate
+sampling run repeated only the already-timed encode so the profiler could
+resolve native Wasm symbols; it was used for relative hotspot attribution, not
+as a latency result. Approximately 44% of those samples were in quality
+histogram construction, 28% in nearest-palette search, 22% in literal-LZW
+mapping and emission, and 6% elsewhere. The next material speedup must come
+from those three kernels rather than arena reservation or JavaScript copies.
+
+Several exact-output screens were rejected rather than folded into the public
+encoder:
+
+- Replacing `new Uint8Array(outputView)` with either typed-array `slice()` or
+  `ArrayBuffer.slice()` made GIF ownership copy-out 18% or 28% slower in 300
+  paired fresh processes.
+- Removing the compiler's `cold` placement hint from nearest-palette search
+  left Wasm size unchanged and every complete-GIF SHA-256 hash identical. A
+  500-pair confirmation measured MakeEmoji **1.0055×**, photographic
+  **0.9990×**, noise **1.0048×**, nearly-static **0.9944×**, tiny **1.0119×**,
+  and one-megapixel **1.0060×** versus the retained build. The repeatable
+  nearly-static regression made the layout trade unacceptable.
+- Wider mixed-opaque histogram unrolls, an out-of-line fallback, and
+  interleaved bin updates each improved selected fixtures but regressed at
+  least one disjoint-palette, nearly-static, photographic, or tiny control.
+
+These are diagnostic A/B results, not replacements for the clean committed
+40-process corpus receipt above. Candidate and baseline output hashes were
+required to match before any timing was considered.
+
 ## Fused literal-mapping A/B
 
 The 3.0.15 encoder maps two independent eight-pixel groups before writing

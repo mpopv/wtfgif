@@ -144,6 +144,15 @@ color reduction when arbitrary RGBA pixels become a GIF palette.
 The receipt identifies wtfgif 3.0.19 at clean source commit
 `1d0514f81227e0c7ff4b58aacee111f1553f3a0e`.
 
+Current profiling puts about **89%** of the MakeEmoji first-encode latency
+inside the Wasm encoder. Reserving its arena, copying the independent RGBA
+frames in, and copying the GIF out together take about 0.05 ms. Within Wasm,
+the remaining work is concentrated in palette-histogram construction,
+nearest-palette mapping, and literal LZW emission. Those are the active
+optimization targets; the JavaScript boundary is no longer the bottleneck.
+The phase timings, sampling method, and rejected exact-output experiments are
+recorded in [BENCHMARKS.md](BENCHMARKS.md).
+
 ## Browser comparison
 
 ![Browser GIF encoder benchmark](docs/encoder-race.svg)
