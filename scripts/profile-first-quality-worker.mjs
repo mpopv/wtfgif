@@ -212,10 +212,12 @@ const outputLength = (
 )(rgba.length, width, height, frameCount, 10, 0, 179);
 const encoded = performance.now();
 const output = new Uint8Array(
-	wasm.memory.buffer,
-	wasm.gif_output_scratch_ptr(),
-	outputLength,
-).slice();
+	new Uint8Array(
+		wasm.memory.buffer,
+		wasm.gif_output_scratch_ptr(),
+		outputLength,
+	),
+);
 const copiedOutput = performance.now();
 
 process.stdout.write(

@@ -321,11 +321,12 @@ function encodeRgbaGifFramesPrepared(
 						alphaThreshold,
 					);
 		if (outputLength === 0) throw new Error("Wasm quality encoding failed.");
-		return new Uint8Array(
+		const outputView = new Uint8Array(
 			memory.buffer,
 			module.gif_output_scratch_ptr(),
 			outputLength,
-		).slice();
+		);
+		return new Uint8Array(outputView);
 	}
 	if (width <= 0 || height <= 0 || width > 65535 || height > 65535) {
 		throw new Error("Width/Height invalid.");
@@ -440,11 +441,12 @@ function encodeRgbaGifFramesFallback(
 					alphaThreshold,
 				);
 	if (outputLength === 0) throw new Error("Wasm quality encoding failed.");
-	return new Uint8Array(
+	const outputView = new Uint8Array(
 		memory.buffer,
 		module.gif_output_scratch_ptr(),
 		outputLength,
-	).slice();
+	);
+	return new Uint8Array(outputView);
 }
 
 function getFrameCount(
