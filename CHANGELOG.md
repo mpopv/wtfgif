@@ -4,12 +4,17 @@ All notable changes to wtfgif are documented here.
 
 ## Unreleased
 
+## 3.0.13 - 2026-08-09
+
+- Prepare the existing split-pair histogram loop with one fixed opaque encode
+  during initialization, followed by the existing mixed-alpha preparation.
+  Across 300 paired fresh photographic processes this is **1.2034x faster end
+  to end**, while MakeEmoji improves **1.0226x** and noise/transparency remain
+  neutral with byte-identical GIFs.
 - Predecode the dominant palette into SIMD-friendly red, green, and blue
   channels, avoiding repeated unpacking in exact nearest-color refinement. The
   direct 240-process comparison is **1.0693x faster end to end**, with the same
-  complete-GIF hash. The clean 40-process receipt now measures **262.60x** on
-  MakeEmoji (0.553 ms vs 145.261 ms), with byte-identical output and all ten
-  workloads still above 100x.
+  complete-GIF hash.
 - Prepare the independently allocated frame-array API path during explicit
   initialization with one fixed two-pixel animation. Across 20 fresh,
   cache-evicted MakeEmoji processes this reduces the first separate-frame
@@ -19,10 +24,10 @@ All notable changes to wtfgif are documented here.
   one event-loop turn after eviction. This measures the image-stitching API
   shape without fixture-derived preparation or immediate allocator aftermath.
 - Refresh the clean receipts and generated charts under that stricter boundary.
-  The 40-process Node corpus spans **211.43x-660.80x**, with a **313.38x
-  geometric mean** and **262.60x** on MakeEmoji. In 15 fresh Chrome processes,
-  wtfgif takes **0.725 ms** and the five alternatives are **131.11x-191.01x
-  slower**.
+  The 40-process Node corpus spans **209.75x-644.94x**, with a **313.88x
+  geometric mean**, **300.94x** on photographic input, and **259.72x** on
+  MakeEmoji. In 15 fresh Chrome processes, wtfgif takes **0.690 ms** and the
+  five alternatives are **144.97x-198.62x slower**.
 - Keep the browser encoder comparison chart in the README and add a direct
   100x-wtfgif latency reference line. Clarify the latency-only output-size
   tradeoff and the exact relationship between the 3.0.11 benchmark receipt and
