@@ -22,7 +22,12 @@ wasm-bindgen = "0.2"
 talc = { version = "=5.0.4", default-features = false }
 
 [package.metadata.wasm-pack.profile.release]
-wasm-opt = ["-O3", "--inline-max-combined-binary-size=1500", "--converge"]
+wasm-opt = [
+	"-O3",
+	"--inline-max-combined-binary-size=1500",
+	"--converge",
+	"--debuginfo",
+]
 
 [profile.release]
 opt-level = 3
