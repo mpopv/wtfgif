@@ -5,7 +5,7 @@ runtimes. Its single encoder is optimized for maximum speed at the cost of
 larger files. There are no compression or quality modes.
 
 On the current 10-workload cold-cache receipt, the first and only encode after
-initialization is **248.09×–655.65× faster** than image-q + omggif. The
+initialization is **252.45×–690.98× faster** than image-q + omggif. The
 resulting files are **1.17×–22.75× larger**. The benchmark includes arbitrary RGBA photographs,
 pixel art, gradients, transparency, noise, tiny animations, and a one-megapixel
 animation—not known palettes, cached pixels, reused palettes, or cached results.
@@ -125,9 +125,9 @@ Initialization prepares code with fixed synthetic inputs and reserves a generic
 encoded results. The exact preparation A/B receipts live in
 [BENCHMARKS.md](BENCHMARKS.md); they are kept out of the headline result above.
 
-Across the 10 arbitrary-RGBA workloads, wtfgif is **248.09×–655.65× faster**
-than image-q + omggif, with a **334.93× geometric mean**. The real 128×128
-MakeEmoji workload is **313.61× faster** (0.490 ms vs 153.604 ms). Output files
+Across the 10 arbitrary-RGBA workloads, wtfgif is **252.45×–690.98× faster**
+than image-q + omggif, with a **344.96× geometric mean**. The real 128×128
+MakeEmoji workload is **327.92× faster** (0.481 ms vs 157.620 ms). Output files
 are **1.17×–22.75× larger**, with a **6.50× geometric mean**.
 
 ![wtfgif speedup across the arbitrary-RGBA corpus](docs/corpus-speedup.svg)
@@ -140,8 +140,8 @@ Both the chart and values above are generated from the clean 40-process
 and binary transparency must be exact; PSNR and SSIM expose the unavoidable
 color reduction when arbitrary RGBA pixels become a GIF palette.
 
-The receipt identifies wtfgif 3.0.17 at clean source commit
-`a68c549426d31667f069d1fdebc7c55e1106faf7`.
+The receipt identifies wtfgif 3.0.18 at clean source commit
+`a551ca7856224d61ce6c5b3159cc4212eb10d419`.
 
 ## Browser comparison
 
@@ -150,9 +150,9 @@ The receipt identifies wtfgif 3.0.17 at clean source commit
 These are public-API time-to-result medians from 15 fresh Chrome processes per
 encoder on the same eight-frame MakeEmoji workload. Package loading and wtfgif
 initialization are outside the clock. Each process evicts 64 MiB of unrelated
-memory and waits one animation frame before timing. wtfgif took **0.505 ms**;
-the five alternatives took **97.780–132.455 ms** and were
-**193.62×–262.29× slower**.
+memory and waits one animation frame before timing. wtfgif took **0.485 ms**;
+the five alternatives took **93.040–132.405 ms** and were
+**191.84×–273.00× slower**.
 wtfgif emitted 149,689 bytes; the alternatives emitted 39,101–80,869 bytes.
 The dashed line marks 100× wtfgif's measured latency. The chart reports output
 size, PSNR, and alpha agreement beside every timing, so the speed claim is not
