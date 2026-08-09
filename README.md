@@ -5,10 +5,11 @@ runtimes. Its single encoder is optimized for maximum speed at the cost of
 larger files. There are no compression or quality modes.
 
 On the current 10-workload cold-cache receipt, the first and only encode after
-initialization is **257.91×–674.52× faster** than image-q + omggif. The
-resulting files are **1.17×–22.75× larger**. The benchmark includes arbitrary RGBA photographs,
-pixel art, gradients, transparency, noise, tiny animations, and a one-megapixel
-animation—not known palettes, cached pixels, reused palettes, or cached results.
+initialization is **248.58×–666.15× faster** than image-q + omggif. The
+resulting files are **1.17×–22.75× larger**. The benchmark includes arbitrary
+RGBA photographs, pixel art, gradients, transparency, noise, tiny animations,
+and a one-megapixel animation—not known palettes, cached pixels, reused
+palettes, or cached results.
 wtfgif receives one independently allocated RGBA array per frame, matching a
 normal image-stitching app. Neither encoder is given a palette: each must
 discover and map its own palette from the RGBA pixels. Every GIF is decoded and
@@ -126,9 +127,9 @@ Initialization prepares code with fixed synthetic inputs and reserves a generic
 encoded results. The exact preparation A/B receipts live in
 [BENCHMARKS.md](BENCHMARKS.md); they are kept out of the headline result above.
 
-Across the 10 arbitrary-RGBA workloads, wtfgif is **257.91×–674.52× faster**
-than image-q + omggif, with a **349.00× geometric mean**. The real 128×128
-MakeEmoji workload is **352.53× faster** (0.477 ms vs 168.317 ms). Output files
+Across the 10 arbitrary-RGBA workloads, wtfgif is **248.58×–666.15× faster**
+than image-q + omggif, with a **344.21× geometric mean**. The real 128×128
+MakeEmoji workload is **325.94× faster** (0.459 ms vs 149.675 ms). Output files
 are **1.17×–22.75× larger**, with a **6.50× geometric mean**.
 
 ![wtfgif speedup across the arbitrary-RGBA corpus](docs/corpus-speedup.svg)
@@ -142,7 +143,7 @@ and binary transparency must be exact; PSNR and SSIM expose the unavoidable
 color reduction when arbitrary RGBA pixels become a GIF palette.
 
 The receipt identifies wtfgif 3.0.19 at clean source commit
-`1d0514f81227e0c7ff4b58aacee111f1553f3a0e`.
+`b5faf9383ef5fe2a4a94cc9a5d53dc7be019644b`.
 
 Current profiling puts about **89%** of the MakeEmoji first-encode latency
 inside the Wasm encoder. Reserving its arena, copying the independent RGBA
