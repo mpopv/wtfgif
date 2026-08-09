@@ -15,6 +15,10 @@ All notable changes to wtfgif are documented here.
   identical. The one-time initialization cost increases by about 1.6 ms.
 - Parameterize split-pair and mixed-alpha preparation depths in the paired
   first-encode profiler so future V8 tiering changes can be measured directly.
+- Refresh the clean 40-process Node receipt at **239.22x-657.16x**, with a
+  **322.54x geometric mean** and **276.80x** MakeEmoji result. The 15-process
+  fresh-Chrome race measures wtfgif at **0.595 ms** and the five alternatives
+  at **165.79x-235.27x slower**.
 
 ## 3.0.13 - 2026-08-09
 
