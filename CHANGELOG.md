@@ -4,6 +4,20 @@ All notable changes to wtfgif are documented here.
 
 ## Unreleased
 
+- Prepare the dominant 2,048-color palette planner and exact KD lookup during
+  source-independent initialization without warming histogram, LZW, or small
+  exact-image paths. Across 180 isolated MakeEmoji pairs, the first encode is
+  1.0504x faster end to end and 1.0494x faster inside Wasm; after 64 MiB cache
+  eviction, 160 pairs retain a 1.0338x end-to-end gain. Every output hash is
+  identical, and the other nine corpus categories remain neutral or improve.
+- Extend the paired first-encode profiler to report the one-time startup phase
+  separately from JavaScript tier preparation and the timed user encode.
+- Pass the complete release gate and refresh both clean-process receipts and
+  generated charts. The arbitrary-RGBA corpus spans **183.00x-877.22x**, with
+  a **270.99x geometric mean** and **199.38x** on MakeEmoji. In fresh Chrome
+  processes, wtfgif takes **0.730 ms** and the five alternatives are
+  **135.36x-188.62x slower**.
+
 ## 3.0.11 - 2026-08-08
 
 - Decode all eight histogram destinations before issuing scattered updates for

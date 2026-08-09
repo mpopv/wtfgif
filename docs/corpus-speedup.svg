@@ -5,60 +5,60 @@
 <g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" fill="#172026">
 <text x="40" y="46" font-size="25" font-weight="700">Every tested arbitrary RGBA workload exceeds 100×</text>
 <text x="40" y="74" font-size="14" fill="#51606a">First real encode after initialization · 40 fresh Node processes per implementation · higher is faster</text>
-<text x="40" y="98" font-size="13" fill="#51606a">186.10×–885.75× · 268.97× geometric mean · 1.17×–22.75× output size</text>
+<text x="40" y="98" font-size="13" fill="#51606a">183.00×–877.22× · 270.99× geometric mean · 1.17×–22.75× output size</text>
 <line x1="328" y1="112" x2="328" y2="552" stroke="#b34b3f" stroke-width="2" stroke-dasharray="5 4"/>
 <text x="335" y="124" font-size="12" font-weight="700" fill="#9b3d33">100×</text>
 <text x="230" y="160" text-anchor="end" font-size="14" font-weight="600">MakeEmoji production sample</text>
 <text x="230" y="175" text-anchor="end" font-size="11" fill="#687780">128×128×8</text>
-<rect x="260" y="142" width="132.55" height="27" rx="3" fill="#0d8f6f"/>
-<text x="400.55" y="161" font-size="13" font-weight="700">194.93×</text>
+<rect x="260" y="142" width="135.58" height="27" rx="3" fill="#0d8f6f"/>
+<text x="403.58" y="161" font-size="13" font-weight="700">199.38×</text>
 <text x="260" y="180" font-size="11" fill="#687780">3.80× output size</text>
 <text x="230" y="202" text-anchor="end" font-size="14" font-weight="600">Photographic animation</text>
 <text x="230" y="217" text-anchor="end" font-size="11" fill="#687780">128×96×8</text>
-<rect x="260" y="184" width="126.55" height="27" rx="3" fill="#0d8f6f"/>
-<text x="394.55" y="203" font-size="13" font-weight="700">186.10×</text>
+<rect x="260" y="184" width="124.44" height="27" rx="3" fill="#0d8f6f"/>
+<text x="392.44" y="203" font-size="13" font-weight="700">183.00×</text>
 <text x="260" y="222" font-size="11" fill="#687780">1.84× output size</text>
 <text x="230" y="244" text-anchor="end" font-size="14" font-weight="600">Pixel art</text>
 <text x="230" y="259" text-anchor="end" font-size="11" fill="#687780">64×64×12</text>
-<rect x="260" y="226" width="180.92" height="27" rx="3" fill="#0d8f6f"/>
-<text x="448.92" y="245" font-size="13" font-weight="700">266.06×</text>
+<rect x="260" y="226" width="182.73" height="27" rx="3" fill="#0d8f6f"/>
+<text x="450.73" y="245" font-size="13" font-weight="700">268.72×</text>
 <text x="260" y="264" font-size="11" fill="#687780">6.35× output size</text>
 <text x="230" y="286" text-anchor="end" font-size="14" font-weight="600">Smooth gradients</text>
 <text x="230" y="301" text-anchor="end" font-size="11" fill="#687780">128×128×8</text>
-<rect x="260" y="268" width="144.01" height="27" rx="3" fill="#0d8f6f"/>
-<text x="412.01" y="287" font-size="13" font-weight="700">211.78×</text>
+<rect x="260" y="268" width="148.25" height="27" rx="3" fill="#0d8f6f"/>
+<text x="416.25" y="287" font-size="13" font-weight="700">218.01×</text>
 <text x="260" y="306" font-size="11" fill="#687780">8.00× output size</text>
 <text x="230" y="328" text-anchor="end" font-size="14" font-weight="600">Deterministic noise</text>
 <text x="230" y="343" text-anchor="end" font-size="11" fill="#687780">128×128×8</text>
-<rect x="260" y="310" width="221.11" height="27" rx="3" fill="#0d8f6f"/>
-<text x="489.11" y="329" font-size="13" font-weight="700">325.16×</text>
+<rect x="260" y="310" width="224.48" height="27" rx="3" fill="#0d8f6f"/>
+<text x="492.48" y="329" font-size="13" font-weight="700">330.11×</text>
 <text x="260" y="348" font-size="11" fill="#687780">7.28× output size</text>
 <text x="230" y="370" text-anchor="end" font-size="14" font-weight="600">Transparent edges</text>
 <text x="230" y="385" text-anchor="end" font-size="11" fill="#687780">128×128×8</text>
-<rect x="260" y="352" width="150.97" height="27" rx="3" fill="#0d8f6f"/>
-<text x="418.97" y="371" font-size="13" font-weight="700">222.02×</text>
+<rect x="260" y="352" width="153.25" height="27" rx="3" fill="#0d8f6f"/>
+<text x="421.25" y="371" font-size="13" font-weight="700">225.37×</text>
 <text x="260" y="390" font-size="11" fill="#687780">20.85× output size</text>
 <text x="230" y="412" text-anchor="end" font-size="14" font-weight="600">Disjoint frame palettes</text>
 <text x="230" y="427" text-anchor="end" font-size="11" fill="#687780">128×128×8</text>
-<rect x="260" y="394" width="203.15" height="27" rx="3" fill="#0d8f6f"/>
-<text x="471.15" y="413" font-size="13" font-weight="700">298.75×</text>
+<rect x="260" y="394" width="194.54" height="27" rx="3" fill="#0d8f6f"/>
+<text x="462.54" y="413" font-size="13" font-weight="700">286.09×</text>
 <text x="260" y="432" font-size="11" fill="#687780">7.64× output size</text>
 <text x="230" y="454" text-anchor="end" font-size="14" font-weight="600">Nearly static animation</text>
 <text x="230" y="469" text-anchor="end" font-size="11" fill="#687780">128×128×12</text>
-<rect x="260" y="436" width="145.44" height="27" rx="3" fill="#0d8f6f"/>
-<text x="413.44" y="455" font-size="13" font-weight="700">213.88×</text>
+<rect x="260" y="436" width="150.98" height="27" rx="3" fill="#0d8f6f"/>
+<text x="418.98" y="455" font-size="13" font-weight="700">222.03×</text>
 <text x="260" y="474" font-size="11" fill="#687780">12.19× output size</text>
 <text x="230" y="496" text-anchor="end" font-size="14" font-weight="600">Tiny animation</text>
 <text x="230" y="511" text-anchor="end" font-size="11" fill="#687780">16×16×6</text>
-<rect x="260" y="478" width="602.31" height="27" rx="3" fill="#0d8f6f"/>
-<text x="870.31" y="497" font-size="13" font-weight="700">885.75×</text>
+<rect x="260" y="478" width="596.51" height="27" rx="3" fill="#0d8f6f"/>
+<text x="864.51" y="497" font-size="13" font-weight="700">877.22×</text>
 <text x="260" y="516" font-size="11" fill="#687780">1.17× output size</text>
 <text x="230" y="538" text-anchor="end" font-size="14" font-weight="600">One-megapixel animation</text>
 <text x="230" y="553" text-anchor="end" font-size="11" fill="#687780">512×512×4</text>
-<rect x="260" y="520" width="161.34" height="27" rx="3" fill="#0d8f6f"/>
-<text x="429.34" y="539" font-size="13" font-weight="700">237.27×</text>
+<rect x="260" y="520" width="163.91" height="27" rx="3" fill="#0d8f6f"/>
+<text x="431.91" y="539" font-size="13" font-weight="700">241.04×</text>
 <text x="260" y="558" font-size="11" fill="#687780">22.75× output size</text>
 <text x="40" y="609" font-size="12" fill="#687780">Latency excludes package loading and one-time initialization; it includes palette creation, mapping, LZW, and GIF assembly.</text>
-<text x="40" y="631" font-size="12" fill="#687780">Apple M3 Pro · Node v22.23.2 · wtfgif 3.0.10 · no known palette, source cache, or reused result</text>
+<text x="40" y="631" font-size="12" fill="#687780">Apple M3 Pro · Node v22.23.2 · wtfgif 3.0.11 · no known palette, source cache, or reused result</text>
 </g>
 </svg>
