@@ -81,7 +81,7 @@ export function renderEncoderRaceChart(receipt) {
 		'<rect width="100%" height="100%" fill="#ffffff"/>',
 		'<g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" fill="#172026">',
 		'<text x="40" y="48" font-size="25" font-weight="700">Public-API browser encode time</text>',
-		`<text x="40" y="76" font-size="14" fill="#51606a">${escapeXml(`Median first real encode after initialization + 64 MiB eviction · ${workload}`)}</text>`,
+		`<text x="40" y="76" font-size="14" fill="#51606a">${escapeXml(`Cold-cache first real encode after initialization · 64 MiB eviction · ${workload}`)}</text>`,
 		`<text x="40" y="100" font-size="13" fill="#51606a">${escapeXml(`wtfgif ${wtfgif.medianMs.toFixed(3)} ms · alternatives ${minimumSlowdown.toFixed(2)}×–${maximumSlowdown.toFixed(2)}× slower · lower is better`)}</text>`,
 	);
 

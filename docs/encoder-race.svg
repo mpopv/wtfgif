@@ -4,7 +4,7 @@
 <rect width="100%" height="100%" fill="#ffffff"/>
 <g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" fill="#172026">
 <text x="40" y="48" font-size="25" font-weight="700">Public-API browser encode time</text>
-<text x="40" y="76" font-size="14" fill="#51606a">Median first real encode after initialization + 64 MiB eviction · 8 × 128×128 RGBA frames · 15 fresh Chrome processes</text>
+<text x="40" y="76" font-size="14" fill="#51606a">Cold-cache first real encode after initialization · 64 MiB eviction · 8 × 128×128 RGBA frames · 15 fresh Chrome processes</text>
 <text x="40" y="100" font-size="13" fill="#51606a">wtfgif 0.595 ms · alternatives 165.79×–235.27× slower · lower is better</text>
 <line x1="250" y1="120" x2="250" y2="508" stroke="#e3e8eb" stroke-width="1"/>
 <text x="250" y="118" text-anchor="middle" font-size="12" fill="#687780">0 ms</text>

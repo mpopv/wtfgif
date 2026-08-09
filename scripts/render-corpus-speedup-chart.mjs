@@ -82,7 +82,7 @@ export function renderCorpusSpeedupChart(receipt) {
 		'<rect width="100%" height="100%" fill="#ffffff"/>',
 		'<g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" fill="#172026">',
 		`<text x="40" y="46" font-size="25" font-weight="700">${rows.length}/${rows.length} tested RGBA workloads exceed 100×</text>`,
-		`<text x="40" y="74" font-size="14" fill="#51606a">${escapeXml(`First real encode after initialization + 64 MiB eviction · ${receipt.benchmark.processesPerImplementation} fresh Node processes per implementation · higher is faster`)}</text>`,
+		`<text x="40" y="74" font-size="14" fill="#51606a">${escapeXml(`Cold-cache first real encode after initialization · 64 MiB eviction · ${receipt.benchmark.processesPerImplementation} fresh Node processes per implementation · higher is faster`)}</text>`,
 		`<text x="40" y="98" font-size="13" fill="#51606a">${escapeXml(`${minimumSpeedup.toFixed(2)}×–${maximumSpeedup.toFixed(2)}× · ${meanSpeedup.toFixed(2)}× geometric mean · ${minimumSizeRatio.toFixed(2)}×–${maximumSizeRatio.toFixed(2)}× output size`)}</text>`,
 		`<line x1="${thresholdX}" y1="112" x2="${thresholdX}" y2="${firstRowY + rows.length * rowHeight - 10}" stroke="#b34b3f" stroke-width="2" stroke-dasharray="5 4"/>`,
 		`<text x="${thresholdX + 7}" y="124" font-size="12" font-weight="700" fill="#9b3d33">100×</text>`,

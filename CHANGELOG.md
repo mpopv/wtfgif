@@ -4,6 +4,10 @@ All notable changes to wtfgif are documented here.
 
 ## Unreleased
 
+- Keep the README focused on the public encode/decode workflow and move runtime
+  preparation detail to the benchmark guide. Label both generated comparison
+  charts explicitly as cold-cache first-encode measurements.
+
 ## 3.0.14 - 2026-08-09
 
 - Run the fixed mixed-alpha encoder preparation four times during explicit

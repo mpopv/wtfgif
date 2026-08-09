@@ -4,8 +4,9 @@
 runtimes. Its single encoder is optimized for maximum speed at the cost of
 larger files. There are no compression or quality modes.
 
-On the current 10-workload receipt, the first encode after initialization is
-**239.22×–657.16× faster** than image-q + omggif. The resulting files are
+On the current 10-workload cold-cache receipt, the first and only encode after
+initialization is **239.22×–657.16× faster** than image-q + omggif. The
+resulting files are
 **1.17×–22.75× larger**. The benchmark includes arbitrary RGBA photographs,
 pixel art, gradients, transparency, noise, tiny animations, and a one-megapixel
 animation—not known palettes, cached pixels, reused palettes, or cached results.
@@ -121,16 +122,9 @@ the harness evicts 64 MiB of unrelated memory and yields one event-loop turn
 without touching the encoder or fixture.
 
 Initialization prepares code with fixed synthetic inputs and reserves a generic
-4 MiB Wasm input arena; it never inspects or retains user pixels, palettes, or
-encoded results. Preparing the public separate-frame path reduces the first
-cache-evicted MakeEmoji encode from 0.713 ms to 0.604 ms across 20 fresh
-processes, a 1.180× gain with identical GIF bytes.
-
-The fixed mixed-alpha preparation runs four times to reach V8's faster tier.
-Against the same Wasm with one call, 100 paired fresh cache-evicted processes
-improve MakeEmoji **1.092×**, transparency **1.175×**, gradient **1.021×**, and
-noise **1.011×** inside Wasm. Photo and large inputs remain neutral, all GIF
-hashes are identical, and the one-time initialization cost rises about 1.6 ms.
+4 MiB Wasm input arena. It never inspects or retains user pixels, palettes, or
+encoded results. The exact preparation A/B receipts live in
+[BENCHMARKS.md](BENCHMARKS.md); they are kept out of the headline result above.
 
 Across the 10 arbitrary-RGBA workloads, wtfgif is **239.22×–657.16× faster**
 than image-q + omggif, with a **322.54× geometric mean**. The real 128×128
