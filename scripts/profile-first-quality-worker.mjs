@@ -195,9 +195,8 @@ const tierCompleted = performance.now();
 const evictionBytes = Number(process.env.PROFILE_CACHE_EVICTION_BYTES ?? 0);
 if (evictionBytes > 0) {
 	const eviction = new Uint8Array(evictionBytes);
-	for (let offset = 0; offset < eviction.length; offset += 64) {
-		eviction[offset] = offset;
-	}
+	eviction.fill(1);
+	await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 const started = performance.now();

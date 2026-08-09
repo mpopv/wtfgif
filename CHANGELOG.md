@@ -21,6 +21,12 @@ All notable changes to wtfgif are documented here.
   100x-wtfgif latency reference line. Clarify the latency-only output-size
   tradeoff and the exact relationship between the 3.0.11 benchmark receipt and
   the unchanged encoder source shipped in 3.0.12.
+- Label the corpus chart as 10/10 tested workloads and the browser chart as
+  public-API time-to-result, keeping file size and decoded quality beside every
+  latency claim.
+- Make the first-quality profiler fill its complete cache-eviction arena and
+  yield one event-loop turn before timing, matching the stricter corpus
+  boundary for future diagnostics.
 
 ## 3.0.12 - 2026-08-08
 

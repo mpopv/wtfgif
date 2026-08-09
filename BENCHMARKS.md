@@ -57,6 +57,10 @@ The corresponding files are 1.17×–22.75× larger, with a 6.50× geometric mea
 This is the library's intended tradeoff: encode latency takes priority over
 compression ratio.
 
+These results describe the ten committed fixtures on the recorded Apple M3
+Pro and Node.js runtime. They do not claim codec-only performance, equal output
+size, or unmeasured hardware and runtimes.
+
 Every category exceeds the 100× floor on its first real encode after
 initialization. Transparency has the narrowest margin at 219.40×, followed by
 the MakeEmoji production sample at 242.86×.
@@ -100,8 +104,11 @@ separate-frame encode from 0.713 ms to 0.604 ms, a **1.180×** end-to-end gain
 with identical GIF bytes.
 
 The earlier committed preparation profiler isolates the SIMD palette-planner
-work that preceded this separate-frame change. It touched 64 MiB of unrelated
-memory after initialization and before timing either implementation. Against
+work that preceded this separate-frame change. Its receipt touched one byte per
+cache line in a 64 MiB unrelated-memory arena after initialization and before
+timing either implementation. The current profiler fills the entire arena and
+yields one event-loop turn before timing so future diagnostics match the corpus
+boundary more closely. Against
 the clean 3.0.11 encoder and with the same source-independent preparation on
 both sides, 180 fresh MakeEmoji pairs measured **1.1349×** faster inside Wasm
 and **1.1272×** faster end to end.
@@ -156,7 +163,8 @@ encoders run in a rotating order to reduce thermal and ordering bias. Results
 below are medians from 15 processes per encoder on an Apple M3 Pro in Google
 Chrome 151.0.7922.77.
 
-This is public-API time-to-result, not a codec-kernel microbenchmark. The
+This is public-API time-to-result, not a codec-kernel microbenchmark or an
+equal-file-size comparison. The
 gif.js and gif.js.optimized APIs create workers when `render()` begins, so that
 worker creation is inside their timed jobs. The README chart uses bar length
 for median encode time, marks 100× wtfgif latency with a dashed reference line,

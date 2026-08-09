@@ -80,7 +80,7 @@ export function renderEncoderRaceChart(receipt) {
 		`<desc id="desc">Horizontal bar chart comparing ${rows.map((row) => row.label).join(", ")}. Bar length is median encode time in milliseconds, so shorter is faster. A dashed vertical line marks one hundred times wtfgif latency. Labels also report emitted GIF size, relative slowdown versus wtfgif, PSNR, and alpha agreement.</desc>`,
 		'<rect width="100%" height="100%" fill="#ffffff"/>',
 		'<g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" fill="#172026">',
-		'<text x="40" y="48" font-size="25" font-weight="700">Browser encode time on the same RGBA animation</text>',
+		'<text x="40" y="48" font-size="25" font-weight="700">Public-API browser encode time</text>',
 		`<text x="40" y="76" font-size="14" fill="#51606a">${escapeXml(`Median first real encode after initialization + 64 MiB eviction · ${workload}`)}</text>`,
 		`<text x="40" y="100" font-size="13" fill="#51606a">${escapeXml(`wtfgif ${wtfgif.medianMs.toFixed(3)} ms · alternatives ${minimumSlowdown.toFixed(2)}×–${maximumSlowdown.toFixed(2)}× slower · lower is better`)}</text>`,
 	);
@@ -120,7 +120,7 @@ export function renderEncoderRaceChart(receipt) {
 	}
 
 	elements.push(
-		`<text x="40" y="${height - 58}" font-size="12" fill="#687780">Bar length = encode time · dashed line = 100× wtfgif · labels include size and decoded quality · gif.js worker creation is timed</text>`,
+		`<text x="40" y="${height - 58}" font-size="12" fill="#687780">Time to complete GIF · dashed line = 100× wtfgif · labels include size and decoded quality · gif.js worker creation is timed</text>`,
 		`<text x="40" y="${height - 34}" font-size="12" fill="#687780">${escapeXml(receipt.environment.browser)} · ${escapeXml(receipt.environment.cpu)} · every output decoded and checked</text>`,
 		"</g>",
 		"</svg>",

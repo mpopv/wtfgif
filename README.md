@@ -1,9 +1,8 @@
 # wtfgif
 
-`wtfgif` is a JavaScript/TypeScript library for making and reading GIF files in
-Node.js, browsers, Workers, and edge runtimes. Its one encoding path is
-deliberately optimized for minimum latency at the cost of larger files. There
-is no balanced mode or compression profile.
+`wtfgif` makes and reads GIF files in Node.js, browsers, Workers, and edge
+runtimes. Its single encoder is optimized for maximum speed at the cost of
+larger files. There are no compression or quality modes.
 
 On the current 10-workload receipt, the first encode after initialization is
 **219.40×–661.38× faster** than image-q + omggif. The resulting files are
@@ -148,8 +147,8 @@ The receipt identifies wtfgif 3.0.12 at clean source commit
 
 ![Browser GIF encoder benchmark](docs/encoder-race.svg)
 
-These are median first encodes from 15 fresh Chrome processes per encoder on
-the same eight-frame MakeEmoji workload. Package loading and wtfgif
+These are public-API time-to-result medians from 15 fresh Chrome processes per
+encoder on the same eight-frame MakeEmoji workload. Package loading and wtfgif
 initialization are outside the clock. Each process evicts 64 MiB of unrelated
 memory and waits one animation frame before timing. wtfgif took **0.725 ms**;
 the five alternatives took **95.055–138.480 ms** and were
@@ -171,6 +170,8 @@ npm run bench:race
 npm run bench:charts
 ```
 
+These receipts support the exact workloads, hardware, runtimes, and timing
+boundaries shown here; they are not codec-only or matched-file-size claims.
 Exact conditions, raw samples, output sizes, PSNR, SSIM, independent-decoder
 checks, and browser checks are in [BENCHMARKS.md](BENCHMARKS.md).
 

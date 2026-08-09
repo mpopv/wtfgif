@@ -3,7 +3,7 @@
 <desc id="desc">Horizontal bar chart comparing wtfgif, gif.js, image-q + omggif, gif.js.optimized, gifenc, modern-gif. Bar length is median encode time in milliseconds, so shorter is faster. A dashed vertical line marks one hundred times wtfgif latency. Labels also report emitted GIF size, relative slowdown versus wtfgif, PSNR, and alpha agreement.</desc>
 <rect width="100%" height="100%" fill="#ffffff"/>
 <g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" fill="#172026">
-<text x="40" y="48" font-size="25" font-weight="700">Browser encode time on the same RGBA animation</text>
+<text x="40" y="48" font-size="25" font-weight="700">Public-API browser encode time</text>
 <text x="40" y="76" font-size="14" fill="#51606a">Median first real encode after initialization + 64 MiB eviction · 8 × 128×128 RGBA frames · 15 fresh Chrome processes</text>
 <text x="40" y="100" font-size="13" fill="#51606a">wtfgif 0.725 ms · alternatives 131.11×–191.01× slower · lower is better</text>
 <line x1="250" y1="120" x2="250" y2="508" stroke="#e3e8eb" stroke-width="1"/>
@@ -44,7 +44,7 @@
 <rect x="250" y="458" width="535.46" height="28" rx="3" fill="#aab5bb"/>
 <text x="794.46" y="478" text-anchor="start" font-size="14" font-weight="700" fill="#172026">138.5 ms · 42.1 KiB · 191.01× slower</text>
 <text x="250" y="503" font-size="12" fill="#687780">32.65 dB PSNR · 100% alpha match</text>
-<text x="40" y="574" font-size="12" fill="#687780">Bar length = encode time · dashed line = 100× wtfgif · labels include size and decoded quality · gif.js worker creation is timed</text>
+<text x="40" y="574" font-size="12" fill="#687780">Time to complete GIF · dashed line = 100× wtfgif · labels include size and decoded quality · gif.js worker creation is timed</text>
 <text x="40" y="598" font-size="12" fill="#687780">Google Chrome 151.0.7922.77 · Apple M3 Pro · every output decoded and checked</text>
 </g>
 </svg>
