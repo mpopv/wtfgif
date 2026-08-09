@@ -63,7 +63,10 @@ reduced-quality mode.
 
 The chart is generated from the same receipt as the table with
 `npm run bench:charts`. Bar length represents speedup over image-q + omggif;
-the secondary label reports the output file-size ratio.
+the secondary label reports the output file-size ratio and source-relative RGB
+quality for both encoders. “Lossless RGB” means every source-opaque RGB pixel
+survived palette mapping exactly. Shape, frame timing, and binary alpha must be
+exact on every fixture regardless of that RGB label.
 
 The baseline uses image-q `rgbquant` palette generation and nearest-color
 mapping followed by omggif LZW. wtfgif uses its global quality quantizer and

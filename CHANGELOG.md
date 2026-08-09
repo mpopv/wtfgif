@@ -4,6 +4,10 @@ All notable changes to wtfgif are documented here.
 
 ## Unreleased
 
+- Put the corpus quality receipt directly in the generated speedup chart. Each
+  workload now shows wtfgif and image-q RGB quality beside latency and emitted
+  size, while the chart explicitly records the exact shape, timing, and binary
+  alpha gate.
 - Replace scalar KD palette assignment for ordinary 512-2,048-cell SIMD
   workloads with exact eight-color vector searches and a specialized stable
   dominant-color planner. The route preserves the existing palette, indexed

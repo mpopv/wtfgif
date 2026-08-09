@@ -8,7 +8,9 @@ On the current 10-workload receipt, the first encode after initialization is
 **190.41×–873.79× faster** than image-q + omggif. The resulting files are
 **1.17×–22.75× larger**. The benchmark includes arbitrary RGBA photographs,
 pixel art, gradients, transparency, noise, tiny animations, and a one-megapixel
-animation—not known palettes or cached results.
+animation—not known palettes, cached pixels, reused palettes, or cached
+results. Both encoders use their normal adaptive 256-color path, and every GIF
+is decoded and checked before its timing is accepted.
 
 - To make a GIF, give it one or more images as RGBA pixel arrays.
 - To read a GIF, give it the file bytes and get RGBA pixel arrays back.
@@ -131,8 +133,11 @@ are **1.17×–22.75× larger**, with a **6.50× geometric mean**.
 ![wtfgif speedup across the arbitrary-RGBA corpus](docs/corpus-speedup.svg)
 
 Bar length is speedup over image-q + omggif; every label also reports the
-file-size ratio. Both the chart and values above are generated from the clean
-40-process [`benchmarks/corpus.json`](benchmarks/corpus.json) receipt.
+file-size ratio and source-relative RGB quality for wtfgif and the baseline.
+Both the chart and values above are generated from the clean 40-process
+[`benchmarks/corpus.json`](benchmarks/corpus.json) receipt. Shape, frame timing,
+and binary transparency must be exact; PSNR and SSIM expose the unavoidable
+color reduction when arbitrary RGBA pixels become a GIF palette.
 
 The measured artifact is wtfgif 3.0.11 at clean source commit
 `6c5ced252a2064d1c28e7cf09dd43be150a52951`. The following commit updates
