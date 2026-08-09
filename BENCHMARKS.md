@@ -36,23 +36,23 @@ quality measurement are outside the clock. Results below are medians from 40
 processes per implementation on an Apple M3 Pro with Node.js 22.23.2.
 
 The encoded artifacts were built from clean commit
-`a04a5d3f252cf115fe23aaf19f219f5f07000117`. The receipt records package
-version 3.0.14, a clean worktree, and the complete runtime environment.
+`3cf204b19cb78a241f72fd7f1e61189f31a9a5bd`. The receipt records package
+version 3.0.15, a clean worktree, and the complete runtime environment.
 
 | Fixture | Shape | wtfgif | image-q + omggif | Speedup | File-size ratio |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| MakeEmoji production sample | 128×128×8 | 0.522 ms | 144.570 ms | **276.80×** | 3.80× |
-| Photographic animation | 128×96×8 | 0.240 ms | 71.847 ms | **299.78×** | 1.84× |
-| Pixel art | 64×64×12 | 0.101 ms | 27.005 ms | **266.60×** | 6.35× |
-| Smooth gradients | 128×128×8 | 0.427 ms | 127.486 ms | **298.21×** | 8.00× |
-| Random noise | 128×128×8 | 0.265 ms | 103.647 ms | **390.81×** | 7.28× |
-| Transparency | 128×128×8 | 0.193 ms | 46.179 ms | **239.22×** | 20.85× |
-| Disjoint frame palettes | 128×128×8 | 0.161 ms | 65.557 ms | **406.87×** | 7.64× |
-| Nearly static animation | 128×128×12 | 0.314 ms | 81.714 ms | **260.10×** | 12.19× |
-| Tiny animation | 16×16×6 | 0.081 ms | 53.531 ms | **657.16×** | 1.17× |
-| One-megapixel animation | 512×512×4 | 1.930 ms | 548.247 ms | **284.08×** | 22.75× |
+| MakeEmoji production sample | 128×128×8 | 0.510 ms | 144.488 ms | **283.45×** | 3.80× |
+| Photographic animation | 128×96×8 | 0.237 ms | 72.350 ms | **305.00×** | 1.84× |
+| Pixel art | 64×64×12 | 0.107 ms | 27.099 ms | **252.77×** | 6.35× |
+| Smooth gradients | 128×128×8 | 0.417 ms | 128.544 ms | **308.50×** | 8.00× |
+| Random noise | 128×128×8 | 0.263 ms | 104.291 ms | **396.92×** | 7.28× |
+| Transparency | 128×128×8 | 0.188 ms | 46.389 ms | **246.86×** | 20.85× |
+| Disjoint frame palettes | 128×128×8 | 0.171 ms | 66.234 ms | **387.24×** | 7.64× |
+| Nearly static animation | 128×128×12 | 0.307 ms | 81.921 ms | **266.81×** | 12.19× |
+| Tiny animation | 16×16×6 | 0.081 ms | 53.578 ms | **658.41×** | 1.17× |
+| One-megapixel animation | 512×512×4 | 1.921 ms | 555.677 ms | **289.29×** | 22.75× |
 
-The observed range is 239.22×–657.16×, with a 322.54× geometric-mean speedup.
+The observed range is 246.86×–658.41×, with a 324.63× geometric-mean speedup.
 The corresponding files are 1.17×–22.75× larger, with a 6.50× geometric mean.
 This is the library's intended tradeoff: encode latency takes priority over
 compression ratio.
@@ -62,8 +62,8 @@ Pro and Node.js runtime. They do not claim codec-only performance, equal output
 size, or unmeasured hardware and runtimes.
 
 Every category exceeds the 100× floor on its first real encode after
-initialization. Transparency has the narrowest margin at 239.22×, followed by
-nearly static animation at 260.10×.
+initialization. Transparency has the narrowest margin at 246.86×, followed by
+pixel art at 252.77×.
 No result depends on a known palette, source cache, previous result, or
 reduced-quality mode.
 
@@ -90,6 +90,25 @@ The corpus covers real small images, photographic content, flat pixel art,
 gradients, noise, transparency, disjoint frame palettes, similar adjacent
 frames, tiny animations, and a one-megapixel workload. Add the optional
 three-megapixel fixture with `npm run bench:corpus:stress`.
+
+## Fused literal-mapping A/B
+
+The 3.0.15 encoder maps two independent eight-pixel groups before writing
+either literal-LZW result. This preserves the existing code stream and output
+bytes while exposing more independent palette-table lookups and halving loop
+control over each full block's remaining 216 literals.
+
+Against the 3.0.14 SIMD Wasm, two separate 100-pair fresh-process runs after
+64 MiB cache eviction measured **1.0511×** and **1.0592× faster inside Wasm**
+on transparency. Two 60-pair one-megapixel runs measured **1.0162×** and
+**1.0194× faster inside Wasm**. Two 100-pair MakeEmoji runs remained slightly
+positive at **1.0041×** and **1.0088×**; photo, noise, and gradient controls
+were neutral. Every comparison emitted the same complete-GIF SHA-256 hash.
+
+The profiler worker accepts `PROFILE_REPEAT` so a sampling profiler can collect
+enough stacks to identify hot native functions. That switch is diagnostic only:
+the default corpus and every A/B result above still time one user-input encode
+per fresh process.
 
 ## Runtime preparation and cold-cache check
 
@@ -195,12 +214,12 @@ agreement beside the time.
 
 | Implementation | Version | Median | wtfgif advantage | Bytes | PSNR | Alpha match |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| **wtfgif** | 3.0.14 | **0.595 ms** | — | 149,689 | 34.12 dB | 100% |
-| gif.js | 0.2.0 | 98.645 ms | **165.79×** | 80,869 | 33.08 dB | 99.78% |
-| image-q + omggif | 2.1.2 + 1.0.10 | 102.245 ms | **171.84×** | 39,350 | 31.84 dB | 100% |
-| gif.js.optimized | 1.0.1 | 110.135 ms | **185.10×** | 80,304 | 32.20 dB | 99.76% |
-| gifenc | 1.0.3 | 124.495 ms | **209.24×** | 39,101 | 34.54 dB | 100% |
-| modern-gif | 2.1.0 | 139.985 ms | **235.27×** | 43,114 | 32.65 dB | 100% |
+| **wtfgif** | 3.0.15 | **0.620 ms** | — | 149,689 | 34.12 dB | 100% |
+| gif.js | 0.2.0 | 98.990 ms | **159.66×** | 80,869 | 33.08 dB | 99.78% |
+| image-q + omggif | 2.1.2 + 1.0.10 | 101.670 ms | **163.98×** | 39,350 | 31.84 dB | 100% |
+| gif.js.optimized | 1.0.1 | 109.335 ms | **176.35×** | 80,304 | 32.20 dB | 99.76% |
+| gifenc | 1.0.3 | 126.005 ms | **203.23×** | 39,101 | 34.54 dB | 100% |
+| modern-gif | 2.1.0 | 136.655 ms | **220.41×** | 43,114 | 32.65 dB | 100% |
 
 Every output must parse as an eight-frame 128×128 animation with exact 100 ms
 delays before its sample is accepted. The validator composites all frames,

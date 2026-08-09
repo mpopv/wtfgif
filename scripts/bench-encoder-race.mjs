@@ -1,5 +1,5 @@
 import { execFile, spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -112,6 +112,19 @@ function packageVersion(packageName) {
 }
 
 const chrome = findChrome();
+const [{ stdout: commit }, { stdout: status }, packageLock] = await Promise.all(
+	[
+		execFileAsync("git", ["rev-parse", "HEAD"], { cwd: root }),
+		execFileAsync("git", ["status", "--porcelain"], { cwd: root }),
+		readFile(path.join(root, "package-lock.json")),
+	],
+);
+const provenance = {
+	commit: commit.trim(),
+	dirty: status.trim() !== "",
+	packageLockSha256: createHash("sha256").update(packageLock).digest("hex"),
+	packageVersion: await packageVersion("wtfgif"),
+};
 const temporary = await mkdtemp(path.join(tmpdir(), "wtfgif-encoder-race-"));
 const bundle = path.join(temporary, "race.mjs");
 
@@ -372,6 +385,7 @@ try {
 			"First user-input encode from arbitrary RGBA after package loading, source-independent wtfgif Wasm runtime preparation, and 64 MiB unrelated-memory cache eviction; zero fixture-derived warmups; includes palette creation, pixel mapping, compression, and output assembly",
 		environment: {
 			browser: browserVersion.trim(),
+			...provenance,
 			cpu: cpus()[0]?.model ?? "unknown CPU",
 			iterations,
 			node: process.version,
@@ -392,7 +406,7 @@ try {
 		},
 		generatedAt: new Date().toISOString(),
 		results,
-		schemaVersion: 1,
+		schemaVersion: 2,
 	};
 
 	const benchmarksDirectory = path.join(root, "benchmarks");

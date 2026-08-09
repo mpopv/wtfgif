@@ -4,6 +4,22 @@ All notable changes to wtfgif are documented here.
 
 ## Unreleased
 
+## 3.0.15 - 2026-08-09
+
+- Map two independent eight-pixel groups per fused literal-LZW loop iteration,
+  preserving the exact GIF byte stream while exposing more parallel lookup
+  work and halving loop control. Two fresh cache-evicted A/B runs improve
+  transparency **1.051x-1.059x inside Wasm** and the one-megapixel fixture
+  **1.016x-1.019x**, while MakeEmoji remains slightly positive and photo,
+  noise, and gradient controls remain neutral.
+- Add an explicit repeat control to the first-encode worker for CPU profiling.
+  The release benchmark still performs one and only one user-input encode per
+  fresh process.
+- Refresh the clean 40-process Node receipt at **246.86x-658.41x**, with a
+  **324.63x geometric mean** and **283.45x** MakeEmoji result. The fresh-Chrome
+  comparison measures wtfgif at **0.620 ms** and the five alternatives at
+  **159.66x-220.41x slower**.
+
 - Keep the README focused on the public encode/decode workflow and move runtime
   preparation detail to the benchmark guide. Label both generated comparison
   charts explicitly as cold-cache first-encode measurements.
