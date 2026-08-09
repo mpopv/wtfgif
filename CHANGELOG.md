@@ -4,6 +4,12 @@ All notable changes to wtfgif are documented here.
 
 ## Unreleased
 
+## 3.0.12 - 2026-08-08
+
+- Copy completed Wasm GIF bytes into stable JavaScript-owned arrays with the
+  typed-array constructor instead of `slice()`. Across 180 cache-evicted
+  photographic pairs this is **1.0158x** faster end to end with identical GIF
+  bytes; isolated copy screens retain the win from 2.6 KiB through 1.19 MiB.
 - Put the corpus quality receipt directly in the generated speedup chart. Each
   workload now shows wtfgif and image-q RGB quality beside latency and emitted
   size, while the chart explicitly records the exact shape, timing, and binary
@@ -23,10 +29,10 @@ All notable changes to wtfgif are documented here.
 - Extend the paired first-encode profiler with optional eager Wasm compilation
   and separate startup, synthetic-tiering, Wasm-encode, and complete-call time.
 - Pass the complete release gate and refresh both clean-process receipts and
-  generated charts. The arbitrary-RGBA corpus spans **190.41x-873.79x**, with
-  a **301.88x geometric mean** and **240.49x** on MakeEmoji. In fresh Chrome
-  processes, wtfgif takes **0.700 ms** and the five alternatives are
-  **140.81x-194.91x slower**.
+  generated charts. The arbitrary-RGBA corpus spans **182.15x-894.64x**, with
+  a **303.51x geometric mean** and **245.29x** on MakeEmoji. In fresh Chrome
+  processes, wtfgif takes **0.655 ms** and the five alternatives are
+  **138.20x-196.91x slower**.
 - Document browser and static-module edge initialization for the fast Wasm
   encoder, and show PSNR and alpha agreement directly in the browser comparison
   chart beside latency and output size.

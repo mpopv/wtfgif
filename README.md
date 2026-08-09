@@ -5,7 +5,7 @@ Node.js, browsers, Workers, and edge runtimes. It is deliberately optimized for
 minimum encoding latency, not minimum file size.
 
 On the current 10-workload receipt, the first encode after initialization is
-**190.41×–873.79× faster** than image-q + omggif. The resulting files are
+**182.15×–894.64× faster** than image-q + omggif. The resulting files are
 **1.17×–22.75× larger**. The benchmark includes arbitrary RGBA photographs,
 pixel art, gradients, transparency, noise, tiny animations, and a one-megapixel
 animation—not known palettes, cached pixels, reused palettes, or cached
@@ -125,9 +125,9 @@ a 1.1272× first-encode gain on the MakeEmoji workload after 64 MiB cache
 eviction, with identical GIF bytes. See
 [`benchmarks/runtime-preparation.json`](benchmarks/runtime-preparation.json).
 
-Across the 10 arbitrary-RGBA workloads, wtfgif is **190.41×–873.79× faster**
-than image-q + omggif, with a **301.88× geometric mean**. The real 128×128
-MakeEmoji workload is **240.49× faster** (0.574 ms vs 138.094 ms). Output files
+Across the 10 arbitrary-RGBA workloads, wtfgif is **182.15×–894.64× faster**
+than image-q + omggif, with a **303.51× geometric mean**. The real 128×128
+MakeEmoji workload is **245.29× faster** (0.579 ms vs 141.923 ms). Output files
 are **1.17×–22.75× larger**, with a **6.50× geometric mean**.
 
 ![wtfgif speedup across the arbitrary-RGBA corpus](docs/corpus-speedup.svg)
@@ -140,7 +140,7 @@ and binary transparency must be exact; PSNR and SSIM expose the unavoidable
 color reduction when arbitrary RGBA pixels become a GIF palette.
 
 The measured artifact is wtfgif 3.0.11 at clean source commit
-`6c5ced252a2064d1c28e7cf09dd43be150a52951`. The following commit updates
+`543ec482d854792dfc98dd00005eecd16022b594`. The following commit updates
 receipts, documentation, and charts only.
 
 ## Browser comparison
@@ -149,8 +149,8 @@ receipts, documentation, and charts only.
 
 These are median first encodes from 15 fresh Chrome processes per encoder on
 the same eight-frame MakeEmoji workload. Package loading and wtfgif
-initialization are outside the clock. wtfgif took **0.700 ms**; the five
-alternatives took **98.565–136.435 ms** and were **140.81×–194.91× slower**.
+initialization are outside the clock. wtfgif took **0.655 ms**; the five
+alternatives took **90.520–128.975 ms** and were **138.20×–196.91× slower**.
 wtfgif emitted 149,689 bytes; the alternatives emitted 39,101–80,869 bytes.
 The chart reports output size, PSNR, and alpha agreement beside every timing.
 gif.js worker creation is part of its public timed operation. Exact settings

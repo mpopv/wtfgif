@@ -5,58 +5,58 @@
 <g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" fill="#172026">
 <text x="40" y="46" font-size="25" font-weight="700">Every tested arbitrary RGBA workload exceeds 100×</text>
 <text x="40" y="74" font-size="14" fill="#51606a">First real encode after initialization · 40 fresh Node processes per implementation · higher is faster</text>
-<text x="40" y="98" font-size="13" fill="#51606a">190.41×–873.79× · 301.88× geometric mean · 1.17×–22.75× output size</text>
+<text x="40" y="98" font-size="13" fill="#51606a">182.15×–894.64× · 303.51× geometric mean · 1.17×–22.75× output size</text>
 <line x1="328" y1="112" x2="328" y2="552" stroke="#b34b3f" stroke-width="2" stroke-dasharray="5 4"/>
 <text x="335" y="124" font-size="12" font-weight="700" fill="#9b3d33">100×</text>
 <text x="230" y="160" text-anchor="end" font-size="14" font-weight="600">MakeEmoji production sample</text>
 <text x="230" y="175" text-anchor="end" font-size="11" fill="#687780">128×128×8</text>
-<rect x="260" y="142" width="163.54" height="27" rx="3" fill="#0d8f6f"/>
-<text x="431.54" y="161" font-size="13" font-weight="700">240.49×</text>
+<rect x="260" y="142" width="166.8" height="27" rx="3" fill="#0d8f6f"/>
+<text x="434.8" y="161" font-size="13" font-weight="700">245.29×</text>
 <text x="260" y="180" font-size="11" fill="#687780">3.80× output size · 34.12 dB vs 31.84 dB baseline</text>
 <text x="230" y="202" text-anchor="end" font-size="14" font-weight="600">Photographic animation</text>
 <text x="230" y="217" text-anchor="end" font-size="11" fill="#687780">128×96×8</text>
-<rect x="260" y="184" width="129.48" height="27" rx="3" fill="#0d8f6f"/>
-<text x="397.48" y="203" font-size="13" font-weight="700">190.41×</text>
+<rect x="260" y="184" width="123.86" height="27" rx="3" fill="#0d8f6f"/>
+<text x="391.86" y="203" font-size="13" font-weight="700">182.15×</text>
 <text x="260" y="222" font-size="11" fill="#687780">1.84× output size · 38.21 dB vs 38.64 dB baseline</text>
 <text x="230" y="244" text-anchor="end" font-size="14" font-weight="600">Pixel art</text>
 <text x="230" y="259" text-anchor="end" font-size="11" fill="#687780">64×64×12</text>
-<rect x="260" y="226" width="248.99" height="27" rx="3" fill="#0d8f6f"/>
-<text x="516.99" y="245" font-size="13" font-weight="700">366.16×</text>
+<rect x="260" y="226" width="248.04" height="27" rx="3" fill="#0d8f6f"/>
+<text x="516.04" y="245" font-size="13" font-weight="700">364.77×</text>
 <text x="260" y="264" font-size="11" fill="#687780">6.35× output size · lossless RGB vs lossless RGB baseline</text>
 <text x="230" y="286" text-anchor="end" font-size="14" font-weight="600">Smooth gradients</text>
 <text x="230" y="301" text-anchor="end" font-size="11" fill="#687780">128×128×8</text>
-<rect x="260" y="268" width="159.55" height="27" rx="3" fill="#0d8f6f"/>
-<text x="427.55" y="287" font-size="13" font-weight="700">234.63×</text>
+<rect x="260" y="268" width="165.96" height="27" rx="3" fill="#0d8f6f"/>
+<text x="433.96" y="287" font-size="13" font-weight="700">244.06×</text>
 <text x="260" y="306" font-size="11" fill="#687780">8.00× output size · 27.79 dB vs 10.79 dB baseline</text>
 <text x="230" y="328" text-anchor="end" font-size="14" font-weight="600">Deterministic noise</text>
 <text x="230" y="343" text-anchor="end" font-size="11" fill="#687780">128×128×8</text>
-<rect x="260" y="310" width="241.15" height="27" rx="3" fill="#0d8f6f"/>
-<text x="509.15" y="329" font-size="13" font-weight="700">354.63×</text>
+<rect x="260" y="310" width="233.3" height="27" rx="3" fill="#0d8f6f"/>
+<text x="501.3" y="329" font-size="13" font-weight="700">343.09×</text>
 <text x="260" y="348" font-size="11" fill="#687780">7.28× output size · 26.31 dB vs 10.34 dB baseline</text>
 <text x="230" y="370" text-anchor="end" font-size="14" font-weight="600">Transparent edges</text>
 <text x="230" y="385" text-anchor="end" font-size="11" fill="#687780">128×128×8</text>
-<rect x="260" y="352" width="173.47" height="27" rx="3" fill="#0d8f6f"/>
-<text x="441.47" y="371" font-size="13" font-weight="700">255.10×</text>
+<rect x="260" y="352" width="168.42" height="27" rx="3" fill="#0d8f6f"/>
+<text x="436.42" y="371" font-size="13" font-weight="700">247.67×</text>
 <text x="260" y="390" font-size="11" fill="#687780">20.85× output size · 36.70 dB vs 8.92 dB baseline</text>
 <text x="230" y="412" text-anchor="end" font-size="14" font-weight="600">Disjoint frame palettes</text>
 <text x="230" y="427" text-anchor="end" font-size="11" fill="#687780">128×128×8</text>
-<rect x="260" y="394" width="184.1" height="27" rx="3" fill="#0d8f6f"/>
-<text x="452.1" y="413" font-size="13" font-weight="700">270.73×</text>
+<rect x="260" y="394" width="204.31" height="27" rx="3" fill="#0d8f6f"/>
+<text x="472.31" y="413" font-size="13" font-weight="700">300.45×</text>
 <text x="260" y="432" font-size="11" fill="#687780">7.64× output size · lossless RGB vs lossless RGB baseline</text>
 <text x="230" y="454" text-anchor="end" font-size="14" font-weight="600">Nearly static animation</text>
 <text x="230" y="469" text-anchor="end" font-size="11" fill="#687780">128×128×12</text>
-<rect x="260" y="436" width="172.82" height="27" rx="3" fill="#0d8f6f"/>
-<text x="440.82" y="455" font-size="13" font-weight="700">254.14×</text>
+<rect x="260" y="436" width="166.38" height="27" rx="3" fill="#0d8f6f"/>
+<text x="434.38" y="455" font-size="13" font-weight="700">244.68×</text>
 <text x="260" y="474" font-size="11" fill="#687780">12.19× output size · lossless RGB vs lossless RGB baseline</text>
 <text x="230" y="496" text-anchor="end" font-size="14" font-weight="600">Tiny animation</text>
 <text x="230" y="511" text-anchor="end" font-size="11" fill="#687780">16×16×6</text>
-<rect x="260" y="478" width="594.18" height="27" rx="3" fill="#0d8f6f"/>
-<text x="862.18" y="497" font-size="13" font-weight="700">873.79×</text>
+<rect x="260" y="478" width="608.35" height="27" rx="3" fill="#0d8f6f"/>
+<text x="876.35" y="497" font-size="13" font-weight="700">894.64×</text>
 <text x="260" y="516" font-size="11" fill="#687780">1.17× output size · 28.43 dB vs 22.24 dB baseline</text>
 <text x="230" y="538" text-anchor="end" font-size="14" font-weight="600">One-megapixel animation</text>
 <text x="230" y="553" text-anchor="end" font-size="11" fill="#687780">512×512×4</text>
-<rect x="260" y="520" width="199.72" height="27" rx="3" fill="#0d8f6f"/>
-<text x="467.72" y="539" font-size="13" font-weight="700">293.71×</text>
+<rect x="260" y="520" width="202.89" height="27" rx="3" fill="#0d8f6f"/>
+<text x="470.89" y="539" font-size="13" font-weight="700">298.37×</text>
 <text x="260" y="558" font-size="11" fill="#687780">22.75× output size · 28.82 dB vs 7.94 dB baseline</text>
 <text x="40" y="609" font-size="12" fill="#687780">Latency includes palette creation, mapping, LZW, and GIF assembly · every output has exact shape, timing, and binary alpha.</text>
 <text x="40" y="631" font-size="12" fill="#687780">Apple M3 Pro · Node v22.23.2 · wtfgif 3.0.11 · no known palette, source cache, or reused result</text>
