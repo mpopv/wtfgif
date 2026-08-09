@@ -72,7 +72,11 @@ if (feature === "quality-only") {
 	wasmOptArgs.push("--strip-debug");
 }
 wasmOptArgs.push("-o", optimizedWasmPath);
-execFileSync("wasm-opt", wasmOptArgs, { cwd: root, stdio: "inherit" });
+execFileSync("wasm-opt", wasmOptArgs, {
+	cwd: root,
+	stdio: "inherit",
+	shell: process.platform === "win32",
+});
 renameSync(optimizedWasmPath, wasmPath);
 
 console.log(

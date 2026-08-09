@@ -53,6 +53,18 @@ fn validates_small_gifs_without_allocating_metadata() {
     assert!(error.contains("Invalid GIF signature"));
 }
 
+#[test]
+fn rejects_frames_that_exceed_the_logical_screen() {
+    let mut gif = ONE_PIXEL_TRANSPARENT_GIF.to_vec();
+    gif[32] = 2;
+
+    let error = parse_metadata(&gif).unwrap_err();
+    assert!(error.contains("exceeds the logical screen bounds"));
+
+    let error = validate_gif_structure_no_alloc(&gif).unwrap_err();
+    assert!(error.contains("exceeds the logical screen bounds"));
+}
+
 #[cfg(not(feature = "encode-only"))]
 #[test]
 fn lossless_remux_can_return_a_valid_small_gif_unchanged() {

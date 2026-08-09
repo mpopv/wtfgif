@@ -711,6 +711,7 @@ fn parse_metadata(data: &[u8]) -> Result<GifMetadata, String> {
                     global_palette_size,
                     graphic_control,
                 )?;
+                validate_frame_bounds(&frame, width, height)?;
                 frames.push(frame);
                 offset = next_offset;
                 graphic_control = GraphicControl::default();
@@ -763,6 +764,8 @@ fn validate_gif_structure_no_alloc(data: &[u8]) -> Result<(), String> {
         return Err("Invalid GIF signature".to_string());
     }
 
+    let width = read_u16(data, 6, "logical screen width")?;
+    let height = read_u16(data, 8, "logical screen height")?;
     let packed = data[10];
     let has_global_palette = (packed & 0x80) != 0;
     let global_palette_size = if has_global_palette {
@@ -787,13 +790,14 @@ fn validate_gif_structure_no_alloc(data: &[u8]) -> Result<(), String> {
         offset += 1;
         match byte {
             0x2c => {
-                let (_, next_offset) = parse_image_descriptor(
+                let (frame, next_offset) = parse_image_descriptor(
                     data,
                     offset,
                     global_palette_offset,
                     global_palette_size,
                     graphic_control,
                 )?;
+                validate_frame_bounds(&frame, width, height)?;
                 offset = next_offset;
                 graphic_control = GraphicControl::default();
             }
@@ -926,6 +930,20 @@ fn parse_image_descriptor(
         },
         next_offset,
     ))
+}
+
+#[cfg(not(all(feature = "encode-only", target_arch = "wasm32")))]
+fn validate_frame_bounds(
+    frame: &FrameMetadata,
+    canvas_width: u16,
+    canvas_height: u16,
+) -> Result<(), String> {
+    let frame_right = u32::from(frame.x) + u32::from(frame.width);
+    let frame_bottom = u32::from(frame.y) + u32::from(frame.height);
+    if frame_right > u32::from(canvas_width) || frame_bottom > u32::from(canvas_height) {
+        return Err("Image frame exceeds the logical screen bounds".to_string());
+    }
+    Ok(())
 }
 
 #[cfg(not(all(feature = "encode-only", target_arch = "wasm32")))]
