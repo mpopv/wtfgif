@@ -4,6 +4,19 @@ All notable changes to wtfgif are documented here.
 
 ## Unreleased
 
+- Add a selective second Binaryen optimization pass to quality-only Wasm
+  builds while protecting the high-resolution quantizer and planner from the
+  inlining regression found on one-megapixel input. Paired fresh-process A/Bs
+  improve MakeEmoji **1.0784x**, photographic input **1.0568x**, nearly-static
+  animation **1.1668x**, pixel art **1.1295x**, and transparency **1.0455x**;
+  the one-megapixel control is neutral and every GIF is byte-identical.
+- Route every Wasm build through one reproducible helper, retain function names
+  only between the two optimizer passes, and remove them from packaged output.
+- Refresh the clean 40-process Node receipt at **244.35x-646.39x**, with a
+  **330.45x geometric mean** and **282.45x** MakeEmoji result. The fresh-Chrome
+  comparison measures wtfgif at **0.605 ms** and the five alternatives at
+  **164.17x-224.98x slower**.
+
 ## 3.0.15 - 2026-08-09
 
 - Map two independent eight-pixel groups per fused literal-LZW loop iteration,
