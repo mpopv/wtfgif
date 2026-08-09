@@ -89,6 +89,31 @@ if (process.env.PROFILE_JS_TIER === "1") {
 		tierPointer,
 		tierPixelCount,
 	);
+	if (process.env.PROFILE_SPLIT_TIER !== "0") {
+		const splitTierIterations = Number(
+			process.env.PROFILE_SPLIT_TIER_ITERATIONS ?? 1,
+		);
+		for (let pixel = 0; pixel < tierPixels.length; pixel += 1) {
+			const pair = pixel >> 1;
+			const split = pair % 4 === 2 ? pixel & 1 : 0;
+			const cell = (pair * 73 + split) & 2047;
+			const red = ((cell >> 8) << 4) | 8;
+			const green = (((cell >> 4) & 15) << 4) | 8;
+			const blue = ((cell & 15) << 4) | 8;
+			tierPixels[pixel] = 0xff000000 | (blue << 16) | (green << 8) | red;
+		}
+		for (let iteration = 0; iteration < splitTierIterations; iteration += 1) {
+			wasm.encode_rgba_quality_low_res_constant_delay_scratch_from_input(
+				tierPixelCount * 4,
+				128,
+				128,
+				8,
+				0,
+				0,
+				179,
+			);
+		}
+	}
 	for (let pixel = 0; pixel < tierPixels.length; pixel += 1) {
 		if (pixel % 31 === 0) {
 			tierPixels[pixel] = 0;

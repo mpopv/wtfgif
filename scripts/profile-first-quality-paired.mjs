@@ -44,6 +44,10 @@ function run(name, wasmPath) {
 				(name === "baseline" && process.env.PROFILE_BASELINE_JS_TIER === "1")
 					? "1"
 					: "0",
+			PROFILE_SPLIT_TIER:
+				name === "candidate"
+					? (process.env.PROFILE_CANDIDATE_SPLIT_TIER ?? "1")
+					: (process.env.PROFILE_BASELINE_SPLIT_TIER ?? "1"),
 		},
 	});
 	if (result.status !== 0) {
