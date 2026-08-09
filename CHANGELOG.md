@@ -23,6 +23,9 @@ All notable changes to wtfgif are documented here.
   a **301.88x geometric mean** and **240.49x** on MakeEmoji. In fresh Chrome
   processes, wtfgif takes **0.700 ms** and the five alternatives are
   **140.81x-194.91x slower**.
+- Document browser and static-module edge initialization for the fast Wasm
+  encoder, and show PSNR and alpha agreement directly in the browser comparison
+  chart beside latency and output size.
 
 ## 3.0.11 - 2026-08-08
 

@@ -88,6 +88,26 @@ In a browser, get GIF bytes with
 `new Uint8Array(await file.arrayBuffer())`. To turn encoded bytes into a file
 or URL, use `new Blob([gif], { type: "image/gif" })`.
 
+## Browser and edge runtimes
+
+The fast encoder is WebAssembly. In Node.js and regular browser bundlers, call
+the same `initializeWasmGlobally()` function shown above once during app or
+worker startup. It selects SIMD when the runtime supports it and otherwise uses
+the scalar Wasm build. Encoding is synchronous after that promise resolves.
+
+Cloudflare Workers, Vercel Edge, and other runtimes that require a static Wasm
+module can initialize that module explicitly:
+
+```ts
+import { encodeRgbaGifFrames, initializeWasmModule } from "wtfgif/encode";
+import initWasm, * as wasm from "wtfgif/wasm-encode";
+import wasmModule from "wtfgif/wasm-encode/wasm";
+
+await initializeWasmModule({ ...wasm, default: initWasm }, wasmModule);
+```
+
+No native addon is required in any of these environments.
+
 ## Speed and output size
 
 The default benchmark starts a fresh Node process for every sample, completes
@@ -127,8 +147,9 @@ the same eight-frame MakeEmoji workload. Package loading and wtfgif
 initialization are outside the clock. wtfgif took **0.700 ms**; the five
 alternatives took **98.565–136.435 ms** and were **140.81×–194.91× slower**.
 wtfgif emitted 149,689 bytes; the alternatives emitted 39,101–80,869 bytes.
-gif.js worker creation is part of its public timed operation. Exact settings,
-quality results, and raw samples are in [BENCHMARKS.md](BENCHMARKS.md).
+The chart reports output size, PSNR, and alpha agreement beside every timing.
+gif.js worker creation is part of its public timed operation. Exact settings
+and raw samples are in [BENCHMARKS.md](BENCHMARKS.md).
 
 The raw receipt is [`benchmarks/encoder-race.json`](benchmarks/encoder-race.json),
 and the chart above is generated from it by

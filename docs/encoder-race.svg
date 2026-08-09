@@ -1,42 +1,48 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="556" viewBox="0 0 1200 556" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="632" viewBox="0 0 1200 632" role="img" aria-labelledby="title desc">
 <title id="title">Browser GIF encoder speed in milliseconds</title>
-<desc id="desc">Horizontal bar chart comparing wtfgif, image-q + omggif, gif.js, gif.js.optimized, gifenc, modern-gif. Bar length is median encode time in milliseconds, so shorter is faster. Labels also report emitted GIF size and relative slowdown versus wtfgif.</desc>
+<desc id="desc">Horizontal bar chart comparing wtfgif, image-q + omggif, gif.js, gif.js.optimized, gifenc, modern-gif. Bar length is median encode time in milliseconds, so shorter is faster. Labels also report emitted GIF size, relative slowdown versus wtfgif, PSNR, and alpha agreement.</desc>
 <rect width="100%" height="100%" fill="#ffffff"/>
 <g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" fill="#172026">
 <text x="40" y="48" font-size="25" font-weight="700">Browser encode time on the same RGBA animation</text>
 <text x="40" y="76" font-size="14" fill="#51606a">Median first real encode after initialization · 8 × 128×128 RGBA frames · 15 fresh Chrome processes</text>
 <text x="40" y="100" font-size="13" fill="#51606a">wtfgif 0.700 ms · alternatives 140.81×–194.91× slower · lower is better</text>
-<line x1="250" y1="120" x2="250" y2="436" stroke="#e3e8eb" stroke-width="1"/>
+<line x1="250" y1="120" x2="250" y2="508" stroke="#e3e8eb" stroke-width="1"/>
 <text x="250" y="118" text-anchor="middle" font-size="12" fill="#687780">0 ms</text>
-<line x1="366" y1="120" x2="366" y2="436" stroke="#e3e8eb" stroke-width="1"/>
+<line x1="366" y1="120" x2="366" y2="508" stroke="#e3e8eb" stroke-width="1"/>
 <text x="366" y="118" text-anchor="middle" font-size="12" fill="#687780">30 ms</text>
-<line x1="482" y1="120" x2="482" y2="436" stroke="#e3e8eb" stroke-width="1"/>
+<line x1="482" y1="120" x2="482" y2="508" stroke="#e3e8eb" stroke-width="1"/>
 <text x="482" y="118" text-anchor="middle" font-size="12" fill="#687780">60 ms</text>
-<line x1="598" y1="120" x2="598" y2="436" stroke="#e3e8eb" stroke-width="1"/>
+<line x1="598" y1="120" x2="598" y2="508" stroke="#e3e8eb" stroke-width="1"/>
 <text x="598" y="118" text-anchor="middle" font-size="12" fill="#687780">90 ms</text>
-<line x1="714" y1="120" x2="714" y2="436" stroke="#e3e8eb" stroke-width="1"/>
+<line x1="714" y1="120" x2="714" y2="508" stroke="#e3e8eb" stroke-width="1"/>
 <text x="714" y="118" text-anchor="middle" font-size="12" fill="#687780">120 ms</text>
-<line x1="830" y1="120" x2="830" y2="436" stroke="#e3e8eb" stroke-width="1"/>
+<line x1="830" y1="120" x2="830" y2="508" stroke="#e3e8eb" stroke-width="1"/>
 <text x="830" y="118" text-anchor="middle" font-size="12" fill="#687780">150 ms</text>
 <text x="220" y="169" text-anchor="end" font-size="15" font-weight="700">wtfgif</text>
 <rect x="250" y="148" width="2.71" height="28" rx="3" fill="#0d8f6f"/>
 <text x="261.71" y="168" text-anchor="start" font-size="14" font-weight="700" fill="#172026">0.70 ms · 146.2 KiB · baseline</text>
-<text x="220" y="219" text-anchor="end" font-size="15" font-weight="500">image-q + omggif</text>
-<rect x="250" y="198" width="381.12" height="28" rx="3" fill="#aab5bb"/>
-<text x="640.12" y="218" text-anchor="start" font-size="14" font-weight="700" fill="#172026">98.6 ms · 38.4 KiB · 140.81× slower</text>
-<text x="220" y="269" text-anchor="end" font-size="15" font-weight="500">gif.js</text>
-<rect x="250" y="248" width="396.91" height="28" rx="3" fill="#aab5bb"/>
-<text x="655.91" y="268" text-anchor="start" font-size="14" font-weight="700" fill="#172026">102.7 ms · 79.0 KiB · 146.64× slower</text>
-<text x="220" y="319" text-anchor="end" font-size="15" font-weight="500">gif.js.optimized</text>
-<rect x="250" y="298" width="443.91" height="28" rx="3" fill="#aab5bb"/>
-<text x="702.91" y="318" text-anchor="start" font-size="14" font-weight="700" fill="#172026">114.8 ms · 78.4 KiB · 164.01× slower</text>
-<text x="220" y="369" text-anchor="end" font-size="15" font-weight="500">gifenc</text>
-<rect x="250" y="348" width="486.58" height="28" rx="3" fill="#aab5bb"/>
-<text x="745.58" y="368" text-anchor="start" font-size="14" font-weight="700" fill="#172026">125.8 ms · 38.2 KiB · 179.77× slower</text>
-<text x="220" y="419" text-anchor="end" font-size="15" font-weight="500">modern-gif</text>
-<rect x="250" y="398" width="527.55" height="28" rx="3" fill="#aab5bb"/>
-<text x="786.55" y="418" text-anchor="start" font-size="14" font-weight="700" fill="#172026">136.4 ms · 42.1 KiB · 194.91× slower</text>
-<text x="40" y="500" font-size="12" fill="#687780">Bar length = encode time · labels include emitted GIF size and relative slowdown · gif.js worker creation is timed</text>
-<text x="40" y="522" font-size="12" fill="#687780">Google Chrome 151.0.7922.77 · Apple M3 Pro · every output decoded and checked</text>
+<text x="250" y="193" font-size="12" fill="#687780">34.12 dB PSNR · 100% alpha match</text>
+<text x="220" y="231" text-anchor="end" font-size="15" font-weight="500">image-q + omggif</text>
+<rect x="250" y="210" width="381.12" height="28" rx="3" fill="#aab5bb"/>
+<text x="640.12" y="230" text-anchor="start" font-size="14" font-weight="700" fill="#172026">98.6 ms · 38.4 KiB · 140.81× slower</text>
+<text x="250" y="255" font-size="12" fill="#687780">31.84 dB PSNR · 100% alpha match</text>
+<text x="220" y="293" text-anchor="end" font-size="15" font-weight="500">gif.js</text>
+<rect x="250" y="272" width="396.91" height="28" rx="3" fill="#aab5bb"/>
+<text x="655.91" y="292" text-anchor="start" font-size="14" font-weight="700" fill="#172026">102.7 ms · 79.0 KiB · 146.64× slower</text>
+<text x="250" y="317" font-size="12" fill="#687780">33.08 dB PSNR · 99.78% alpha match</text>
+<text x="220" y="355" text-anchor="end" font-size="15" font-weight="500">gif.js.optimized</text>
+<rect x="250" y="334" width="443.91" height="28" rx="3" fill="#aab5bb"/>
+<text x="702.91" y="354" text-anchor="start" font-size="14" font-weight="700" fill="#172026">114.8 ms · 78.4 KiB · 164.01× slower</text>
+<text x="250" y="379" font-size="12" fill="#687780">32.20 dB PSNR · 99.76% alpha match</text>
+<text x="220" y="417" text-anchor="end" font-size="15" font-weight="500">gifenc</text>
+<rect x="250" y="396" width="486.58" height="28" rx="3" fill="#aab5bb"/>
+<text x="745.58" y="416" text-anchor="start" font-size="14" font-weight="700" fill="#172026">125.8 ms · 38.2 KiB · 179.77× slower</text>
+<text x="250" y="441" font-size="12" fill="#687780">34.54 dB PSNR · 100% alpha match</text>
+<text x="220" y="479" text-anchor="end" font-size="15" font-weight="500">modern-gif</text>
+<rect x="250" y="458" width="527.55" height="28" rx="3" fill="#aab5bb"/>
+<text x="786.55" y="478" text-anchor="start" font-size="14" font-weight="700" fill="#172026">136.4 ms · 42.1 KiB · 194.91× slower</text>
+<text x="250" y="503" font-size="12" fill="#687780">32.65 dB PSNR · 100% alpha match</text>
+<text x="40" y="574" font-size="12" fill="#687780">Bar length = encode time · labels include emitted size, PSNR, alpha agreement, and relative slowdown · gif.js worker creation is timed</text>
+<text x="40" y="598" font-size="12" fill="#687780">Google Chrome 151.0.7922.77 · Apple M3 Pro · every output decoded and checked</text>
 </g>
 </svg>

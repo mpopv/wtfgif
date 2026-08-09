@@ -146,8 +146,8 @@ processes per encoder on an Apple M3 Pro in Google Chrome 151.0.7922.77.
 This is public-API time-to-result, not a codec-kernel microbenchmark. The
 gif.js and gif.js.optimized APIs create workers when `render()` begins, so that
 worker creation is inside their timed jobs. The README chart uses bar length
-for median encode time and prints each encoder's emitted GIF size and relative
-slowdown beside the time.
+for median encode time and prints each encoder's emitted GIF size, relative
+slowdown, PSNR, and alpha agreement beside the time.
 
 | Implementation | Version | Median | wtfgif advantage | Bytes | PSNR | Alpha match |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |

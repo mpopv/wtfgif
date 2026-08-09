@@ -27,7 +27,8 @@ whether the measurement used a warm process, cold process, WebAssembly, or the
 experimental native addon. Headline encoding claims must come from a clean
 `npm run bench` receipt and report output size and quality beside latency.
 Regenerate the committed charts with `npm run bench:charts` after accepting a
-new receipt.
+new receipt; the browser comparison chart must keep latency, output size, PSNR,
+and alpha agreement visible together.
 
 ## Release checklist
 

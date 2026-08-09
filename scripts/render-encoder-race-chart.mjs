@@ -39,6 +39,10 @@ function formatComparison(row) {
 	return `${row.slowerThanWtfgif.toFixed(2)}× slower`;
 }
 
+function formatAlphaAccuracy(value) {
+	return `${Number(value.toFixed(2))}% alpha match`;
+}
+
 export function renderEncoderRaceChart(receipt) {
 	const rows = receipt.results.toSorted(
 		(left, right) => left.medianMs - right.medianMs,
@@ -51,9 +55,9 @@ export function renderEncoderRaceChart(receipt) {
 	// Leave enough room for the value label after the longest bar.
 	const chartRight = 830;
 	const chartWidth = chartRight - chartLeft;
-	const rowHeight = 50;
+	const rowHeight = 62;
 	const firstRowY = 148;
-	const height = firstRowY + rows.length * rowHeight + 108;
+	const height = firstRowY + rows.length * rowHeight + 112;
 	const maximum = niceMaximum(Math.max(...rows.map((row) => row.medianMs)));
 	const tickCount = 5;
 	const competitors = rows.filter((row) => row.id !== "wtfgif");
@@ -69,7 +73,7 @@ export function renderEncoderRaceChart(receipt) {
 	elements.push(
 		`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="title desc">`,
 		'<title id="title">Browser GIF encoder speed in milliseconds</title>',
-		`<desc id="desc">Horizontal bar chart comparing ${rows.map((row) => row.label).join(", ")}. Bar length is median encode time in milliseconds, so shorter is faster. Labels also report emitted GIF size and relative slowdown versus wtfgif.</desc>`,
+		`<desc id="desc">Horizontal bar chart comparing ${rows.map((row) => row.label).join(", ")}. Bar length is median encode time in milliseconds, so shorter is faster. Labels also report emitted GIF size, relative slowdown versus wtfgif, PSNR, and alpha agreement.</desc>`,
 		'<rect width="100%" height="100%" fill="#ffffff"/>',
 		'<g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" fill="#172026">',
 		'<text x="40" y="48" font-size="25" font-weight="700">Browser encode time on the same RGBA animation</text>',
@@ -100,11 +104,12 @@ export function renderEncoderRaceChart(receipt) {
 			`<text x="${labelWidth}" y="${y + 21}" text-anchor="end" font-size="15" font-weight="${row.id === "wtfgif" ? 700 : 500}">${escapeXml(row.label)}</text>`,
 			`<rect x="${chartLeft}" y="${y}" width="${barWidth}" height="28" rx="3" fill="${color}"/>`,
 			`<text x="${valueX}" y="${y + 20}" text-anchor="${anchor}" font-size="14" font-weight="700" fill="#172026">${formatMilliseconds(row.medianMs)} · ${formatBytes(row.bytes)} · ${formatComparison(row)}</text>`,
+			`<text x="${chartLeft}" y="${y + 45}" font-size="12" fill="#687780">${row.psnrDb.toFixed(2)} dB PSNR · ${formatAlphaAccuracy(row.alphaAccuracyPercent)}</text>`,
 		);
 	}
 
 	elements.push(
-		`<text x="40" y="${height - 56}" font-size="12" fill="#687780">Bar length = encode time · labels include emitted GIF size and relative slowdown · gif.js worker creation is timed</text>`,
+		`<text x="40" y="${height - 58}" font-size="12" fill="#687780">Bar length = encode time · labels include emitted size, PSNR, alpha agreement, and relative slowdown · gif.js worker creation is timed</text>`,
 		`<text x="40" y="${height - 34}" font-size="12" fill="#687780">${escapeXml(receipt.environment.browser)} · ${escapeXml(receipt.environment.cpu)} · every output decoded and checked</text>`,
 		"</g>",
 		"</svg>",
