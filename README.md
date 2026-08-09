@@ -132,8 +132,9 @@ are **1.17×–22.75× larger**, with a **6.50× geometric mean**.
 
 ![wtfgif speedup across the arbitrary-RGBA corpus](docs/corpus-speedup.svg)
 
-Bar length is speedup over image-q + omggif; every label also reports the
-file-size ratio and source-relative RGB quality for wtfgif and the baseline.
+Bar length is speedup over image-q + omggif; every label also reports both
+median encode times, the file-size ratio, and source-relative RGB quality for
+wtfgif and the baseline.
 Both the chart and values above are generated from the clean 40-process
 [`benchmarks/corpus.json`](benchmarks/corpus.json) receipt. Shape, frame timing,
 and binary transparency must be exact; PSNR and SSIM expose the unavoidable

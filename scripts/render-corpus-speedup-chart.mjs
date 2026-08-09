@@ -61,7 +61,7 @@ export function renderCorpusSpeedupChart(receipt) {
 	const chartLeft = 260;
 	const chartRight = 940;
 	const chartWidth = chartRight - chartLeft;
-	const rowHeight = 42;
+	const rowHeight = 56;
 	const firstRowY = 142;
 	const speedups = rows.map((row) => row.speedupVsImageQOmggif);
 	const sizeRatios = rows.map((row) => row.sizeRatioVsImageQOmggif);
@@ -78,7 +78,7 @@ export function renderCorpusSpeedupChart(receipt) {
 	elements.push(
 		`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="title desc">`,
 		'<title id="title">wtfgif speedup by arbitrary-RGBA workload</title>',
-		`<desc id="desc">Horizontal bars show wtfgif speedup over image-q plus omggif for ten workloads. Every bar exceeds the marked 100 times threshold. Labels also report the output file-size ratio and RGB quality of both encoders.</desc>`,
+		`<desc id="desc">Horizontal bars show wtfgif speedup over image-q plus omggif for ten workloads. Every bar exceeds the marked 100 times threshold. Labels also report both median encode times, the output file-size ratio, and RGB quality.</desc>`,
 		'<rect width="100%" height="100%" fill="#ffffff"/>',
 		'<g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" fill="#172026">',
 		`<text x="40" y="46" font-size="25" font-weight="700">${rows.length}/${rows.length} tested RGBA workloads exceed 100×</text>`,
@@ -105,7 +105,8 @@ export function renderCorpusSpeedupChart(receipt) {
 			`<text x="${labelWidth}" y="${y + 33}" text-anchor="end" font-size="11" fill="#687780">${escapeXml(shape)}</text>`,
 			`<rect x="${chartLeft}" y="${y}" width="${barWidth}" height="27" rx="3" fill="#0d8f6f"/>`,
 			`<text x="${coordinate(chartLeft + barWidth + 8)}" y="${y + 19}" font-size="13" font-weight="700">${row.speedupVsImageQOmggif.toFixed(2)}×</text>`,
-			`<text x="${chartLeft}" y="${y + 38}" font-size="11" fill="#687780">${escapeXml(`${row.sizeRatioVsImageQOmggif.toFixed(2)}× output size · ${quality}`)}</text>`,
+			`<text x="${chartLeft}" y="${y + 41}" font-size="11" fill="#51606a">${escapeXml(`${row.medianMs.toFixed(3)} ms wtfgif vs ${row.baseline.medianMs.toFixed(3)} ms baseline · ${row.sizeRatioVsImageQOmggif.toFixed(2)}× output size`)}</text>`,
+			`<text x="${chartLeft}" y="${y + 54}" font-size="11" fill="#687780">${escapeXml(quality)}</text>`,
 		);
 	}
 
