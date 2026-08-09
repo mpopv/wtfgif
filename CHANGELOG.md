@@ -4,6 +4,18 @@ All notable changes to wtfgif are documented here.
 
 ## Unreleased
 
+## 3.0.14 - 2026-08-09
+
+- Run the fixed mixed-alpha encoder preparation four times during explicit
+  initialization, which consistently reaches V8's faster optimized tier while
+  retaining no user pixels, palettes, or results. In 100 paired fresh
+  cache-evicted processes using identical Wasm, MakeEmoji improves **1.0921x**,
+  transparency **1.1754x**, gradient **1.0205x**, and noise **1.0106x** inside
+  Wasm; photographic and large inputs remain neutral and every GIF hash is
+  identical. The one-time initialization cost increases by about 1.6 ms.
+- Parameterize split-pair and mixed-alpha preparation depths in the paired
+  first-encode profiler so future V8 tiering changes can be measured directly.
+
 ## 3.0.13 - 2026-08-09
 
 - Prepare the existing split-pair histogram loop with one fixed opaque encode

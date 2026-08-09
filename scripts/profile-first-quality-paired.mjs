@@ -48,6 +48,14 @@ function run(name, wasmPath) {
 				name === "candidate"
 					? (process.env.PROFILE_CANDIDATE_SPLIT_TIER ?? "1")
 					: (process.env.PROFILE_BASELINE_SPLIT_TIER ?? "1"),
+			PROFILE_SPLIT_TIER_ITERATIONS:
+				name === "candidate"
+					? (process.env.PROFILE_CANDIDATE_SPLIT_TIER_ITERATIONS ?? "1")
+					: (process.env.PROFILE_BASELINE_SPLIT_TIER_ITERATIONS ?? "1"),
+			PROFILE_MIXED_TIER_ITERATIONS:
+				name === "candidate"
+					? (process.env.PROFILE_CANDIDATE_MIXED_TIER_ITERATIONS ?? "1")
+					: (process.env.PROFILE_BASELINE_MIXED_TIER_ITERATIONS ?? "1"),
 		},
 	});
 	if (result.status !== 0) {

@@ -125,15 +125,20 @@ if (process.env.PROFILE_JS_TIER === "1") {
 		const blue = ((cell & 15) << 4) | 8;
 		tierPixels[pixel] = 0xff000000 | (blue << 16) | (green << 8) | red;
 	}
-	wasm.encode_rgba_quality_low_res_constant_delay_scratch_from_input(
-		tierPixelCount * 4,
-		128,
-		128,
-		8,
-		0,
-		0,
-		179,
+	const mixedTierIterations = Number(
+		process.env.PROFILE_MIXED_TIER_ITERATIONS ?? 1,
 	);
+	for (let iteration = 0; iteration < mixedTierIterations; iteration += 1) {
+		wasm.encode_rgba_quality_low_res_constant_delay_scratch_from_input(
+			tierPixelCount * 4,
+			128,
+			128,
+			8,
+			0,
+			0,
+			179,
+		);
+	}
 	const gridPixelCount = 8 * 12 * 16;
 	for (let pixel = 0; pixel < gridPixelCount; pixel += 1) {
 		const red = ((pixel % 8) << 5) | 16;

@@ -104,15 +104,20 @@ function prepareQualityEncoderRuntime(
 		const blue = ((cell & 15) << 4) | 8;
 		tierPixels[pixel] = 0xff000000 | (blue << 16) | (green << 8) | red;
 	}
-	module.encode_rgba_quality_low_res_constant_delay_scratch_from_input(
-		QUALITY_TIER_PIXEL_COUNT * 4,
-		128,
-		128,
-		8,
-		0,
-		0,
-		DEFAULT_ALPHA_THRESHOLD,
-	);
+	// Four source-independent calls consistently reach V8's faster optimized
+	// tier for the shared mixed/opaque planner without retaining image data.
+	// Fewer calls leave MakeEmoji/transparency slower; more calls are neutral.
+	for (let iteration = 0; iteration < 4; iteration += 1) {
+		module.encode_rgba_quality_low_res_constant_delay_scratch_from_input(
+			QUALITY_TIER_PIXEL_COUNT * 4,
+			128,
+			128,
+			8,
+			0,
+			0,
+			DEFAULT_ALPHA_THRESHOLD,
+		);
+	}
 
 	const gridPixelCount = 8 * 12 * 16;
 	for (let pixel = 0; pixel < gridPixelCount; pixel += 1) {
