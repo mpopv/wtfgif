@@ -2,6 +2,26 @@
 
 All notable changes to wtfgif are documented here.
 
+## 3.0.19 - 2026-08-09
+
+- Make the authoritative corpus command rebuild scalar and SIMD quality Wasm
+  before bundling and timing. This prevents a previously built local artifact
+  from drifting from the source commit recorded in a benchmark receipt.
+- Refresh the release-identical 40-process Node receipt at
+  **257.91x-674.52x**, with a **349.00x geometric mean** and **352.53x**
+  MakeEmoji result. The fresh-Chrome comparison measures wtfgif at **0.475
+  ms** and the five alternatives at **189.33x-268.53x slower**.
+
+## 3.0.18 - 2026-08-09
+
+- Copy exact-size independently allocated `Uint8Array` and
+  `Uint8ClampedArray` frames directly into the Wasm arena instead of creating
+  a temporary `subarray()` view for every frame. Across 480 alternating fresh
+  MakeEmoji pairs, this improves the complete encode **1.0231x** (0.504 ms to
+  0.491 ms) with byte-identical GIF output. Photo, pixel art, gradient, noise,
+  transparency, disjoint-palette, nearly-static, and tiny controls are
+  positive; the one-megapixel control is neutral.
+
 ## 3.0.17 - 2026-08-09
 
 - Pack dominant-palette SIMD channels into signed 16-bit lanes and widen exact

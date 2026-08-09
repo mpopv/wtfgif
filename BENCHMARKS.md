@@ -36,23 +36,25 @@ quality measurement are outside the clock. Results below are medians from 40
 processes per implementation on an Apple M3 Pro with Node.js 22.23.2.
 
 The encoded artifacts were built from clean commit
-`a551ca7856224d61ce6c5b3159cc4212eb10d419`. The receipt records package
-version 3.0.18, a clean worktree, and the complete runtime environment.
+`1d0514f81227e0c7ff4b58aacee111f1553f3a0e`. The receipt records package
+version 3.0.19, a clean worktree, and the complete runtime environment. The
+benchmark command rebuilds both scalar and SIMD quality Wasm before bundling,
+so the timed artifact is produced from that recorded source commit.
 
 | Fixture | Shape | wtfgif | image-q + omggif | Speedup | File-size ratio |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| MakeEmoji production sample | 128×128×8 | 0.481 ms | 157.620 ms | **327.92×** | 3.80× |
-| Photographic animation | 128×96×8 | 0.258 ms | 80.673 ms | **312.23×** | 1.84× |
-| Pixel art | 64×64×12 | 0.120 ms | 30.378 ms | **253.86×** | 6.35× |
-| Smooth gradients | 128×128×8 | 0.455 ms | 144.115 ms | **316.53×** | 8.00× |
-| Random noise | 128×128×8 | 0.276 ms | 116.910 ms | **423.52×** | 7.28× |
-| Transparency | 128×128×8 | 0.206 ms | 51.983 ms | **252.45×** | 20.85× |
-| Disjoint frame palettes | 128×128×8 | 0.193 ms | 73.113 ms | **378.91×** | 7.64× |
-| Nearly static animation | 128×128×12 | 0.250 ms | 92.311 ms | **368.81×** | 12.19× |
-| Tiny animation | 16×16×6 | 0.086 ms | 59.194 ms | **690.98×** | 1.17× |
-| One-megapixel animation | 512×512×4 | 2.205 ms | 619.603 ms | **280.96×** | 22.75× |
+| MakeEmoji production sample | 128×128×8 | 0.477 ms | 168.317 ms | **352.53×** | 3.80× |
+| Photographic animation | 128×96×8 | 0.249 ms | 77.997 ms | **313.03×** | 1.84× |
+| Pixel art | 64×64×12 | 0.116 ms | 30.855 ms | **265.61×** | 6.35× |
+| Smooth gradients | 128×128×8 | 0.459 ms | 143.172 ms | **312.03×** | 8.00× |
+| Random noise | 128×128×8 | 0.283 ms | 116.302 ms | **410.90×** | 7.28× |
+| Transparency | 128×128×8 | 0.200 ms | 51.497 ms | **257.91×** | 20.85× |
+| Disjoint frame palettes | 128×128×8 | 0.183 ms | 71.829 ms | **391.88×** | 7.64× |
+| Nearly static animation | 128×128×12 | 0.251 ms | 89.817 ms | **357.66×** | 12.19× |
+| Tiny animation | 16×16×6 | 0.087 ms | 58.824 ms | **674.52×** | 1.17× |
+| One-megapixel animation | 512×512×4 | 2.127 ms | 622.333 ms | **292.54×** | 22.75× |
 
-The observed range is 252.45×–690.98×, with a 344.96× geometric-mean speedup.
+The observed range is 257.91×–674.52×, with a 349.00× geometric-mean speedup.
 The corresponding files are 1.17×–22.75× larger, with a 6.50× geometric mean.
 This is the library's intended tradeoff: encode latency takes priority over
 compression ratio.
@@ -62,8 +64,8 @@ Pro and Node.js runtime. They do not claim codec-only performance, equal output
 size, or unmeasured hardware and runtimes.
 
 Every category exceeds the 100× floor on its first real encode after
-initialization. Transparency has the narrowest margin at 252.45×, followed by
-pixel art at 253.86×.
+initialization. Transparency has the narrowest margin at 257.91×, followed by
+pixel art at 265.61×.
 No result depends on a known palette, source cache, previous result, or
 reduced-quality mode.
 
@@ -302,15 +304,15 @@ agreement beside the time.
 
 | Implementation | Version | Median | wtfgif advantage | Bytes | PSNR | Alpha match |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| **wtfgif** | 3.0.18 | **0.485 ms** | — | 149,689 | 34.12 dB | 100% |
-| gif.js | 0.2.0 | 93.040 ms | **191.84×** | 80,869 | 33.08 dB | 99.78% |
-| image-q + omggif | 2.1.2 + 1.0.10 | 96.960 ms | **199.92×** | 39,350 | 31.84 dB | 100% |
-| gif.js.optimized | 1.0.1 | 105.900 ms | **218.35×** | 80,304 | 32.20 dB | 99.76% |
-| gifenc | 1.0.3 | 123.745 ms | **255.14×** | 39,101 | 34.54 dB | 100% |
-| modern-gif | 2.1.0 | 132.405 ms | **273.00×** | 43,114 | 32.65 dB | 100% |
+| **wtfgif** | 3.0.19 | **0.475 ms** | — | 149,689 | 34.12 dB | 100% |
+| gif.js | 0.2.0 | 89.930 ms | **189.33×** | 80,869 | 33.08 dB | 99.78% |
+| image-q + omggif | 2.1.2 + 1.0.10 | 96.145 ms | **202.41×** | 39,350 | 31.84 dB | 100% |
+| gif.js.optimized | 1.0.1 | 102.770 ms | **216.36×** | 80,304 | 32.20 dB | 99.76% |
+| gifenc | 1.0.3 | 124.850 ms | **262.84×** | 39,101 | 34.54 dB | 100% |
+| modern-gif | 2.1.0 | 127.550 ms | **268.53×** | 43,114 | 32.65 dB | 100% |
 
-The browser receipt records wtfgif 3.0.18 at clean commit
-`1d405c56072778099cb19496a9da24bf5b9aa69f`, together with the package-lock
+The browser receipt records wtfgif 3.0.19 at clean commit
+`cd802054b382164cb52d2a8b1d32d0f090d46425`, together with the package-lock
 hash and complete runtime environment.
 
 Every output must parse as an eight-frame 128×128 animation with exact 100 ms
