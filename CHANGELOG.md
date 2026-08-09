@@ -4,19 +4,25 @@ All notable changes to wtfgif are documented here.
 
 ## Unreleased
 
-- Prepare the dominant 2,048-color palette planner and exact KD lookup during
-  source-independent initialization without warming histogram, LZW, or small
-  exact-image paths. Across 180 isolated MakeEmoji pairs, the first encode is
-  1.0504x faster end to end and 1.0494x faster inside Wasm; after 64 MiB cache
-  eviction, 160 pairs retain a 1.0338x end-to-end gain. Every output hash is
-  identical, and the other nine corpus categories remain neutral or improve.
-- Extend the paired first-encode profiler to report the one-time startup phase
-  separately from JavaScript tier preparation and the timed user encode.
+- Replace scalar KD palette assignment for ordinary 512-2,048-cell SIMD
+  workloads with exact eight-color vector searches and a specialized stable
+  dominant-color planner. The route preserves the existing palette, indexed
+  pixels, and complete GIF bytes while avoiding the unused KD-tree build.
+- Materialize direct-cell palettes four colors at a time and prepare the exact,
+  direct-cell, transparent single-merge, and dominant-palette call graphs with
+  fixed synthetic inputs during explicit initialization. No user pixels,
+  palettes, or results are inspected or retained.
+- After 64 MiB cache eviction, 180 paired MakeEmoji processes measure the new
+  encoder **1.1349x** faster inside Wasm and **1.1272x** faster end to end. A
+  220-pair transparency screen is neutral inside Wasm and **1.0523x** faster
+  end to end. Both comparisons emit byte-identical GIFs.
+- Extend the paired first-encode profiler with optional eager Wasm compilation
+  and separate startup, synthetic-tiering, Wasm-encode, and complete-call time.
 - Pass the complete release gate and refresh both clean-process receipts and
-  generated charts. The arbitrary-RGBA corpus spans **183.00x-877.22x**, with
-  a **270.99x geometric mean** and **199.38x** on MakeEmoji. In fresh Chrome
-  processes, wtfgif takes **0.730 ms** and the five alternatives are
-  **135.36x-188.62x slower**.
+  generated charts. The arbitrary-RGBA corpus spans **190.41x-873.79x**, with
+  a **301.88x geometric mean** and **240.49x** on MakeEmoji. In fresh Chrome
+  processes, wtfgif takes **0.700 ms** and the five alternatives are
+  **140.81x-194.91x slower**.
 
 ## 3.0.11 - 2026-08-08
 
