@@ -36,23 +36,23 @@ quality measurement are outside the clock. Results below are medians from 40
 processes per implementation on an Apple M3 Pro with Node.js 22.23.2.
 
 The encoded artifacts were built from clean commit
-`e89983b7fa46e4d1e6f24d81c9a35416b65c6bfb`. The receipt records package
+`8184b351df4523d66863c59d496cb4c921ad2b97`. The receipt records package
 version 3.0.12, a clean worktree, and the complete runtime environment.
 
 | Fixture | Shape | wtfgif | image-q + omggif | Speedup | File-size ratio |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| MakeEmoji production sample | 128×128×8 | 0.603 ms | 146.387 ms | **242.86×** | 3.80× |
-| Photographic animation | 128×96×8 | 0.284 ms | 74.029 ms | **260.32×** | 1.84× |
-| Pixel art | 64×64×12 | 0.109 ms | 27.760 ms | **254.00×** | 6.35× |
-| Smooth gradients | 128×128×8 | 0.426 ms | 131.533 ms | **308.73×** | 8.00× |
-| Random noise | 128×128×8 | 0.275 ms | 106.438 ms | **386.46×** | 7.28× |
-| Transparency | 128×128×8 | 0.219 ms | 47.984 ms | **219.40×** | 20.85× |
-| Disjoint frame palettes | 128×128×8 | 0.166 ms | 67.134 ms | **405.23×** | 7.64× |
-| Nearly static animation | 128×128×12 | 0.310 ms | 83.518 ms | **269.23×** | 12.19× |
-| Tiny animation | 16×16×6 | 0.082 ms | 54.481 ms | **661.38×** | 1.17× |
-| One-megapixel animation | 512×512×4 | 1.934 ms | 563.401 ms | **291.33×** | 22.75× |
+| MakeEmoji production sample | 128×128×8 | 0.553 ms | 145.261 ms | **262.60×** | 3.80× |
+| Photographic animation | 128×96×8 | 0.288 ms | 72.906 ms | **253.40×** | 1.84× |
+| Pixel art | 64×64×12 | 0.105 ms | 27.107 ms | **257.66×** | 6.35× |
+| Smooth gradients | 128×128×8 | 0.424 ms | 129.380 ms | **304.84×** | 8.00× |
+| Random noise | 128×128×8 | 0.263 ms | 105.140 ms | **399.39×** | 7.28× |
+| Transparency | 128×128×8 | 0.222 ms | 46.955 ms | **211.43×** | 20.85× |
+| Disjoint frame palettes | 128×128×8 | 0.165 ms | 66.054 ms | **400.94×** | 7.64× |
+| Nearly static animation | 128×128×12 | 0.306 ms | 82.674 ms | **270.32×** | 12.19× |
+| Tiny animation | 16×16×6 | 0.082 ms | 54.076 ms | **660.80×** | 1.17× |
+| One-megapixel animation | 512×512×4 | 1.926 ms | 556.640 ms | **289.02×** | 22.75× |
 
-The observed range is 219.40×–661.38×, with a 312.34× geometric-mean speedup.
+The observed range is 211.43×–660.80×, with a 313.38× geometric-mean speedup.
 The corresponding files are 1.17×–22.75× larger, with a 6.50× geometric mean.
 This is the library's intended tradeoff: encode latency takes priority over
 compression ratio.
@@ -62,8 +62,8 @@ Pro and Node.js runtime. They do not claim codec-only performance, equal output
 size, or unmeasured hardware and runtimes.
 
 Every category exceeds the 100× floor on its first real encode after
-initialization. Transparency has the narrowest margin at 219.40×, followed by
-the MakeEmoji production sample at 242.86×.
+initialization. Transparency has the narrowest margin at 211.43×, followed by
+the photographic workload at 253.40×.
 No result depends on a known palette, source cache, previous result, or
 reduced-quality mode.
 
@@ -92,6 +92,11 @@ frames, tiny animations, and a one-megapixel workload. Add the optional
 three-megapixel fixture with `npm run bench:corpus:stress`.
 
 ## Runtime preparation and cold-cache check
+
+The current dominant-palette channel layout was also measured directly against
+the previous clean SIMD Wasm. Across 240 paired, fresh, cache-evicted
+MakeEmoji processes, it is **1.0772× faster inside Wasm** and **1.0693× faster
+end to end** (0.565 ms to 0.530 ms), with the same complete-GIF SHA-256 hash.
 
 Explicit initialization performs fixed synthetic encodes to compile and tier
 the actual JavaScript and Wasm paths before the app's first user encode. The

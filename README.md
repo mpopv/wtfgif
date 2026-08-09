@@ -5,7 +5,7 @@ runtimes. Its single encoder is optimized for maximum speed at the cost of
 larger files. There are no compression or quality modes.
 
 On the current 10-workload receipt, the first encode after initialization is
-**219.40×–661.38× faster** than image-q + omggif. The resulting files are
+**211.43×–660.80× faster** than image-q + omggif. The resulting files are
 **1.17×–22.75× larger**. The benchmark includes arbitrary RGBA photographs,
 pixel art, gradients, transparency, noise, tiny animations, and a one-megapixel
 animation—not known palettes, cached pixels, reused palettes, or cached results.
@@ -126,9 +126,9 @@ encoded results. Preparing the public separate-frame path reduces the first
 cache-evicted MakeEmoji encode from 0.713 ms to 0.604 ms across 20 fresh
 processes, a 1.180× gain with identical GIF bytes.
 
-Across the 10 arbitrary-RGBA workloads, wtfgif is **219.40×–661.38× faster**
-than image-q + omggif, with a **312.34× geometric mean**. The real 128×128
-MakeEmoji workload is **242.86× faster** (0.603 ms vs 146.387 ms). Output files
+Across the 10 arbitrary-RGBA workloads, wtfgif is **211.43×–660.80× faster**
+than image-q + omggif, with a **313.38× geometric mean**. The real 128×128
+MakeEmoji workload is **262.60× faster** (0.553 ms vs 145.261 ms). Output files
 are **1.17×–22.75× larger**, with a **6.50× geometric mean**.
 
 ![wtfgif speedup across the arbitrary-RGBA corpus](docs/corpus-speedup.svg)
@@ -141,7 +141,7 @@ and binary transparency must be exact; PSNR and SSIM expose the unavoidable
 color reduction when arbitrary RGBA pixels become a GIF palette.
 
 The receipt identifies wtfgif 3.0.12 at clean source commit
-`e89983b7fa46e4d1e6f24d81c9a35416b65c6bfb`.
+`8184b351df4523d66863c59d496cb4c921ad2b97`.
 
 ## Browser comparison
 
