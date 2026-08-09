@@ -4,6 +4,14 @@ All notable changes to wtfgif are documented here.
 
 ## Unreleased
 
+- Prepare the independently allocated frame-array API path during explicit
+  initialization with one fixed two-pixel animation. Across 20 fresh,
+  cache-evicted MakeEmoji processes this reduces the first separate-frame
+  encode from 0.713 ms to 0.604 ms (1.180x) with identical GIF bytes.
+- Make the representative Node and browser races pass wtfgif one RGBA typed
+  array per frame, evict 64 MiB of unrelated memory before timing, and yield
+  one event-loop turn after eviction. This measures the image-stitching API
+  shape without fixture-derived preparation or immediate allocator aftermath.
 - Keep the browser encoder comparison chart in the README and add a direct
   100x-wtfgif latency reference line. Clarify the latency-only output-size
   tradeoff and the exact relationship between the 3.0.11 benchmark receipt and

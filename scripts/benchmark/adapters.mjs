@@ -29,7 +29,7 @@ export function encodeWtfgif(value, alphaThreshold) {
 		alphaThreshold,
 		delay: value.delay,
 		frameCount: value.frameCount,
-		frames: value.rgba,
+		frames: value.frames ?? value.rgba,
 		height: value.height,
 		loop: 0,
 		width: value.width,

@@ -13,6 +13,13 @@ let scratchPointer = 0;
 let scratchCapacity = 0;
 const PREPARE_ENCODER_OPTIONS = {} as EncodeRgbaGifFramesOptions;
 const PREPARE_ENCODER_RESULT = new Uint8Array();
+const PREPARE_FRAME_ARRAY_OPTIONS: EncodeRgbaGifFramesOptions = {
+	width: 1,
+	height: 1,
+	frames: [Uint8Array.of(16, 32, 48, 255), Uint8Array.of(64, 80, 96, 255)],
+	delay: 0,
+	loop: 0,
+};
 
 export type RgbaGifFrame = Uint8Array | Uint8ClampedArray;
 export type RgbaGifFrames = RgbaGifFrame | RgbaGifFrame[];
@@ -222,6 +229,11 @@ export function prepareQualityWasmEncoderModule(
 		);
 		scratchCapacity = QUALITY_INITIAL_INPUT_CAPACITY;
 		prepareQualityEncoderRuntime(module, scratchMemory, scratchPointer);
+		// Compile the separate-frame validation and direct-to-Wasm copy path with
+		// fixed source-independent pixels. Image-stitching callers commonly hold
+		// one decoded RGBA array per frame; their first real call should not pay
+		// JavaScript compilation that the contiguous path already avoids.
+		encodeRgbaGifFramesPrepared(PREPARE_FRAME_ARRAY_OPTIONS);
 		// Compile the private JavaScript validation/dispatch function during the
 		// explicit initialization boundary. The sentinel exits before reading
 		// pixels, calling Wasm, or producing image-derived state.

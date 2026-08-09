@@ -66,7 +66,8 @@ describe("encode-only quality entry", () => {
 		try {
 			expect(prepare).toHaveBeenCalledTimes(1);
 			expect(prepareEncode).toHaveBeenNthCalledWith(1, 0, 1, 1, 0, 0, 0, 128);
-			expect(prepareEncode).toHaveBeenCalledTimes(16);
+			expect(prepareEncode).toHaveBeenCalledTimes(17);
+			expect(prepareEncode).toHaveBeenLastCalledWith(8, 1, 1, 2, 0, 0, 128);
 			expect(prepareLargeEncode).toHaveBeenCalledExactlyOnceWith(
 				1001 * 1000 * 4,
 				1001,
@@ -76,7 +77,7 @@ describe("encode-only quality entry", () => {
 				0,
 				128,
 			);
-			expect(prepareOutputPointer).toHaveBeenCalledTimes(1);
+			expect(prepareOutputPointer).toHaveBeenCalledTimes(2);
 			expect(reserve).toHaveBeenCalledExactlyOnceWith(4 * 1024 * 1024);
 			encodeRgbaGifFrames({
 				width: 2,
@@ -86,9 +87,9 @@ describe("encode-only quality entry", () => {
 				delay: 10,
 			});
 			expect(prepare).toHaveBeenCalledTimes(1);
-			expect(prepareEncode).toHaveBeenCalledTimes(17);
+			expect(prepareEncode).toHaveBeenCalledTimes(18);
 			expect(prepareLargeEncode).toHaveBeenCalledTimes(1);
-			expect(prepareOutputPointer).toHaveBeenCalledTimes(2);
+			expect(prepareOutputPointer).toHaveBeenCalledTimes(3);
 			expect(reserve).toHaveBeenCalledTimes(1);
 		} finally {
 			setWasmCoreModule(module);
@@ -114,6 +115,12 @@ describe("encode-only quality entry", () => {
 		});
 
 		expect(encoded).toStrictEqual(expected);
+		expect(
+			encodeRgbaGifFrames({
+				...options,
+				frames: [frames.subarray(0, 8), frames.subarray(8)],
+			}),
+		).toStrictEqual(encoded);
 	});
 
 	test("can switch repeatedly between constant and per-frame delays", () => {

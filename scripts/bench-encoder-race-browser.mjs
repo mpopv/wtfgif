@@ -36,6 +36,9 @@ const source = new Uint8ClampedArray(await fixtureResponse.arrayBuffer());
 if (source.length !== FRAME_BYTES * FRAME_COUNT) {
 	throw new Error(`Unexpected fixture byte length: ${source.length}`);
 }
+const sourceFrames = Array.from({ length: FRAME_COUNT }, (_, frame) =>
+	source.slice(frame * FRAME_BYTES, (frame + 1) * FRAME_BYTES),
+);
 
 function pointColor(point) {
 	return (point.r << 16) | (point.g << 8) | point.b;
@@ -287,7 +290,7 @@ function encodeWtfgif() {
 		alphaThreshold: ALPHA_THRESHOLD,
 		delay: DELAY_CENTISECONDS,
 		frameCount: FRAME_COUNT,
-		frames: source,
+		frames: sourceFrames,
 		height: HEIGHT,
 		loop: 0,
 		width: WIDTH,
@@ -386,6 +389,8 @@ try {
 	if (implementation === "wtfgif") {
 		await initializeWasmGlobally();
 	}
+	const cacheEviction = new Uint8Array(64 * 1024 * 1024);
+	cacheEviction.fill(1);
 	await new Promise((resolve) => requestAnimationFrame(() => resolve()));
 	const operation = operations[implementation];
 	if (!operation) throw new Error(`Unknown implementation: ${implementation}`);
@@ -400,6 +405,7 @@ try {
 
 	await report({
 		bytes: bytes.length,
+		cacheEvictionSink: cacheEviction[cacheEviction.length - 1],
 		elapsedMs,
 		...(includeOutput ? { outputBase64: base64(bytes) } : {}),
 		...validation,

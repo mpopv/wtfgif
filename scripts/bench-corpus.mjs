@@ -144,7 +144,12 @@ const receipt = {
 	createdAt: new Date().toISOString(),
 	benchmark: {
 		boundary:
-			"First user-input RGBA-to-complete-GIF call in a fresh process after package loading and source-independent wtfgif Wasm runtime preparation; zero fixture-derived warmups.",
+			"First user-input RGBA-to-complete-GIF call in a fresh process after package loading, source-independent wtfgif Wasm runtime preparation, and 64 MiB unrelated-memory cache eviction; zero fixture-derived warmups.",
+		inputLayout:
+			"wtfgif receives one independently allocated RGBA typed array per frame; arrays are created before cache eviction and timing.",
+		cacheEvictionBytes: 64 * 1024 * 1024,
+		cacheQuiescence:
+			"One zero-delay event-loop turn after eviction; no encoder code or fixture bytes are touched.",
 		alphaThreshold: ALPHA_THRESHOLD,
 		iterations,
 		warmups: 0,

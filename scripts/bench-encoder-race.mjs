@@ -369,7 +369,7 @@ try {
 
 	const receipt = {
 		boundary:
-			"First user-input encode from arbitrary RGBA after package loading and source-independent wtfgif Wasm runtime preparation; zero fixture-derived warmups; includes palette creation, pixel mapping, compression, and output assembly",
+			"First user-input encode from arbitrary RGBA after package loading, source-independent wtfgif Wasm runtime preparation, and 64 MiB unrelated-memory cache eviction; zero fixture-derived warmups; includes palette creation, pixel mapping, compression, and output assembly",
 		environment: {
 			browser: browserVersion.trim(),
 			cpu: cpus()[0]?.model ?? "unknown CPU",
@@ -380,8 +380,13 @@ try {
 		fixture: {
 			alphaThreshold: ALPHA_THRESHOLD,
 			bytes: FRAME_COUNT * FRAME_BYTES,
+			cacheEvictionBytes: 64 * 1024 * 1024,
+			cacheQuiescence:
+				"One requestAnimationFrame after eviction; no encoder operation or fixture access occurs in the callback.",
 			frames: FRAME_COUNT,
 			height: HEIGHT,
+			inputLayout:
+				"wtfgif receives eight independently allocated RGBA typed arrays created before cache eviction and timing",
 			name: "real MakeEmoji images",
 			width: WIDTH,
 		},
