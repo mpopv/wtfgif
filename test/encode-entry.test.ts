@@ -131,6 +131,24 @@ describe("encode-only quality entry", () => {
 				frames: [frames.subarray(0, 8), frames.subarray(8)],
 			}),
 		).toStrictEqual(encoded);
+		expect(
+			encodeRgbaGifFrames({
+				...options,
+				frames: [
+					new Uint8ClampedArray(frames.subarray(0, 8)),
+					new Uint8ClampedArray(frames.subarray(8)),
+				],
+			}),
+		).toStrictEqual(encoded);
+		expect(
+			encodeRgbaGifFrames({
+				...options,
+				frames: [
+					Uint8Array.of(...frames.subarray(0, 8), 1, 2, 3, 4),
+					Uint8Array.of(...frames.subarray(8), 5, 6, 7, 8),
+				],
+			}),
+		).toStrictEqual(encoded);
 	});
 
 	test("can switch repeatedly between constant and per-frame delays", () => {

@@ -531,8 +531,11 @@ function copyFrames(
 		return;
 	}
 	for (let frame = 0; frame < frameCount; frame++) {
+		const source = frames[frame]!;
 		output.set(
-			asUint8Array(frames[frame]!).subarray(0, frameByteSize),
+			source.length === frameByteSize
+				? source
+				: source.subarray(0, frameByteSize),
 			frame * frameByteSize,
 		);
 	}

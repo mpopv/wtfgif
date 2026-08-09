@@ -176,6 +176,28 @@ respectively. A four-group unroll was 2% slower on MakeEmoji and a one-group
 loop measured **0.9996×** against the retained two-group loop, so both were
 rejected. Every comparison emitted the same complete-GIF SHA-256 hash.
 
+## Direct typed-frame copy A/B
+
+The 3.0.18 JavaScript boundary copies an exact-size `Uint8Array` or
+`Uint8ClampedArray` frame directly into the Wasm input arena. Earlier releases
+created a temporary `subarray()` view for every independently allocated frame,
+even though normal image-stitching inputs already have exactly the required
+`width * height * 4` bytes. Oversized arrays still copy only the required
+prefix. This changes neither validation nor the bytes presented to Wasm.
+
+Against clean 3.0.17 at the same fixed module path, 480 alternating fresh,
+cache-evicted MakeEmoji pairs measured **1.0231× faster end to end** (0.504 ms
+to 0.491 ms). In 100-pair screens, photographic input improved **1.0155×**,
+pixel art **1.0717×**, gradient **1.0207×**, noise **1.0262×**, transparency
+**1.0469×**, disjoint palettes **1.0296×**, and tiny input **1.0256×** by paired
+median. A 300-pair nearly-static repeat improved **1.0137×**. The
+one-megapixel control was neutral: its separate medians improved **1.0067×**
+while its paired median measured **0.9934×**. Every comparison emitted the
+same complete-GIF SHA-256 hash.
+
+Destination-view caching, validation/copy fusion, offset accumulation, and a
+two-frame unroll measured neutral or regressed on repeat, so none are retained.
+
 ## Runtime preparation and cold-cache check
 
 The fixed mixed-alpha preparation now runs four times during explicit startup.
