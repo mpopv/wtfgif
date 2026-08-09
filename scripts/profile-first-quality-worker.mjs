@@ -6,6 +6,10 @@ import { loadBenchmarkCorpus } from "./benchmark/corpus.mjs";
 const fixtureId = process.env.PROFILE_FIXTURE ?? "makeemoji-real";
 const fixture = loadBenchmarkCorpus().find((value) => value.id === fixtureId);
 if (!fixture) throw new Error(`Unknown PROFILE_FIXTURE: ${fixtureId}`);
+const repeat = Number(process.env.PROFILE_REPEAT ?? 1);
+if (!Number.isInteger(repeat) || repeat < 1) {
+	throw new Error("PROFILE_REPEAT must be a positive integer");
+}
 let { rgba } = fixture;
 const { width, height, frameCount } = fixture;
 if (process.env.PROFILE_TRANSPARENT_PERCENT !== undefined) {
@@ -251,11 +255,14 @@ const inputPointer = wasm.indexed_lzw_input_scratch_reserve(rgba.length);
 const reserved = performance.now();
 new Uint8Array(wasm.memory.buffer, inputPointer, rgba.length).set(rgba);
 const copiedInput = performance.now();
-const outputLength = (
+const encode =
 	rgba.length / 4 > 1_000_000 || process.env.PROFILE_GENERAL === "1"
 		? wasm.encode_rgba_quality_gif_constant_delay_scratch_from_input
-		: wasm.encode_rgba_quality_low_res_constant_delay_scratch_from_input
-)(rgba.length, width, height, frameCount, 10, 0, 179);
+		: wasm.encode_rgba_quality_low_res_constant_delay_scratch_from_input;
+let outputLength = 0;
+for (let iteration = 0; iteration < repeat; iteration += 1) {
+	outputLength = encode(rgba.length, width, height, frameCount, 10, 0, 179);
+}
 const encoded = performance.now();
 const output = new Uint8Array(
 	new Uint8Array(
@@ -268,6 +275,7 @@ const copiedOutput = performance.now();
 
 process.stdout.write(
 	JSON.stringify({
+		repeat,
 		moduleMs: moduleCompleted - moduleStarted,
 		instanceMs: instanceCompleted - moduleCompleted,
 		startMs: startCompleted - instanceCompleted,

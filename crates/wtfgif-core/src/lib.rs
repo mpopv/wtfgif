@@ -13486,7 +13486,67 @@ fn encode_nine_bit_literal_lzw_mapped_to<const BITS: usize, const HAS_TRANSPAREN
         output_position += 9;
         let chunk_end = chunk_start + LITERALS_PER_BLOCK;
         let mut pixel_index = chunk_start + 7;
-        while pixel_index < chunk_end {
+        // Map two independent groups before writing either result. This keeps
+        // the exact byte stream while exposing more table-lookup parallelism
+        // and halving loop control across the 216 remaining block literals.
+        while pixel_index + 16 <= chunk_end {
+            let packed_codes0 = unsafe {
+                mapped_quality_eight_pixels::<BITS, HAS_TRANSPARENT>(
+                    rgba_pointer.add(pixel_index * 4),
+                    alpha_threshold,
+                    transparent_index,
+                    histogram_to_palette_pointer,
+                )
+            };
+            let packed_codes1 = unsafe {
+                mapped_quality_eight_pixels::<BITS, HAS_TRANSPARENT>(
+                    rgba_pointer.add((pixel_index + 8) * 4),
+                    alpha_threshold,
+                    transparent_index,
+                    histogram_to_palette_pointer,
+                )
+            };
+            if HAS_TRANSPARENT && packed_codes0 == transparent_codes {
+                unsafe {
+                    std::ptr::write_unaligned(
+                        output_pointer.add(output_position).cast::<u64>(),
+                        transparent_low.to_le(),
+                    );
+                    output_pointer
+                        .add(output_position + 8)
+                        .write(transparent_high);
+                }
+            } else {
+                unsafe {
+                    write_eight_nine_bit_literal_codes_raw(
+                        output_pointer.add(output_position),
+                        packed_codes0,
+                    )
+                };
+            }
+            output_position += 9;
+            if HAS_TRANSPARENT && packed_codes1 == transparent_codes {
+                unsafe {
+                    std::ptr::write_unaligned(
+                        output_pointer.add(output_position).cast::<u64>(),
+                        transparent_low.to_le(),
+                    );
+                    output_pointer
+                        .add(output_position + 8)
+                        .write(transparent_high);
+                }
+            } else {
+                unsafe {
+                    write_eight_nine_bit_literal_codes_raw(
+                        output_pointer.add(output_position),
+                        packed_codes1,
+                    )
+                };
+            }
+            output_position += 9;
+            pixel_index += 16;
+        }
+        if pixel_index < chunk_end {
             let packed_codes = unsafe {
                 mapped_quality_eight_pixels::<BITS, HAS_TRANSPARENT>(
                     rgba_pointer.add(pixel_index * 4),
@@ -13514,7 +13574,6 @@ fn encode_nine_bit_literal_lzw_mapped_to<const BITS: usize, const HAS_TRANSPAREN
                 };
             }
             output_position += 9;
-            pixel_index += 8;
         }
     }
 
