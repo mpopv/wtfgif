@@ -31,9 +31,10 @@ Pro with Node.js 22.23.2.
 
 The encoded artifacts were built from clean commit
 `543ec482d854792dfc98dd00005eecd16022b594`. The receipt records package
-version 3.0.11 and the complete runtime environment. The following commit
-changes only benchmark receipts, documentation, and charts, so the receipt
-identifies the exact encoder source that was measured.
+version 3.0.11 and the complete runtime environment. Version 3.0.12 ships that
+encoder source unchanged; its release commit changes benchmark receipts,
+documentation, charts, and package metadata only. The receipt therefore still
+identifies the exact encoder implementation that was measured.
 
 | Fixture | Shape | wtfgif | image-q + omggif | Speedup | File-size ratio |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -149,8 +150,9 @@ processes per encoder on an Apple M3 Pro in Google Chrome 151.0.7922.77.
 This is public-API time-to-result, not a codec-kernel microbenchmark. The
 gif.js and gif.js.optimized APIs create workers when `render()` begins, so that
 worker creation is inside their timed jobs. The README chart uses bar length
-for median encode time and prints each encoder's emitted GIF size, relative
-slowdown, PSNR, and alpha agreement beside the time.
+for median encode time, marks 100× wtfgif latency with a dashed reference line,
+and prints each encoder's emitted GIF size, relative slowdown, PSNR, and alpha
+agreement beside the time.
 
 | Implementation | Version | Median | wtfgif advantage | Bytes | PSNR | Alpha match |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |

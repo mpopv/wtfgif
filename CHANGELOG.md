@@ -4,6 +4,11 @@ All notable changes to wtfgif are documented here.
 
 ## Unreleased
 
+- Keep the browser encoder comparison chart in the README and add a direct
+  100x-wtfgif latency reference line. Clarify the latency-only output-size
+  tradeoff and the exact relationship between the 3.0.11 benchmark receipt and
+  the unchanged encoder source shipped in 3.0.12.
+
 ## 3.0.12 - 2026-08-08
 
 - Copy completed Wasm GIF bytes into stable JavaScript-owned arrays with the

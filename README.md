@@ -1,8 +1,9 @@
 # wtfgif
 
 `wtfgif` is a JavaScript/TypeScript library for making and reading GIF files in
-Node.js, browsers, Workers, and edge runtimes. It is deliberately optimized for
-minimum encoding latency, not minimum file size.
+Node.js, browsers, Workers, and edge runtimes. Its one encoding path is
+deliberately optimized for minimum latency at the cost of larger files. There
+is no balanced mode or compression profile.
 
 On the current 10-workload receipt, the first encode after initialization is
 **182.15×–894.64× faster** than image-q + omggif. The resulting files are
@@ -139,9 +140,10 @@ Both the chart and values above are generated from the clean 40-process
 and binary transparency must be exact; PSNR and SSIM expose the unavoidable
 color reduction when arbitrary RGBA pixels become a GIF palette.
 
-The measured artifact is wtfgif 3.0.11 at clean source commit
-`543ec482d854792dfc98dd00005eecd16022b594`. The following commit updates
-receipts, documentation, and charts only.
+The receipt identifies wtfgif 3.0.11 at clean source commit
+`543ec482d854792dfc98dd00005eecd16022b594`. Version 3.0.12 ships that encoder
+source unchanged; its release commit updates receipts, documentation, charts,
+and package metadata only.
 
 ## Browser comparison
 
@@ -152,9 +154,11 @@ the same eight-frame MakeEmoji workload. Package loading and wtfgif
 initialization are outside the clock. wtfgif took **0.655 ms**; the five
 alternatives took **90.520–128.975 ms** and were **138.20×–196.91× slower**.
 wtfgif emitted 149,689 bytes; the alternatives emitted 39,101–80,869 bytes.
-The chart reports output size, PSNR, and alpha agreement beside every timing.
-gif.js worker creation is part of its public timed operation. Exact settings
-and raw samples are in [BENCHMARKS.md](BENCHMARKS.md).
+The dashed line marks 100× wtfgif's measured latency. The chart reports output
+size, PSNR, and alpha agreement beside every timing, so the speed claim is not
+separated from its size and fidelity tradeoffs. gif.js worker creation is part
+of its public timed operation. Exact settings and raw samples are in
+[BENCHMARKS.md](BENCHMARKS.md).
 
 The raw receipt is [`benchmarks/encoder-race.json`](benchmarks/encoder-race.json),
 and the chart above is generated from it by
@@ -174,6 +178,8 @@ checks, and browser checks are in [BENCHMARKS.md](BENCHMARKS.md).
 - GIF delays use hundredths of a second, so `delay: 10` means 100 ms.
 - GIF supports at most 256 colors and only fully transparent or fully opaque
   pixels. Converting from full-color RGBA always involves some color reduction.
+- Encoding always uses wtfgif's latency-first literal-LZW path. Smaller output
+  is not an alternate mode of this library.
 - `GifReader` and `GifWriter` are compatible with the equivalent `omggif` APIs
   if you need lower-level palette and frame control.
 

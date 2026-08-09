@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="632" viewBox="0 0 1200 632" role="img" aria-labelledby="title desc">
 <title id="title">Browser GIF encoder speed in milliseconds</title>
-<desc id="desc">Horizontal bar chart comparing wtfgif, gif.js, image-q + omggif, gif.js.optimized, gifenc, modern-gif. Bar length is median encode time in milliseconds, so shorter is faster. Labels also report emitted GIF size, relative slowdown versus wtfgif, PSNR, and alpha agreement.</desc>
+<desc id="desc">Horizontal bar chart comparing wtfgif, gif.js, image-q + omggif, gif.js.optimized, gifenc, modern-gif. Bar length is median encode time in milliseconds, so shorter is faster. A dashed vertical line marks one hundred times wtfgif latency. Labels also report emitted GIF size, relative slowdown versus wtfgif, PSNR, and alpha agreement.</desc>
 <rect width="100%" height="100%" fill="#ffffff"/>
 <g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" fill="#172026">
 <text x="40" y="48" font-size="25" font-weight="700">Browser encode time on the same RGBA animation</text>
@@ -18,6 +18,8 @@
 <text x="714" y="118" text-anchor="middle" font-size="12" fill="#687780">120 ms</text>
 <line x1="830" y1="120" x2="830" y2="508" stroke="#e3e8eb" stroke-width="1"/>
 <text x="830" y="118" text-anchor="middle" font-size="12" fill="#687780">150 ms</text>
+<line x1="503.27" y1="128" x2="503.27" y2="508" stroke="#b34b3f" stroke-width="2" stroke-dasharray="5 4"/>
+<text x="510.27" y="140" font-size="12" font-weight="700" fill="#9b3d33">100× wtfgif (65.5 ms)</text>
 <text x="220" y="169" text-anchor="end" font-size="15" font-weight="700">wtfgif</text>
 <rect x="250" y="148" width="2.53" height="28" rx="3" fill="#0d8f6f"/>
 <text x="261.53" y="168" text-anchor="start" font-size="14" font-weight="700" fill="#172026">0.66 ms · 146.2 KiB · baseline</text>
@@ -42,7 +44,7 @@
 <rect x="250" y="458" width="498.7" height="28" rx="3" fill="#aab5bb"/>
 <text x="757.7" y="478" text-anchor="start" font-size="14" font-weight="700" fill="#172026">129.0 ms · 42.1 KiB · 196.91× slower</text>
 <text x="250" y="503" font-size="12" fill="#687780">32.65 dB PSNR · 100% alpha match</text>
-<text x="40" y="574" font-size="12" fill="#687780">Bar length = encode time · labels include emitted size, PSNR, alpha agreement, and relative slowdown · gif.js worker creation is timed</text>
+<text x="40" y="574" font-size="12" fill="#687780">Bar length = encode time · dashed line = 100× wtfgif · labels include size and decoded quality · gif.js worker creation is timed</text>
 <text x="40" y="598" font-size="12" fill="#687780">Google Chrome 151.0.7922.77 · Apple M3 Pro · every output decoded and checked</text>
 </g>
 </svg>

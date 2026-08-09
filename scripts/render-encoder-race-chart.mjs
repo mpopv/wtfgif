@@ -59,6 +59,10 @@ export function renderEncoderRaceChart(receipt) {
 	const firstRowY = 148;
 	const height = firstRowY + rows.length * rowHeight + 112;
 	const maximum = niceMaximum(Math.max(...rows.map((row) => row.medianMs)));
+	const hundredTimesWtfgifMs = wtfgif.medianMs * 100;
+	const hundredTimesWtfgifX = coordinate(
+		chartLeft + (hundredTimesWtfgifMs / maximum) * chartWidth,
+	);
 	const tickCount = 5;
 	const competitors = rows.filter((row) => row.id !== "wtfgif");
 	const minimumSlowdown = Math.min(
@@ -73,7 +77,7 @@ export function renderEncoderRaceChart(receipt) {
 	elements.push(
 		`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="title desc">`,
 		'<title id="title">Browser GIF encoder speed in milliseconds</title>',
-		`<desc id="desc">Horizontal bar chart comparing ${rows.map((row) => row.label).join(", ")}. Bar length is median encode time in milliseconds, so shorter is faster. Labels also report emitted GIF size, relative slowdown versus wtfgif, PSNR, and alpha agreement.</desc>`,
+		`<desc id="desc">Horizontal bar chart comparing ${rows.map((row) => row.label).join(", ")}. Bar length is median encode time in milliseconds, so shorter is faster. A dashed vertical line marks one hundred times wtfgif latency. Labels also report emitted GIF size, relative slowdown versus wtfgif, PSNR, and alpha agreement.</desc>`,
 		'<rect width="100%" height="100%" fill="#ffffff"/>',
 		'<g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" fill="#172026">',
 		'<text x="40" y="48" font-size="25" font-weight="700">Browser encode time on the same RGBA animation</text>',
@@ -87,6 +91,13 @@ export function renderEncoderRaceChart(receipt) {
 		elements.push(
 			`<line x1="${x}" y1="120" x2="${x}" y2="${firstRowY + rows.length * rowHeight - 12}" stroke="#e3e8eb" stroke-width="1"/>`,
 			`<text x="${x}" y="118" text-anchor="middle" font-size="12" fill="#687780">${value.toFixed(0)} ms</text>`,
+		);
+	}
+
+	if (hundredTimesWtfgifMs <= maximum) {
+		elements.push(
+			`<line x1="${hundredTimesWtfgifX}" y1="128" x2="${hundredTimesWtfgifX}" y2="${firstRowY + rows.length * rowHeight - 12}" stroke="#b34b3f" stroke-width="2" stroke-dasharray="5 4"/>`,
+			`<text x="${hundredTimesWtfgifX + 7}" y="140" font-size="12" font-weight="700" fill="#9b3d33">100× wtfgif (${formatMilliseconds(hundredTimesWtfgifMs)})</text>`,
 		);
 	}
 
@@ -109,7 +120,7 @@ export function renderEncoderRaceChart(receipt) {
 	}
 
 	elements.push(
-		`<text x="40" y="${height - 58}" font-size="12" fill="#687780">Bar length = encode time · labels include emitted size, PSNR, alpha agreement, and relative slowdown · gif.js worker creation is timed</text>`,
+		`<text x="40" y="${height - 58}" font-size="12" fill="#687780">Bar length = encode time · dashed line = 100× wtfgif · labels include size and decoded quality · gif.js worker creation is timed</text>`,
 		`<text x="40" y="${height - 34}" font-size="12" fill="#687780">${escapeXml(receipt.environment.browser)} · ${escapeXml(receipt.environment.cpu)} · every output decoded and checked</text>`,
 		"</g>",
 		"</svg>",
