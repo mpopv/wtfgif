@@ -12,10 +12,16 @@ All notable changes to wtfgif are documented here.
   the one-megapixel control is neutral and every GIF is byte-identical.
 - Route every Wasm build through one reproducible helper, retain function names
   only between the two optimizer passes, and remove them from packaged output.
-- Refresh the clean 40-process Node receipt at **244.35x-646.39x**, with a
-  **330.45x geometric mean** and **282.45x** MakeEmoji result. The fresh-Chrome
-  comparison measures wtfgif at **0.605 ms** and the five alternatives at
-  **164.17x-224.98x slower**.
+- Search 16 palette colors per SIMD loop through four independent accumulators,
+  reduce those accumulators once after the scan, and keep opaque spans inside
+  mixed-alpha images on a branch-free histogram path. Across 240 paired fresh
+  MakeEmoji processes the complete encode improves **1.1494x** (0.776 ms to
+  0.675 ms), and every GIF remains byte-identical. All other corpus controls
+  stay within 0.9% on the slower side.
+- Refresh the clean 40-process Node receipt at **249.58x-654.34x**, with a
+  **335.62x geometric mean** and **292.67x** MakeEmoji result. The fresh-Chrome
+  comparison measures wtfgif at **0.555 ms** and the five alternatives at
+  **176.82x-244.61x slower**.
 
 ## 3.0.15 - 2026-08-09
 
