@@ -20,8 +20,8 @@ if (!Number.isInteger(iterations) || iterations < 1) {
 }
 
 const samples = {
-	baseline: { tierMs: [], totalMs: [], wasmMs: [] },
-	candidate: { tierMs: [], totalMs: [], wasmMs: [] },
+	baseline: { startMs: [], tierMs: [], totalMs: [], wasmMs: [] },
+	candidate: { startMs: [], tierMs: [], totalMs: [], wasmMs: [] },
 };
 const pairedRatios = { totalMs: [], wasmMs: [] };
 const outputSha256 = {};
@@ -79,7 +79,7 @@ for (let iteration = 0; iteration < iterations; iteration += 1) {
 	for (const [name, wasmPath] of order) {
 		const sample = run(name, wasmPath);
 		pair[name] = sample;
-		for (const phase of ["tierMs", "totalMs", "wasmMs"]) {
+		for (const phase of ["startMs", "tierMs", "totalMs", "wasmMs"]) {
 			samples[name][phase].push(sample[phase]);
 		}
 	}
@@ -89,6 +89,9 @@ for (let iteration = 0; iteration < iterations; iteration += 1) {
 }
 
 console.log(`Paired first raw quality encode: ${fixture}, ${iterations} pairs`);
+console.log(
+	`startMs\t${median(samples.baseline.startMs).toFixed(3)} ms baseline\t${median(samples.candidate.startMs).toFixed(3)} ms candidate`,
+);
 console.log(
 	`tierMs\t${median(samples.baseline.tierMs).toFixed(3)} ms baseline\t${median(samples.candidate.tierMs).toFixed(3)} ms candidate`,
 );

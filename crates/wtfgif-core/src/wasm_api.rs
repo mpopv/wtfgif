@@ -273,14 +273,7 @@ pub fn prepare_quality_encoder_code() {
         maximum: [0; 3],
     };
     let split = split_wu_cube(std::hint::black_box(&[]), std::hint::black_box(&[]), cube);
-    let unretained_plan = build_quality_index_plan_from_colors::<true, 4>(
-        false,
-        std::hint::black_box(Vec::new()),
-        Vec::new(),
-    );
-    // Do not recycle this preparation-only plan: dropping its temporary table
-    // keeps the reusable palette and mapping arenas cold for the first image.
-    drop(unretained_plan);
+    let dominant_palette_prepared = prepare_quality_dominant_palette_code();
     let mut tree = PaletteKdTree::new(std::hint::black_box(&[]));
     tree.recolor(std::hint::black_box(&[]));
     let nearest = tree.nearest_with_seed(0, 0, 0, 0, 1);
@@ -320,6 +313,7 @@ pub fn prepare_quality_encoder_code() {
             ^ usize::from(alpha_lzw.is_ok())
             ^ usize::from(exact_lzw.is_ok())
             ^ usize::from(aligned_four_bit_lzw.is_ok())
+            ^ dominant_palette_prepared
             ^ usize::from(exact_plain.is_ok())
             ^ usize::from(exact_runs.is_ok())
             ^ usize::from(quantized.is_ok())

@@ -8426,6 +8426,39 @@ fn accumulate_quality_histogram_u64_via_u32(
     has_transparent_pixels
 }
 
+fn prepare_quality_dominant_palette_code() -> usize {
+    let mut checksum = 0usize;
+    // The public initialization path follows this with one complete synthetic
+    // encode. Three planner-only probes bring the dominant-palette planner and
+    // exact KD search to V8's measured optimizing-tier plateau without tiering
+    // unrelated histogram, LZW, or small exact-image call graphs.
+    for _ in 0..3 {
+        let mut colors = take_quality_colors();
+        colors.clear();
+        if colors.capacity() < QUALITY_DOMINANT_COLOR_LIMIT {
+            colors.reserve(QUALITY_DOMINANT_COLOR_LIMIT - colors.capacity());
+        }
+        for cell in 0..QUALITY_DOMINANT_COLOR_LIMIT {
+            colors.push(QuantizedColor {
+                count: ((cell * 73) % 251 + 1) as QuantizedColorCount,
+                histogram_index: cell as u16,
+                red: ((cell >> 8) << 4 | 8) as u8,
+                green: (((cell >> 4) & 15) << 4 | 8) as u8,
+                blue: ((cell & 15) << 4 | 8) as u8,
+            });
+        }
+        let plan = build_quality_index_plan_from_colors::<true, 4>(
+            false,
+            colors,
+            take_quality_palette(256),
+        );
+        checksum ^= plan.palette.capacity() ^ plan.histogram_to_palette.capacity();
+        recycle_quality_palette(plan.palette);
+        recycle_quality_histogram_to_palette(plan.histogram_to_palette);
+    }
+    checksum
+}
+
 #[inline(never)]
 fn build_quality_index_plan_from_colors<
     const SAFE_U32_COUNTS: bool,
