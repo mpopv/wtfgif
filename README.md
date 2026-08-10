@@ -5,7 +5,7 @@ runtimes. Its single encoder is optimized for maximum speed at the cost of
 larger files. There are no compression or quality modes.
 
 On the current 10-workload cold-cache receipt, the first and only encode after
-initialization is **252.21×–744.80× faster** than image-q + omggif. The
+initialization is **251.36×–695.12× faster** than image-q + omggif. The
 resulting files are **1.17×–22.75× larger**. The benchmark includes arbitrary
 RGBA photographs, pixel art, gradients, transparency, noise, tiny animations,
 and a one-megapixel animation—not known palettes, cached pixels, reused
@@ -127,9 +127,9 @@ Initialization prepares code with fixed synthetic inputs and reserves a generic
 encoded results. The exact preparation A/B receipts live in
 [BENCHMARKS.md](BENCHMARKS.md); they are kept out of the headline result above.
 
-Across the 10 arbitrary-RGBA workloads, wtfgif is **252.21×–744.80× faster**
-than image-q + omggif, with a **358.49× geometric mean**. The real 128×128
-MakeEmoji workload is **385.88× faster** (0.369 ms vs 142.470 ms). Output files
+Across the 10 arbitrary-RGBA workloads, wtfgif is **251.36×–695.12× faster**
+than image-q + omggif, with a **349.33× geometric mean**. The real 128×128
+MakeEmoji workload is **367.20× faster** (0.388 ms vs 142.640 ms). Output files
 are **1.17×–22.75× larger**, with a **6.50× geometric mean**.
 
 ![wtfgif speedup across the arbitrary-RGBA corpus](docs/corpus-speedup.svg)
