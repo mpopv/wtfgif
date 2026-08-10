@@ -10274,8 +10274,7 @@ impl SimdPaletteChannels {
 fn nearest_palette_index_simd(r: u8, g: u8, b: u8, palette: &SimdPaletteChannels) -> u8 {
     use core::arch::wasm32::{
         i16x8_splat, i16x8_sub, i32x4_add, i32x4_extmul_high_i16x8, i32x4_extmul_low_i16x8,
-        i32x4_extract_lane, i32x4_lt, i32x4_min, i32x4_shl, i32x4_shuffle, i32x4_splat, u32x4,
-        v128_bitselect, v128_load,
+        i32x4_extract_lane, i32x4_min, i32x4_shl, i32x4_shuffle, i32x4_splat, u32x4, v128_load,
     };
 
     let red = i16x8_splat(i16::from(r));
@@ -10315,13 +10314,8 @@ fn nearest_palette_index_simd(r: u8, g: u8, b: u8, palette: &SimdPaletteChannels
             );
             let low_candidate = i32x4_add($low_indices, i32x4_shl(low_distance, 8));
             let high_candidate = i32x4_add($high_indices, i32x4_shl(high_distance, 8));
-            $low_best =
-                v128_bitselect(low_candidate, $low_best, i32x4_lt(low_candidate, $low_best));
-            $high_best = v128_bitselect(
-                high_candidate,
-                $high_best,
-                i32x4_lt(high_candidate, $high_best),
-            );
+            $low_best = i32x4_min(low_candidate, $low_best);
+            $high_best = i32x4_min(high_candidate, $high_best);
         }};
     }
     macro_rules! update_sixteen {

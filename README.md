@@ -5,7 +5,7 @@ runtimes. Its single encoder is optimized for maximum speed at the cost of
 larger files. There are no compression or quality modes.
 
 On the current 10-workload cold-cache receipt, the first and only encode after
-initialization is **269.42×–807.61× faster** than image-q + omggif. The
+initialization is **252.21×–744.80× faster** than image-q + omggif. The
 resulting files are **1.17×–22.75× larger**. The benchmark includes arbitrary
 RGBA photographs, pixel art, gradients, transparency, noise, tiny animations,
 and a one-megapixel animation—not known palettes, cached pixels, reused
@@ -127,9 +127,9 @@ Initialization prepares code with fixed synthetic inputs and reserves a generic
 encoded results. The exact preparation A/B receipts live in
 [BENCHMARKS.md](BENCHMARKS.md); they are kept out of the headline result above.
 
-Across the 10 arbitrary-RGBA workloads, wtfgif is **269.42×–807.61× faster**
-than image-q + omggif, with a **366.25× geometric mean**. The real 128×128
-MakeEmoji workload is **370.22× faster** (0.388 ms vs 143.660 ms). Output files
+Across the 10 arbitrary-RGBA workloads, wtfgif is **252.21×–744.80× faster**
+than image-q + omggif, with a **358.49× geometric mean**. The real 128×128
+MakeEmoji workload is **385.88× faster** (0.369 ms vs 142.470 ms). Output files
 are **1.17×–22.75× larger**, with a **6.50× geometric mean**.
 
 ![wtfgif speedup across the arbitrary-RGBA corpus](docs/corpus-speedup.svg)
@@ -137,19 +137,20 @@ are **1.17×–22.75× larger**, with a **6.50× geometric mean**.
 Bar length is speedup over image-q + omggif; every label also reports both
 median encode times, the file-size ratio, and source-relative RGB quality for
 wtfgif and the baseline.
-Both the chart and values above are generated from the clean 40-process
+Both the chart and values above are generated from the recorded 40-process
 [`benchmarks/corpus.json`](benchmarks/corpus.json) receipt. Shape, frame timing,
 and binary transparency must be exact; PSNR and SSIM expose the unavoidable
 color reduction when arbitrary RGBA pixels become a GIF palette.
 
-The receipt identifies wtfgif 3.0.19 at clean source commit
-`dd625989b498709237a91dd9fb0c2c4f76062ddd`.
+The receipt identifies wtfgif 3.0.19 at source commit
+`8b5a3b3139770fe1913b9cb8163991e5ec555cd4`. Its dirty flag is true because
+the receipt was recorded while the SIMD candidate was under test.
 
 Current profiling puts about **88%** of the MakeEmoji first-encode latency
 inside the Wasm encoder. Reserving its arena, copying the independent RGBA
 frames in, and copying the GIF out together take about 0.04 ms. Within Wasm,
-the remaining work is concentrated in palette-histogram construction,
-nearest-palette mapping, and literal LZW emission. Those are the active
+about 42% of samples are in palette-histogram construction, 22% in
+nearest-palette search, and 20% in literal LZW mapping and emission. Those are the active
 optimization targets; the JavaScript boundary is no longer the bottleneck.
 The phase timings, sampling method, and rejected exact-output experiments are
 recorded in [BENCHMARKS.md](BENCHMARKS.md).

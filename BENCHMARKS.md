@@ -37,26 +37,26 @@ and each worker loads only the implementation it is measuring. Validation and
 quality measurement are outside the clock. Results below are medians from 40
 processes per implementation on an Apple M3 Pro with Node.js 22.23.2.
 
-The encoded artifacts were built from clean commit
-`dd625989b498709237a91dd9fb0c2c4f76062ddd`. The receipt records package
-version 3.0.19, a clean worktree, and the complete runtime environment. The
+The receipt records package version 3.0.19 at source commit
+`8b5a3b3139770fe1913b9cb8163991e5ec555cd4`. Its dirty flag is true because
+the receipt was written while the SIMD candidate was under test. The
 benchmark command rebuilds both scalar and SIMD quality Wasm before bundling,
 so the timed artifact is produced from that recorded source commit.
 
 | Fixture | Shape | wtfgif | image-q + omggif | Speedup | File-size ratio |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| MakeEmoji production sample | 128×128×8 | 0.388 ms | 143.660 ms | **370.22×** | 3.80× |
-| Photographic animation | 128×96×8 | 0.218 ms | 71.561 ms | **328.20×** | 1.84× |
-| Pixel art | 64×64×12 | 0.094 ms | 26.824 ms | **284.35×** | 6.35× |
-| Smooth gradients | 128×128×8 | 0.421 ms | 125.908 ms | **298.83×** | 8.00× |
-| Random noise | 128×128×8 | 0.246 ms | 102.388 ms | **415.51×** | 7.28× |
-| Transparency | 128×128×8 | 0.169 ms | 45.565 ms | **269.42×** | 20.85× |
-| Disjoint frame palettes | 128×128×8 | 0.154 ms | 65.311 ms | **424.67×** | 7.64× |
-| Nearly static animation | 128×128×12 | 0.215 ms | 81.405 ms | **378.85×** | 12.19× |
-| Tiny animation | 16×16×6 | 0.066 ms | 52.967 ms | **807.61×** | 1.17× |
-| One-megapixel animation | 512×512×4 | 1.866 ms | 539.675 ms | **289.18×** | 22.75× |
+| MakeEmoji production sample | 128×128×8 | 0.369 ms | 142.470 ms | **385.88×** | 3.80× |
+| Photographic animation | 128×96×8 | 0.222 ms | 70.512 ms | **317.33×** | 1.84× |
+| Pixel art | 64×64×12 | 0.095 ms | 26.471 ms | **277.66×** | 6.35× |
+| Smooth gradients | 128×128×8 | 0.427 ms | 124.338 ms | **291.45×** | 8.00× |
+| Random noise | 128×128×8 | 0.245 ms | 101.846 ms | **415.56×** | 7.28× |
+| Transparency | 128×128×8 | 0.180 ms | 45.281 ms | **252.21×** | 20.85× |
+| Disjoint frame palettes | 128×128×8 | 0.153 ms | 64.988 ms | **424.29×** | 7.64× |
+| Nearly static animation | 128×128×12 | 0.217 ms | 80.588 ms | **371.45×** | 12.19× |
+| Tiny animation | 16×16×6 | 0.071 ms | 52.602 ms | **744.80×** | 1.17× |
+| One-megapixel animation | 512×512×4 | 1.873 ms | 538.617 ms | **287.61×** | 22.75× |
 
-The observed range is 269.42×–807.61×, with a 366.25× geometric-mean speedup.
+The observed range is 252.21×–744.80×, with a 358.49× geometric-mean speedup.
 The corresponding files are 1.17×–22.75× larger, with a 6.50× geometric mean.
 This is the library's intended tradeoff: encode latency takes priority over
 compression ratio.
@@ -66,8 +66,8 @@ Pro and Node.js runtime. They do not claim codec-only performance, equal output
 size, or unmeasured hardware and runtimes.
 
 Every category exceeds the 100× floor on its first real encode after
-initialization. Transparency has the narrowest margin at 269.42×, followed by
-pixel art at 284.35×.
+initialization. Transparency has the narrowest margin at 252.21×, followed by
+the one-megapixel animation at 287.61×.
 No result depends on a known palette, source cache, previous result, or
 reduced-quality mode.
 
@@ -95,9 +95,9 @@ gradients, noise, transparency, disjoint frame palettes, similar adjacent
 frames, tiny animations, and a one-megapixel workload. Add the optional
 three-megapixel fixture with `npm run bench:corpus:stress`.
 
-## Current optimization profile
+## Optimization profile (historical diagnostic receipt)
 
-A source-built 3.0.19 SIMD Wasm profile split the first public encode into its
+A source-built 3.0.19 SIMD Wasm profile split an earlier first public encode into its
 JavaScript and Wasm phases. Each median below comes from 120 fresh Node
 processes after normal source-independent initialization, a 64 MiB unrelated
 memory eviction, and one event-loop yield. The fixture is first touched after
@@ -108,13 +108,12 @@ the clock starts.
 | MakeEmoji production sample | 0.003 ms | 0.015 ms | 0.332 ms | 0.024 ms | 0.376 ms |
 | Photographic animation | 0.003 ms | 0.012 ms | 0.168 ms | 0.022 ms | 0.207 ms |
 
-Wasm therefore accounts for about 88% of the MakeEmoji boundary. A separate
-sampling run repeated only the already-timed encode so the profiler could
-resolve native Wasm symbols; it was used for relative hotspot attribution, not
-as a latency result. Approximately 44% of those samples were in quality
-histogram construction, 28% in nearest-palette search, 22% in literal-LZW
-mapping and emission, and 6% elsewhere. The next material speedup must come
-from those three kernels rather than arena reservation or JavaScript copies.
+Wasm therefore accounted for about 88% of that MakeEmoji boundary. A newer
+4,000-repeat sampling run on the current candidate resolved native Wasm
+symbols without changing the public timing boundary: about 42% of samples were
+in quality-histogram construction, 22% in nearest-palette search, 20% in
+literal-LZW mapping and emission, and 16% elsewhere. These percentages guide
+future work; the corpus table above is the authoritative latency receipt.
 
 ## Mixed-alpha and Wu initialization A/B
 
