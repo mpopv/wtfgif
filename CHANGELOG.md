@@ -5,9 +5,9 @@ All notable changes to wtfgif are documented here.
 ## 3.0.20 - 2026-08-10
 
 - Refresh the clean arbitrary-RGBA receipt used by the README and benchmark
-  chart. The first real encode after initialization is **251.36x-695.12x**
-  faster than image-q + omggif, with a **349.33x geometric mean** and a
-  **367.20x** MakeEmoji result.
+  chart. The first real encode after initialization is **245.95x-735.05x**
+  faster than image-q + omggif, with a **353.10x geometric mean** and a
+  **365.94x** MakeEmoji result.
 - Correct the receipt provenance and keep the comparison chart generated from
   the same recorded data.
 

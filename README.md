@@ -5,7 +5,7 @@ runtimes. Its single encoder is optimized for maximum speed at the cost of
 larger files. There are no compression or quality modes.
 
 On the current 10-workload cold-cache receipt, the first and only encode after
-initialization is **251.36×–695.12× faster** than image-q + omggif. The
+initialization is **245.95×–735.05× faster** than image-q + omggif. The
 resulting files are **1.17×–22.75× larger**. The benchmark includes arbitrary
 RGBA photographs, pixel art, gradients, transparency, noise, tiny animations,
 and a one-megapixel animation—not known palettes, cached pixels, reused
@@ -127,9 +127,9 @@ Initialization prepares code with fixed synthetic inputs and reserves a generic
 encoded results. The exact preparation A/B receipts live in
 [BENCHMARKS.md](BENCHMARKS.md); they are kept out of the headline result above.
 
-Across the 10 arbitrary-RGBA workloads, wtfgif is **251.36×–695.12× faster**
-than image-q + omggif, with a **349.33× geometric mean**. The real 128×128
-MakeEmoji workload is **367.20× faster** (0.388 ms vs 142.640 ms). Output files
+Across the 10 arbitrary-RGBA workloads, wtfgif is **245.95×–735.05× faster**
+than image-q + omggif, with a **353.10× geometric mean**. The real 128×128
+MakeEmoji workload is **365.94× faster** (0.388 ms vs 141.894 ms). Output files
 are **1.17×–22.75× larger**, with a **6.50× geometric mean**.
 
 ![wtfgif speedup across the arbitrary-RGBA corpus](docs/corpus-speedup.svg)
@@ -142,8 +142,8 @@ Both the chart and values above are generated from the recorded 40-process
 and binary transparency must be exact; PSNR and SSIM expose the unavoidable
 color reduction when arbitrary RGBA pixels become a GIF palette.
 
-The receipt identifies wtfgif 3.0.19 at source commit
-`17d7a2fadb790679e3bfd64fbb0e3163ee98d6bc`. Its dirty flag is false.
+The receipt identifies wtfgif 3.0.20 at source commit
+`f626ac2fac04405396e6a19f242a77ea55658858`. Its dirty flag is false.
 
 Current profiling puts about **88%** of the MakeEmoji first-encode latency
 inside the Wasm encoder. Reserving its arena, copying the independent RGBA

@@ -37,25 +37,25 @@ and each worker loads only the implementation it is measuring. Validation and
 quality measurement are outside the clock. Results below are medians from 40
 processes per implementation on an Apple M3 Pro with Node.js 22.23.2.
 
-The receipt records package version 3.0.19 at source commit
-`17d7a2fadb790679e3bfd64fbb0e3163ee98d6bc`. Its dirty flag is false. The
+The receipt records package version 3.0.20 at source commit
+`f626ac2fac04405396e6a19f242a77ea55658858`. Its dirty flag is false. The
 benchmark command rebuilds both scalar and SIMD quality Wasm before bundling,
 so the timed artifact is produced from that recorded source commit.
 
 | Fixture | Shape | wtfgif | image-q + omggif | Speedup | File-size ratio |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| MakeEmoji production sample | 128×128×8 | 0.388 ms | 142.640 ms | **367.20×** | 3.80× |
-| Photographic animation | 128×96×8 | 0.228 ms | 70.753 ms | **310.15×** | 1.84× |
-| Pixel art | 64×64×12 | 0.100 ms | 26.594 ms | **264.83×** | 6.35× |
-| Smooth gradients | 128×128×8 | 0.420 ms | 125.979 ms | **300.16×** | 8.00× |
-| Random noise | 128×128×8 | 0.251 ms | 102.906 ms | **409.99×** | 7.28× |
-| Transparency | 128×128×8 | 0.181 ms | 45.422 ms | **251.36×** | 20.85× |
-| Disjoint frame palettes | 128×128×8 | 0.154 ms | 64.962 ms | **421.38×** | 7.64× |
-| Nearly static animation | 128×128×12 | 0.225 ms | 80.447 ms | **356.88×** | 12.19× |
-| Tiny animation | 16×16×6 | 0.076 ms | 52.511 ms | **695.12×** | 1.17× |
-| One-megapixel animation | 512×512×4 | 1.977 ms | 548.550 ms | **277.46×** | 22.75× |
+| MakeEmoji production sample | 128×128×8 | 0.388 ms | 141.894 ms | **365.94×** | 3.80× |
+| Photographic animation | 128×96×8 | 0.229 ms | 72.091 ms | **314.35×** | 1.84× |
+| Pixel art | 64×64×12 | 0.096 ms | 26.740 ms | **277.58×** | 6.35× |
+| Smooth gradients | 128×128×8 | 0.460 ms | 141.826 ms | **308.32×** | 8.00× |
+| Random noise | 128×128×8 | 0.274 ms | 115.813 ms | **422.23×** | 7.28× |
+| Transparency | 128×128×8 | 0.197 ms | 48.339 ms | **245.95×** | 20.85× |
+| Disjoint frame palettes | 128×128×8 | 0.198 ms | 74.856 ms | **377.98×** | 7.64× |
+| Nearly static animation | 128×128×12 | 0.266 ms | 98.006 ms | **368.85×** | 12.19× |
+| Tiny animation | 16×16×6 | 0.075 ms | 55.343 ms | **735.05×** | 1.17× |
+| One-megapixel animation | 512×512×4 | 1.960 ms | 563.681 ms | **287.56×** | 22.75× |
 
-The observed range is 251.36×–695.12×, with a 349.33× geometric-mean speedup.
+The observed range is 245.95×–735.05×, with a 353.10× geometric-mean speedup.
 The corresponding files are 1.17×–22.75× larger, with a 6.50× geometric mean.
 This is the library's intended tradeoff: encode latency takes priority over
 compression ratio.
@@ -65,8 +65,8 @@ Pro and Node.js runtime. They do not claim codec-only performance, equal output
 size, or unmeasured hardware and runtimes.
 
 Every category exceeds the 100× floor on its first real encode after
-initialization. Transparency has the narrowest margin at 251.36×, followed by
-the one-megapixel animation at 277.46×.
+initialization. Transparency has the narrowest margin at 245.95×, followed by
+the one-megapixel animation at 287.56×.
 No result depends on a known palette, source cache, previous result, or
 reduced-quality mode.
 
