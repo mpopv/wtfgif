@@ -143,8 +143,7 @@ and binary transparency must be exact; PSNR and SSIM expose the unavoidable
 color reduction when arbitrary RGBA pixels become a GIF palette.
 
 The receipt identifies wtfgif 3.0.19 at source commit
-`8b5a3b3139770fe1913b9cb8163991e5ec555cd4`. Its dirty flag is true because
-the receipt was recorded while the SIMD candidate was under test.
+`17d7a2fadb790679e3bfd64fbb0e3163ee98d6bc`. Its dirty flag is false.
 
 Current profiling puts about **88%** of the MakeEmoji first-encode latency
 inside the Wasm encoder. Reserving its arena, copying the independent RGBA
