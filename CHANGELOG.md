@@ -8,6 +8,9 @@ All notable changes to wtfgif are documented here.
   chart. The first real encode after initialization is **245.95x-735.05x**
   faster than image-q + omggif, with a **353.10x geometric mean** and a
   **365.94x** MakeEmoji result.
+- Refresh the Chrome encoder comparison: wtfgif measures **0.445 ms** and
+  the five alternatives measure **203.82x-287.56x slower** on the same
+  eight-frame MakeEmoji input.
 - Correct the receipt provenance and keep the comparison chart generated from
   the same recorded data.
 

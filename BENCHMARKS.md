@@ -364,15 +364,15 @@ agreement beside the time.
 
 | Implementation | Version | Median | wtfgif advantage | Bytes | PSNR | Alpha match |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| **wtfgif** | 3.0.19 | **0.430 ms** | — | 149,689 | 34.12 dB | 100% |
-| gif.js | 0.2.0 | 83.290 ms | **193.70×** | 80,869 | 33.08 dB | 99.78% |
-| image-q + omggif | 2.1.2 + 1.0.10 | 91.835 ms | **213.57×** | 39,350 | 31.84 dB | 100% |
-| gif.js.optimized | 1.0.1 | 96.115 ms | **223.52×** | 80,304 | 32.20 dB | 99.76% |
-| modern-gif | 2.1.0 | 118.220 ms | **274.93×** | 43,114 | 32.65 dB | 100% |
-| gifenc | 1.0.3 | 123.270 ms | **286.67×** | 39,101 | 34.54 dB | 100% |
+| **wtfgif** | 3.0.20 | **0.445 ms** | — | 149,689 | 34.12 dB | 100% |
+| gif.js | 0.2.0 | 90.700 ms | **203.82×** | 80,869 | 33.08 dB | 99.78% |
+| image-q + omggif | 2.1.2 + 1.0.10 | 96.325 ms | **216.46×** | 39,350 | 31.84 dB | 100% |
+| gif.js.optimized | 1.0.1 | 102.505 ms | **230.35×** | 80,304 | 32.20 dB | 99.76% |
+| modern-gif | 2.1.0 | 127.965 ms | **287.56×** | 43,114 | 32.65 dB | 100% |
+| gifenc | 1.0.3 | 125.800 ms | **282.70×** | 39,101 | 34.54 dB | 100% |
 
-The browser receipt records wtfgif 3.0.19 at clean commit
-`0968d6ff29bbc539272c3c94ba1c176ff4a94f5c`, together with the package-lock
+The browser receipt records wtfgif 3.0.20 at clean commit
+`392391e21590d8e2577ce3af49227cc38c703971`, together with the package-lock
 hash and complete runtime environment.
 
 Every output must parse as an eight-frame 128×128 animation with exact 100 ms
