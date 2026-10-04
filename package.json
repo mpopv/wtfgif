@@ -1,6 +1,6 @@
 {
 	"name": "wtfgif",
-	"version": "3.0.21",
+	"version": "3.1.0",
 	"main": "dist/index.cjs",
 	"module": "dist/index.mjs",
 	"types": "dist/index.d.ts",
@@ -104,6 +104,7 @@
 		"rust:test": "cargo test --manifest-path crates/wtfgif-core/Cargo.toml --release && cargo test --manifest-path crates/wtfgif-core/Cargo.toml --release --features encode-only",
 		"rust:check": "npm run rust:fmt && npm run rust:clippy && npm run rust:test",
 		"validate:wasm-core": "node scripts/validate/wasm-core.mjs",
+		"validate:equivalence": "node scripts/validate/equivalence.mjs",
 		"test:conformance:independent": "node scripts/validate/independent-decoders.mjs",
 		"test:conformance:browsers": "node scripts/validate/browser-conformance.mjs",
 		"fuzz:smoke": "node scripts/validate/fuzz-smoke.mjs",

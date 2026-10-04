@@ -2,6 +2,29 @@
 
 All notable changes to wtfgif are documented here.
 
+## 3.1.0 - 2026-10-04
+
+- Write run-aware LZW codes. The stream keeps the literal code width, but runs
+  of four or more equal pixels reuse codes the decoder has already built, so
+  output is never larger than the literal stream at the palette's code size.
+  Flat images with small palettes may use a wider code size when that is
+  smaller.
+- Store each later frame as the rectangle that changed, with unchanged pixels
+  transparent. Frames that turn pixels transparent restore only the previous
+  frame's area. Every composited frame decodes exactly as before.
+- Add `independentFrames` to `encodeRgbaGifFrames()` in `wtfgif/encode` to
+  keep full-canvas, reorderable frames. The general encoder in `wtfgif` keeps
+  them with `delta: false`.
+- Across the 10 benchmark fixtures, output is 3.27x smaller by geometric mean
+  (MakeEmoji 149,689 to 74,914 bytes) with identical decoded frames. In
+  paired fresh-process runs the first encode was about 1.36x slower by
+  geometric mean (MakeEmoji 0.43 to 0.64 ms) and faster only on the nearly
+  static fixture. Record a new `npm run bench` receipt before quoting speed.
+- Add `npm run validate:equivalence`, which accepts encoder changes by decoded
+  frames or by a PSNR/SSIM tolerance instead of identical bytes. The paired
+  profiler uses the same gates.
+- Check every composited frame in Chromium's browser conformance run.
+
 ## 3.0.21 - 2026-10-04
 
 - Organize build, benchmark, validation, and profiling scripts by function.
