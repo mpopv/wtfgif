@@ -16,10 +16,14 @@ All notable changes to wtfgif are documented here.
   keep full-canvas, reorderable frames. The general encoder in `wtfgif` keeps
   them with `delta: false`.
 - Across the 10 benchmark fixtures, output is 3.27x smaller by geometric mean
-  (MakeEmoji 149,689 to 74,914 bytes) with identical decoded frames. In
-  paired fresh-process runs the first encode was about 1.36x slower by
-  geometric mean (MakeEmoji 0.43 to 0.64 ms) and faster only on the nearly
-  static fixture. Record a new `npm run bench` receipt before quoting speed.
+  (MakeEmoji 149,689 to 74,914 bytes) with identical decoded frames. The first
+  encode is slower: about 1.36x by geometric mean in paired fresh-process runs
+  (MakeEmoji 0.43 to 0.64 ms), and faster only on the nearly static fixture.
+- The new receipts still measure **137.51x-739.18x** faster than
+  image-q + omggif (**252.05x** geometric mean), and the five browser
+  alternatives **133.38x-200.53x** slower in Chrome.
+- Rewrite the README around installation, examples, omggif migration, and
+  the speed and size tradeoffs.
 - Add `npm run validate:equivalence`, which accepts encoder changes by decoded
   frames or by a PSNR/SSIM tolerance instead of identical bytes. The paired
   profiler uses the same gates.

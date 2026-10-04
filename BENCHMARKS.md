@@ -38,26 +38,26 @@ quality measurement are outside the clock. Results below are medians from 40
 processes per implementation on an Apple M3 Pro with Node.js 22.23.2.
 
 <!-- benchmark:corpus-receipt:start -->
-The receipt records package version 3.0.20 at source commit
-`f626ac2fac04405396e6a19f242a77ea55658858`. Its dirty flag is false. The
+The receipt records package version 3.1.0 at source commit
+`89863c42dba879c26507974c29cd30466b7e5e73`. Its dirty flag is false. The
 benchmark command rebuilds both scalar and SIMD quality Wasm before bundling,
 so the timed artifact comes from that recorded source commit.
 
 | Fixture | Shape | wtfgif | image-q + omggif | Speedup | File-size ratio |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| MakeEmoji production sample | 128×128×8 | 0.388 ms | 141.894 ms | **365.94×** | 3.80× |
-| Photographic animation | 128×96×8 | 0.229 ms | 72.091 ms | **314.35×** | 1.84× |
-| Pixel art | 64×64×12 | 0.096 ms | 26.740 ms | **277.58×** | 6.35× |
-| Smooth gradients | 128×128×8 | 0.460 ms | 141.826 ms | **308.32×** | 8.00× |
-| Deterministic noise | 128×128×8 | 0.274 ms | 115.813 ms | **422.23×** | 7.28× |
-| Transparent edges | 128×128×8 | 0.197 ms | 48.339 ms | **245.95×** | 20.85× |
-| Disjoint frame palettes | 128×128×8 | 0.198 ms | 74.856 ms | **377.98×** | 7.64× |
-| Nearly static animation | 128×128×12 | 0.266 ms | 98.006 ms | **368.85×** | 12.19× |
-| Tiny animation | 16×16×6 | 0.075 ms | 55.343 ms | **735.05×** | 1.17× |
-| One-megapixel animation | 512×512×4 | 1.960 ms | 563.681 ms | **287.56×** | 22.75× |
+| MakeEmoji production sample | 128×128×8 | 0.644 ms | 152.535 ms | **236.82×** | 1.90× |
+| Photographic animation | 128×96×8 | 0.405 ms | 76.139 ms | **187.98×** | 1.52× |
+| Pixel art | 64×64×12 | 0.146 ms | 28.604 ms | **196.54×** | 0.68× |
+| Smooth gradients | 128×128×8 | 0.633 ms | 136.003 ms | **214.76×** | 1.70× |
+| Deterministic noise | 128×128×8 | 0.365 ms | 110.548 ms | **302.73×** | 7.28× |
+| Transparent edges | 128×128×8 | 0.359 ms | 49.343 ms | **137.51×** | 2.10× |
+| Disjoint frame palettes | 128×128×8 | 0.299 ms | 70.050 ms | **234.25×** | 1.96× |
+| Nearly static animation | 128×128×12 | 0.230 ms | 87.518 ms | **381.34×** | 0.37× |
+| Tiny animation | 16×16×6 | 0.080 ms | 59.411 ms | **739.18×** | 1.16× |
+| One-megapixel animation | 512×512×4 | 2.937 ms | 588.417 ms | **200.36×** | 22.42× |
 
-The observed range is 245.95×–735.05×, with a 353.10× geometric-mean speedup.
-The corresponding files are 1.17×–22.75× larger, with a 6.50× geometric mean.
+The observed range is 137.51×–739.18×, with a 252.05× geometric-mean speedup.
+wtfgif's files are 0.37×–22.42× the size of image-q + omggif's, with a 1.99× geometric mean.
 This is the library's intended tradeoff: encode latency takes priority over
 compression ratio.
 
@@ -65,9 +65,9 @@ These results describe the 10 committed fixtures on the recorded Apple M3 Pro
 and Node.js v22.23.2 runtime. They do not claim codec-only performance, equal
 output size, or unmeasured hardware and runtimes.
 
-Every category exceeds the 100× floor on its first real encode after
-initialization. The transparent edges fixture has the narrowest margin at 245.95×, followed by
-pixel art at 277.58×. No result depends on a known palette, source cache,
+Every category exceeds 100× on its first real encode after
+initialization. The transparent edges fixture has the narrowest margin at 137.51×, followed by
+photographic animation at 187.98×. No result depends on a known palette, source cache,
 previous result, or reduced-quality mode.
 
 ![wtfgif speedup across the arbitrary-RGBA corpus](docs/corpus-speedup.svg)
@@ -80,8 +80,9 @@ survived palette mapping exactly. Shape, frame timing, and binary alpha must be
 exact on every fixture regardless of that RGB label.
 
 The baseline uses image-q `rgbquant` palette generation and nearest-color
-mapping followed by omggif LZW. wtfgif uses its global quality quantizer and
-literal LZW. The algorithms can select different indexed pixels, so the receipt
+mapping followed by omggif LZW. wtfgif uses its global quality quantizer,
+fixed-width run-aware LZW codes, and changed-rectangle frames. The algorithms
+can select different indexed pixels, so the receipt
 reports output bytes, opaque-source RGB PSNR, and per-frame SSIM after binary
 alpha compositing against black. Every output is decoded and checked for shape,
 frame count, delays, and exact binary alpha before it is accepted.
@@ -367,16 +368,16 @@ each encoder's emitted GIF size, relative slowdown, PSNR, and alpha agreement.
 
 | Implementation | Version | Median | wtfgif advantage | Bytes | PSNR | Alpha match |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| **wtfgif** | 3.0.20 | **0.445 ms** | — | 149,689 | 34.12 dB | 100% |
-| gif.js | 0.2.0 | 90.700 ms | **203.82×** | 80,869 | 33.08 dB | 99.78% |
-| image-q + omggif | 2.1.2 + 1.0.10 | 96.325 ms | **216.46×** | 39,350 | 31.84 dB | 100% |
-| gif.js.optimized | 1.0.1 | 102.505 ms | **230.35×** | 80,304 | 32.20 dB | 99.76% |
-| gifenc | 1.0.3 | 125.800 ms | **282.70×** | 39,101 | 34.54 dB | 100% |
-| modern-gif | 2.1.0 | 127.965 ms | **287.56×** | 43,114 | 32.65 dB | 100% |
+| **wtfgif** | 3.1.0 | **0.675 ms** | — | 74,914 | 34.12 dB | 100% |
+| gif.js | 0.2.0 | 90.030 ms | **133.38×** | 80,869 | 33.08 dB | 99.78% |
+| gif.js.optimized | 1.0.1 | 101.295 ms | **150.07×** | 80,304 | 32.20 dB | 99.76% |
+| image-q + omggif | 2.1.2 + 1.0.10 | 116.155 ms | **172.08×** | 39,350 | 31.84 dB | 100% |
+| modern-gif | 2.1.0 | 123.020 ms | **182.25×** | 43,114 | 32.65 dB | 100% |
+| gifenc | 1.0.3 | 135.360 ms | **200.53×** | 39,101 | 34.54 dB | 100% |
 
-The browser receipt records wtfgif 3.0.20 at clean commit
-`392391e21590d8e2577ce3af49227cc38c703971`, together with the package-lock
-hash and complete runtime environment. wtfgif's median is 0.445 ms.
+The browser receipt records wtfgif 3.1.0 at clean commit
+`d8d29839ee653537499bea205f8e71b4d2d4dcd0`, together with the package-lock
+hash and complete runtime environment. wtfgif's median is 0.675 ms.
 
 Every output must parse as an 8-frame 128×128 animation with exact 100 ms
 delays before its sample is accepted. The validator composites all frames,

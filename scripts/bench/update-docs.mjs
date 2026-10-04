@@ -72,8 +72,8 @@ ${sizeRange(values)}.
 
 ![wtfgif speedup over image-q + omggif on ten RGBA workloads](docs/corpus-speedup.svg)
 
-Measured with ${receipt.benchmark.processesPerImplementation} fresh Node ${receipt.environment.node} processes per workload on an ${receipt.environment.cpu}, wtfgif
-${receipt.environment.packageVersion} (\`${receipt.environment.commit.slice(0, 7)}\`). The raw samples are in
+Measured on an ${receipt.environment.cpu} with Node.js ${receipt.environment.node.replace(/^v/, "")}: ${receipt.benchmark.processesPerImplementation} fresh processes per
+workload and library, wtfgif ${receipt.environment.packageVersion} at \`${receipt.environment.commit.slice(0, 7)}\`. Raw samples are in
 [\`benchmarks/corpus.json\`](benchmarks/corpus.json).`;
 }
 
