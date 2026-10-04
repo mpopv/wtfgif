@@ -31,6 +31,24 @@ const frames = Uint8Array.of(
 	255,
 );
 
+const frameInputCases = [
+	["Uint8Array frames", () => [frames.subarray(0, 8), frames.subarray(8)]],
+	[
+		"Uint8ClampedArray frames",
+		() => [
+			new Uint8ClampedArray(frames.subarray(0, 8)),
+			new Uint8ClampedArray(frames.subarray(8)),
+		],
+	],
+	[
+		"frames with trailing bytes",
+		() => [
+			Uint8Array.of(...frames.subarray(0, 8), 1, 2, 3, 4),
+			Uint8Array.of(...frames.subarray(8), 5, 6, 7, 8),
+		],
+	],
+] as const;
+
 beforeAll(async () => {
 	await Promise.all([initializeWasmGlobally(), initializeGeneralWasm()]);
 });
@@ -125,30 +143,20 @@ describe("encode-only quality entry", () => {
 		});
 
 		expect(encoded).toStrictEqual(expected);
+	});
+
+	test.each(frameInputCases)("accepts %s", (_name, createFrames) => {
+		const options = {
+			width: 2,
+			height: 1,
+			frameCount: 2,
+			delay: Uint16Array.of(3, 7),
+			loop: 0,
+			alphaThreshold: 128,
+		} as const;
 		expect(
-			encodeRgbaGifFrames({
-				...options,
-				frames: [frames.subarray(0, 8), frames.subarray(8)],
-			}),
-		).toStrictEqual(encoded);
-		expect(
-			encodeRgbaGifFrames({
-				...options,
-				frames: [
-					new Uint8ClampedArray(frames.subarray(0, 8)),
-					new Uint8ClampedArray(frames.subarray(8)),
-				],
-			}),
-		).toStrictEqual(encoded);
-		expect(
-			encodeRgbaGifFrames({
-				...options,
-				frames: [
-					Uint8Array.of(...frames.subarray(0, 8), 1, 2, 3, 4),
-					Uint8Array.of(...frames.subarray(8), 5, 6, 7, 8),
-				],
-			}),
-		).toStrictEqual(encoded);
+			encodeRgbaGifFrames({ ...options, frames: createFrames() }),
+		).toStrictEqual(encodeRgbaGifFrames({ ...options, frames }));
 	});
 
 	test("can switch repeatedly between constant and per-frame delays", () => {

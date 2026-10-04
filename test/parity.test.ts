@@ -1,16 +1,12 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { GifReader as OmgGifReader } from "omggif";
 import { describe, expect, test } from "vitest";
 import { GifReader as WtfGifReader } from "../src/index";
-
-const gifsDir = join(__dirname, "gifs");
-const gifFiles = readdirSync(gifsDir).filter((f) => f.endsWith(".gif"));
+import { gifFixtures as gifFiles, readGifFixture } from "./helpers/gif";
 
 describe("Optimized path parity", () => {
 	for (const file of gifFiles) {
 		test(`${file} prepared frames vs baseline`, () => {
-			const gif = readFileSync(join(gifsDir, file));
+			const gif = readGifFixture(file);
 			const omg = new OmgGifReader(gif);
 			const wtf = new WtfGifReader(gif);
 			const prepared = wtf.prepareFrames();

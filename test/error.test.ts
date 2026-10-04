@@ -1,11 +1,9 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { GifWriter as OmgGifWriter } from "omggif";
 import { describe, expect, test } from "vitest";
 import { GifReader, GifWriter } from "../src/index";
+import { readGifFixture } from "./helpers/gif";
 
-const gifsDir = join(__dirname, "gifs");
-const sampleGif = readFileSync(join(gifsDir, "partyparrot.gif"));
+const sampleGif = readGifFixture("partyparrot.gif");
 
 function makeMinimalGif(): Uint8Array {
 	const output = new Uint8Array(64);

@@ -1,22 +1,11 @@
 # wtfgif
 
-`wtfgif` makes and reads GIF files in Node.js, browsers, Workers, and edge
-runtimes. Its single encoder is optimized for maximum speed at the cost of
-larger files. There are no compression or quality modes.
+`wtfgif` encodes and decodes GIF files in Node.js, browsers, Workers, and edge
+runtimes. Its one encoder gives maximum speed without a lower-quality speed
+mode, at the cost of larger files. It is more than 200× faster than the tested
+encoders.
 
-On the current 10-workload cold-cache receipt, the first and only encode after
-initialization is **245.95×–735.05× faster** than image-q + omggif. The
-resulting files are **1.17×–22.75× larger**. The benchmark includes arbitrary
-RGBA photographs, pixel art, gradients, transparency, noise, tiny animations,
-and a one-megapixel animation—not known palettes, cached pixels, reused
-palettes, or cached results.
-wtfgif receives one independently allocated RGBA array per frame, matching a
-normal image-stitching app. Neither encoder is given a palette: each must
-discover and map its own palette from the RGBA pixels. Every GIF is decoded and
-checked before its timing is accepted.
-
-- To make a GIF, give it one or more images as RGBA pixel arrays.
-- To read a GIF, give it the file bytes and get RGBA pixel arrays back.
+## Install
 
 ```bash
 npm install wtfgif
@@ -36,19 +25,19 @@ const width = 128;
 const height = 128;
 
 function solidFrame(red: number, green: number, blue: number) {
-	const frame = new Uint8Array(width * height * 4);
-	for (let i = 0; i < frame.length; i += 4) {
-		frame.set([red, green, blue, 255], i);
-	}
-	return frame;
+  const frame = new Uint8Array(width * height * 4);
+  for (let i = 0; i < frame.length; i += 4) {
+    frame.set([red, green, blue, 255], i);
+  }
+  return frame;
 }
 
 const gif = encodeRgbaGifFrames({
-	width,
-	height,
-	frames: [solidFrame(255, 0, 0), solidFrame(0, 0, 255)],
-	delay: 50, // 50 hundredths of a second = 500 ms per frame
-	loop: 0, // Repeat forever
+  width,
+  height,
+  frames: [solidFrame(255, 0, 0), solidFrame(0, 0, 255)],
+  delay: 50, // 50 hundredths of a second = 500 ms per frame
+  loop: 0, // Repeat forever
 });
 
 await writeFile("output.gif", gif);
@@ -74,11 +63,11 @@ const decoded = reader.preparePlayback();
 console.log(reader.width, reader.height, reader.numFrames());
 
 for (let i = 0; i < reader.numFrames(); i += 1) {
-	const rgba = new Uint8Array(reader.width * reader.height * 4);
-	decoded.copyFrame(i, rgba);
+  const rgba = new Uint8Array(reader.width * reader.height * 4);
+  decoded.copyFrame(i, rgba);
 
-	// Read, edit, resize, analyze, or draw this frame here.
-	console.log(`frame ${i}: ${decoded.frames[i]!.delay * 10} ms`, rgba);
+  // Read, edit, resize, analyze, or draw this frame here.
+  console.log(`frame ${i}: ${decoded.frames[i]!.delay * 10} ms`, rgba);
 }
 
 decoded.dispose();
@@ -127,6 +116,7 @@ Initialization prepares code with fixed synthetic inputs and reserves a generic
 encoded results. The exact preparation A/B receipts live in
 [BENCHMARKS.md](BENCHMARKS.md); they are kept out of the headline result above.
 
+<!-- benchmark:readme-corpus:start -->
 Across the 10 arbitrary-RGBA workloads, wtfgif is **245.95×–735.05× faster**
 than image-q + omggif, with a **353.10× geometric mean**. The real 128×128
 MakeEmoji workload is **365.94× faster** (0.388 ms vs 141.894 ms). Output files
@@ -134,16 +124,16 @@ are **1.17×–22.75× larger**, with a **6.50× geometric mean**.
 
 ![wtfgif speedup across the arbitrary-RGBA corpus](docs/corpus-speedup.svg)
 
-Bar length is speedup over image-q + omggif; every label also reports both
-median encode times, the file-size ratio, and source-relative RGB quality for
-wtfgif and the baseline.
-Both the chart and values above are generated from the recorded 40-process
+Bar length is speedup over image-q + omggif. Each label also gives both median
+encode times, the file-size ratio, and source-relative RGB quality. The chart
+and values come from the recorded 40-process
 [`benchmarks/corpus.json`](benchmarks/corpus.json) receipt. Shape, frame timing,
-and binary transparency must be exact; PSNR and SSIM expose the unavoidable
-color reduction when arbitrary RGBA pixels become a GIF palette.
+and binary transparency must be exact. PSNR and SSIM show the color reduction
+that occurs when arbitrary RGBA pixels become a GIF palette.
 
 The receipt identifies wtfgif 3.0.20 at source commit
 `f626ac2fac04405396e6a19f242a77ea55658858`. Its dirty flag is false.
+<!-- benchmark:readme-corpus:end -->
 
 Current profiling puts about **88%** of the MakeEmoji first-encode latency
 inside the Wasm encoder. Reserving its arena, copying the independent RGBA
@@ -156,24 +146,24 @@ recorded in [BENCHMARKS.md](BENCHMARKS.md).
 
 ## Browser comparison
 
+<!-- benchmark:readme-browser:start -->
 ![Browser GIF encoder benchmark](docs/encoder-race.svg)
 
 These are public-API time-to-result medians from 15 fresh Chrome processes per
-encoder on the same eight-frame MakeEmoji workload. Package loading and wtfgif
+encoder on the same 8-frame MakeEmoji workload. Package loading and wtfgif
 initialization are outside the clock. Each process evicts 64 MiB of unrelated
 memory and waits one animation frame before timing. wtfgif took **0.445 ms**;
 the five alternatives took **90.700–127.965 ms** and were
 **203.82×–287.56× slower**.
-wtfgif emitted 149,689 bytes; the alternatives emitted 39,101–80,869 bytes.
-The dashed line marks 100× wtfgif's measured latency. The chart reports output
-size, PSNR, and alpha agreement beside every timing, so the speed claim is not
-separated from its size and fidelity tradeoffs. gif.js worker creation is part
-of its public timed operation. Exact settings and raw samples are in
-[BENCHMARKS.md](BENCHMARKS.md).
+wtfgif emitted 149,689 bytes. The alternatives emitted 39,101–80,869 bytes.
+The dashed line marks 100× wtfgif's measured latency. The chart gives output
+size, PSNR, and alpha agreement with every timing. gif.js worker creation is
+part of its public timed operation. [BENCHMARKS.md](BENCHMARKS.md) gives the
+exact settings and raw samples.
 
-The raw receipt is [`benchmarks/encoder-race.json`](benchmarks/encoder-race.json),
-and the chart above is generated from it by
-`scripts/render-encoder-race-chart.mjs`.
+The raw receipt is [`benchmarks/encoder-race.json`](benchmarks/encoder-race.json).
+`scripts/bench/render-encoder-race-chart.mjs` generates the chart from it.
+<!-- benchmark:readme-browser:end -->
 
 ```bash
 npm run bench

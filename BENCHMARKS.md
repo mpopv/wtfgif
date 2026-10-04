@@ -37,10 +37,11 @@ and each worker loads only the implementation it is measuring. Validation and
 quality measurement are outside the clock. Results below are medians from 40
 processes per implementation on an Apple M3 Pro with Node.js 22.23.2.
 
+<!-- benchmark:corpus-receipt:start -->
 The receipt records package version 3.0.20 at source commit
 `f626ac2fac04405396e6a19f242a77ea55658858`. Its dirty flag is false. The
 benchmark command rebuilds both scalar and SIMD quality Wasm before bundling,
-so the timed artifact is produced from that recorded source commit.
+so the timed artifact comes from that recorded source commit.
 
 | Fixture | Shape | wtfgif | image-q + omggif | Speedup | File-size ratio |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -48,8 +49,8 @@ so the timed artifact is produced from that recorded source commit.
 | Photographic animation | 128×96×8 | 0.229 ms | 72.091 ms | **314.35×** | 1.84× |
 | Pixel art | 64×64×12 | 0.096 ms | 26.740 ms | **277.58×** | 6.35× |
 | Smooth gradients | 128×128×8 | 0.460 ms | 141.826 ms | **308.32×** | 8.00× |
-| Random noise | 128×128×8 | 0.274 ms | 115.813 ms | **422.23×** | 7.28× |
-| Transparency | 128×128×8 | 0.197 ms | 48.339 ms | **245.95×** | 20.85× |
+| Deterministic noise | 128×128×8 | 0.274 ms | 115.813 ms | **422.23×** | 7.28× |
+| Transparent edges | 128×128×8 | 0.197 ms | 48.339 ms | **245.95×** | 20.85× |
 | Disjoint frame palettes | 128×128×8 | 0.198 ms | 74.856 ms | **377.98×** | 7.64× |
 | Nearly static animation | 128×128×12 | 0.266 ms | 98.006 ms | **368.85×** | 12.19× |
 | Tiny animation | 16×16×6 | 0.075 ms | 55.343 ms | **735.05×** | 1.17× |
@@ -60,24 +61,23 @@ The corresponding files are 1.17×–22.75× larger, with a 6.50× geometric mea
 This is the library's intended tradeoff: encode latency takes priority over
 compression ratio.
 
-These results describe the ten committed fixtures on the recorded Apple M3
-Pro and Node.js runtime. They do not claim codec-only performance, equal output
-size, or unmeasured hardware and runtimes.
+These results describe the 10 committed fixtures on the recorded Apple M3 Pro
+and Node.js v22.23.2 runtime. They do not claim codec-only performance, equal
+output size, or unmeasured hardware and runtimes.
 
 Every category exceeds the 100× floor on its first real encode after
-initialization. Transparency has the narrowest margin at 245.95×, followed by
-the one-megapixel animation at 287.56×.
-No result depends on a known palette, source cache, previous result, or
-reduced-quality mode.
+initialization. The transparent edges fixture has the narrowest margin at 245.95×, followed by
+pixel art at 277.58×. No result depends on a known palette, source cache,
+previous result, or reduced-quality mode.
 
 ![wtfgif speedup across the arbitrary-RGBA corpus](docs/corpus-speedup.svg)
 
-The chart is generated from the same receipt as the table with
-`npm run bench:charts`. Bar length represents speedup over image-q + omggif;
-the labels report both median encode times, the output file-size ratio, and
-source-relative RGB quality for both encoders. “Lossless RGB” means every
-source-opaque RGB pixel survived palette mapping exactly. Shape, frame timing,
-and binary alpha must be exact on every fixture regardless of that RGB label.
+The chart comes from the same receipt as the table. Run `npm run bench:charts`
+to generate it. Bar length is speedup over image-q + omggif. The labels give
+both median encode times, the output file-size ratio, and source-relative RGB
+quality for both encoders. "Lossless RGB" means every source-opaque RGB pixel
+survived palette mapping exactly. Shape, frame timing, and binary alpha must be
+exact on every fixture regardless of that RGB label.
 
 The baseline uses image-q `rgbquant` palette generation and nearest-color
 mapping followed by omggif LZW. wtfgif uses its global quality quantizer and
@@ -93,6 +93,7 @@ The corpus covers real small images, photographic content, flat pixel art,
 gradients, noise, transparency, disjoint frame palettes, similar adjacent
 frames, tiny animations, and a one-megapixel workload. Add the optional
 three-megapixel fixture with `npm run bench:corpus:stress`.
+<!-- benchmark:corpus-receipt:end -->
 
 ## Optimization profile (historical diagnostic receipt)
 
@@ -354,13 +355,13 @@ encoders run in a rotating order to reduce thermal and ordering bias. Results
 below are medians from 15 processes per encoder on an Apple M3 Pro in Google
 Chrome 151.0.7922.77.
 
-This is public-API time-to-result, not a codec-kernel microbenchmark or an
-equal-file-size comparison. The
-gif.js and gif.js.optimized APIs create workers when `render()` begins, so that
-worker creation is inside their timed jobs. The README chart uses bar length
-for median encode time, marks 100× wtfgif latency with a dashed reference line,
-and prints each encoder's emitted GIF size, relative slowdown, PSNR, and alpha
-agreement beside the time.
+<!-- benchmark:browser-receipt:start -->
+This is public-API time-to-result. It is not a codec-kernel
+microbenchmark or an equal-file-size comparison. The gif.js and
+gif.js.optimized APIs create workers when `render()` begins, so worker creation
+is inside their timed jobs. The README chart uses bar length for median encode
+time. It marks 100× wtfgif latency with a dashed reference line. It also gives
+each encoder's emitted GIF size, relative slowdown, PSNR, and alpha agreement.
 
 | Implementation | Version | Median | wtfgif advantage | Bytes | PSNR | Alpha match |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -368,19 +369,20 @@ agreement beside the time.
 | gif.js | 0.2.0 | 90.700 ms | **203.82×** | 80,869 | 33.08 dB | 99.78% |
 | image-q + omggif | 2.1.2 + 1.0.10 | 96.325 ms | **216.46×** | 39,350 | 31.84 dB | 100% |
 | gif.js.optimized | 1.0.1 | 102.505 ms | **230.35×** | 80,304 | 32.20 dB | 99.76% |
-| modern-gif | 2.1.0 | 127.965 ms | **287.56×** | 43,114 | 32.65 dB | 100% |
 | gifenc | 1.0.3 | 125.800 ms | **282.70×** | 39,101 | 34.54 dB | 100% |
+| modern-gif | 2.1.0 | 127.965 ms | **287.56×** | 43,114 | 32.65 dB | 100% |
 
 The browser receipt records wtfgif 3.0.20 at clean commit
 `392391e21590d8e2577ce3af49227cc38c703971`, together with the package-lock
-hash and complete runtime environment.
+hash and complete runtime environment. wtfgif's median is 0.445 ms.
 
-Every output must parse as an eight-frame 128×128 animation with exact 100 ms
+Every output must parse as an 8-frame 128×128 animation with exact 100 ms
 delays before its sample is accepted. The validator composites all frames,
 measures RGB PSNR on source-opaque pixels, and measures binary alpha agreement
 over every pixel. Raw timings and interquartile values are committed in
-[`benchmarks/encoder-race.json`](benchmarks/encoder-race.json); the README chart
-is generated from that receipt by `scripts/render-encoder-race-chart.mjs`.
+[`benchmarks/encoder-race.json`](benchmarks/encoder-race.json). The README chart
+comes from that receipt through `scripts/bench/render-encoder-race-chart.mjs`.
+<!-- benchmark:browser-receipt:end -->
 
 Regenerate both committed SVG charts from their receipts with:
 

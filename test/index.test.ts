@@ -1,5 +1,3 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { GifReader as OmgGifReader, GifWriter as OmgGifWriter } from "omggif";
 import { describe, expect, test } from "vitest";
 import {
@@ -7,43 +5,11 @@ import {
 	GifWriter as WtfGifWriter,
 } from "../src/index";
 import type { Frame } from "../src/types";
-
-const gifsDir = join(__dirname, "gifs");
-const gifFiles = readdirSync(gifsDir).filter((file) => file.endsWith(".gif"));
-
-function expectGifSemanticsEqual(
-	actualGif: Uint8Array,
-	expectedGif: Uint8Array,
-) {
-	const actual = new OmgGifReader(actualGif);
-	const expected = new OmgGifReader(expectedGif);
-	expect(actual.width).toBe(expected.width);
-	expect(actual.height).toBe(expected.height);
-	expect(actual.numFrames()).toBe(expected.numFrames());
-	expect(actual.loopCount()).toBe(expected.loopCount());
-
-	const actualPixels = new Uint8Array(actual.width * actual.height * 4);
-	const expectedPixels = new Uint8Array(expected.width * expected.height * 4);
-	for (let frame = 0; frame < actual.numFrames(); frame += 1) {
-		const actualInfo = actual.frameInfo(frame);
-		const expectedInfo = expected.frameInfo(frame);
-		for (const field of [
-			"x",
-			"y",
-			"width",
-			"height",
-			"transparent_index",
-			"interlaced",
-			"delay",
-			"disposal",
-		] as const) {
-			expect(actualInfo[field]).toBe(expectedInfo[field]);
-		}
-		actual.decodeAndBlitFrameRGBA(frame, actualPixels);
-		expected.decodeAndBlitFrameRGBA(frame, expectedPixels);
-		expect(actualPixels).toStrictEqual(expectedPixels);
-	}
-}
+import {
+	expectGifSemanticsEqual,
+	gifFixtures as gifFiles,
+	readGifFixture,
+} from "./helpers/gif";
 
 describe("GIF file inventory", () => {
 	test("discovers all GIF files in test directory", () => {
@@ -131,7 +97,7 @@ describe("Small-frame streaming decoder", () => {
 describe("GifReader parity with omggif", () => {
 	for (const file of gifFiles) {
 		test(file, () => {
-			const gif = readFileSync(join(gifsDir, file));
+			const gif = readGifFixture(file);
 			const omg = new OmgGifReader(gif);
 			const wtf = new WtfGifReader(gif);
 			expect(wtf.width).toBe(omg.width);
@@ -186,7 +152,7 @@ describe("GifReader parity with omggif", () => {
 describe("Pixel-perfect decoding compatibility", () => {
 	for (const file of gifFiles) {
 		test(`${file} - pixel data matches omggif exactly`, () => {
-			const gif = readFileSync(join(gifsDir, file));
+			const gif = readGifFixture(file);
 			const omg = new OmgGifReader(gif);
 			const wtf = new WtfGifReader(gif);
 
@@ -428,7 +394,7 @@ describe("Cross-library write/read compatibility", () => {
 	for (const file of gifFiles.slice(0, 3)) {
 		// Test first 3 files to keep runtime reasonable
 		test(`${file} - wtfgif can read/write then omggif can read`, () => {
-			const originalGif = readFileSync(join(gifsDir, file));
+			const originalGif = readGifFixture(file);
 			const wtfReader = new WtfGifReader(originalGif);
 
 			// Extract basic properties
@@ -481,7 +447,7 @@ describe("Cross-library write/read compatibility", () => {
 
 	test("repeated decoding stays pixel-compatible with omggif", () => {
 		const file = gifFiles[0]!; // Use first available file
-		const gif = readFileSync(join(gifsDir, file));
+		const gif = readGifFixture(file);
 		const omgReader = new OmgGifReader(gif);
 		const wtfReader = new WtfGifReader(gif);
 

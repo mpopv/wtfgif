@@ -2,6 +2,14 @@
 
 All notable changes to wtfgif are documented here.
 
+## 3.0.21 - 2026-10-04
+
+- Organize build, benchmark, validation, and profiling scripts by function.
+- Use one Wasm variant list for builds, copies, and package checks.
+- Generate benchmark text and charts from the saved results.
+- Split type declarations and share test helpers. The public API is unchanged.
+- Update development dependencies to fix reported security issues.
+
 ## 3.0.20 - 2026-08-10
 
 - Refresh the clean arbitrary-RGBA receipt used by the README and benchmark
