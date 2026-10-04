@@ -34,6 +34,7 @@ type RawQualityExports = WebAssembly.Exports & {
 		delay: number,
 		loopCount: number,
 		alphaThreshold: number,
+		independentFrames: boolean,
 	) => number;
 	quality_delay_scratch_reserve: (
 		inputLength: number,
@@ -47,6 +48,7 @@ type RawQualityExports = WebAssembly.Exports & {
 		delay: number,
 		loopCount: number,
 		alphaThreshold: number,
+		independentFrames: boolean,
 	) => number;
 	encode_rgba_quality_gif_scratch_from_input: (
 		length: number,
@@ -56,6 +58,7 @@ type RawQualityExports = WebAssembly.Exports & {
 		delayCount: number,
 		loopCount: number,
 		alphaThreshold: number,
+		independentFrames: boolean,
 	) => number;
 	gif_output_scratch_ptr: () => number;
 };

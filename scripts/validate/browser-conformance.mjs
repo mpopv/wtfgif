@@ -21,10 +21,16 @@ for (const value of loadBenchmarkCorpus()) {
 	const conformanceValue = { ...value, delay: 60_000 };
 	const bytes = encodeWtfgif(conformanceValue, ALPHA_THRESHOLD);
 	const decoded = decodeCompositedGif(bytes);
-	const firstFrame = decoded.pixels.subarray(0, value.width * value.height * 4);
+	const frameBytes = value.width * value.height * 4;
+	const frameSha256 = Array.from({ length: decoded.frameCount }, (_, frame) =>
+		sha256(
+			decoded.pixels.subarray(frame * frameBytes, (frame + 1) * frameBytes),
+		),
+	);
 	encoded.set(value.id, {
 		bytes,
-		expectedSha256: sha256(firstFrame),
+		expectedSha256: frameSha256[0],
+		frameSha256,
 		width: value.width,
 		height: value.height,
 	});
@@ -50,7 +56,24 @@ const server = await startLocalHttpServer((request, response) => {
 });
 const { origin } = server;
 
-const browsers = { chromium, firefox, webkit };
+// Frames after the first depend on the previous canvas once the encoder
+// stores only changed rectangles. Engines with WebCodecs' ImageDecoder also
+// render and compare every composited frame, not just the first.
+const engineNames = (
+	process.env.BROWSER_CONFORMANCE_ENGINES ?? "chromium,firefox,webkit"
+)
+	.split(",")
+	.map((name) => name.trim())
+	.filter(Boolean);
+const allBrowsers = { chromium, firefox, webkit };
+const browsers = Object.fromEntries(
+	engineNames.map((name) => {
+		if (!(name in allBrowsers))
+			throw new Error(`Unknown browser engine: ${name}`);
+		return [name, allBrowsers[name]];
+	}),
+);
+const everyFrameEngines = [];
 try {
 	for (const [name, browserType] of Object.entries(browsers)) {
 		let browser;
@@ -89,8 +112,47 @@ try {
 							.map((byte) => byte.toString(16).padStart(2, "0"))
 							.join("");
 						document.body.replaceChildren(image);
+						let frames = null;
+						if (typeof ImageDecoder !== "undefined") {
+							const response = await fetch(
+								`/gif/${encodeURIComponent(id)}?frames=${Math.random()}`,
+							);
+							const decoder = new ImageDecoder({
+								data: await response.arrayBuffer(),
+								type: "image/gif",
+							});
+							await decoder.tracks.ready;
+							frames = [];
+							const frameCount = decoder.tracks.selectedTrack.frameCount;
+							for (let frameIndex = 0; frameIndex < frameCount; frameIndex++) {
+								const { image: frame } = await decoder.decode({
+									frameIndex,
+									completeFramesOnly: true,
+								});
+								context.clearRect(0, 0, width, height);
+								context.drawImage(frame, 0, 0);
+								frame.close();
+								const framePixels = context.getImageData(
+									0,
+									0,
+									width,
+									height,
+								).data;
+								const frameDigest = await crypto.subtle.digest(
+									"SHA-256",
+									framePixels,
+								);
+								frames.push(
+									[...new Uint8Array(frameDigest)]
+										.map((byte) => byte.toString(16).padStart(2, "0"))
+										.join(""),
+								);
+							}
+							decoder.close();
+						}
 						return {
 							hash,
+							frames,
 							naturalWidth: image.naturalWidth,
 							naturalHeight: image.naturalHeight,
 						};
@@ -108,6 +170,27 @@ try {
 						`${name}/${id}: canvas pixels differ from the independent decoder`,
 					);
 				}
+				if (actual.frames) {
+					if (actual.frames.length !== expected.frameSha256.length) {
+						throw new Error(
+							`${name}/${id}: browser decoded the wrong frame count`,
+						);
+					}
+					actual.frames.forEach((hash, frame) => {
+						if (hash !== expected.frameSha256[frame]) {
+							throw new Error(
+								`${name}/${id}: composited frame ${frame} differs from the independent decoder`,
+							);
+						}
+					});
+				}
+			}
+			if (
+				[...encoded.keys()].length > 0 &&
+				!everyFrameEngines.includes(name) &&
+				(await page.evaluate(() => typeof ImageDecoder !== "undefined"))
+			) {
+				everyFrameEngines.push(name);
 			}
 			await page.screenshot({
 				path: join(outputDir, `browser-conformance-${name}.png`),
@@ -121,5 +204,5 @@ try {
 }
 
 console.log(
-	`Browser conformance passed: ${encoded.size} fixtures in Chromium, Firefox, and WebKit`,
+	`Browser conformance passed: ${encoded.size} fixtures in ${Object.keys(browsers).join(", ")}; every composited frame checked in ${everyFrameEngines.join(", ") || "no engine"}`,
 );

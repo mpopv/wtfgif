@@ -58,24 +58,23 @@ function corpusSummary(receipt) {
 	};
 }
 
+function sizeRange(values) {
+	return `${values.minimumSize.toFixed(2)}×–${values.maximumSize.toFixed(2)}× the size of image-q + omggif's, with a ${values.meanSize.toFixed(2)}× geometric mean`;
+}
+
 function readmeCorpus(receipt) {
 	const values = corpusSummary(receipt);
-	return `Across the ${values.rows.length} arbitrary-RGBA workloads, wtfgif is **${values.minimumSpeed.toFixed(2)}×–${values.maximumSpeed.toFixed(2)}× faster**
-than image-q + omggif, with a **${values.meanSpeed.toFixed(2)}× geometric mean**. The real ${values.makeEmoji.fixture.width}×${values.makeEmoji.fixture.height}
-MakeEmoji workload is **${values.makeEmoji.speedupVsImageQOmggif.toFixed(2)}× faster** (${values.makeEmoji.medianMs.toFixed(3)} ms vs ${values.makeEmoji.baseline.medianMs.toFixed(3)} ms). Output files
-are **${values.minimumSize.toFixed(2)}×–${values.maximumSize.toFixed(2)}× larger**, with a **${values.meanSize.toFixed(2)}× geometric mean**.
+	const makeEmoji = values.makeEmoji;
+	return `On ${values.rows.length} arbitrary-RGBA workloads, wtfgif's first encode is **${values.minimumSpeed.toFixed(0)}×–${values.maximumSpeed.toFixed(0)}× faster**
+than image-q + omggif, with a **${values.meanSpeed.toFixed(0)}× geometric mean**. The real ${makeEmoji.fixture.width}×${makeEmoji.fixture.height}×${makeEmoji.fixture.frameCount}
+MakeEmoji animation takes **${makeEmoji.medianMs.toFixed(2)} ms** instead of ${makeEmoji.baseline.medianMs.toFixed(0)} ms. wtfgif's files are
+${sizeRange(values)}.
 
-![wtfgif speedup across the arbitrary-RGBA corpus](docs/corpus-speedup.svg)
+![wtfgif speedup over image-q + omggif on ten RGBA workloads](docs/corpus-speedup.svg)
 
-Bar length is speedup over image-q + omggif. Each label also gives both median
-encode times, the file-size ratio, and source-relative RGB quality. The chart
-and values come from the recorded ${receipt.benchmark.processesPerImplementation}-process
-[\`benchmarks/corpus.json\`](benchmarks/corpus.json) receipt. Shape, frame timing,
-and binary transparency must be exact. PSNR and SSIM show the color reduction
-that occurs when arbitrary RGBA pixels become a GIF palette.
-
-The receipt identifies wtfgif ${receipt.environment.packageVersion} at source commit
-\`${receipt.environment.commit}\`. Its dirty flag is ${formatDirty(receipt.environment.dirty)}.`;
+Measured with ${receipt.benchmark.processesPerImplementation} fresh Node ${receipt.environment.node} processes per workload on an ${receipt.environment.cpu}, wtfgif
+${receipt.environment.packageVersion} (\`${receipt.environment.commit.slice(0, 7)}\`). The raw samples are in
+[\`benchmarks/corpus.json\`](benchmarks/corpus.json).`;
 }
 
 function corpusReceipt(receipt) {
@@ -97,7 +96,7 @@ so the timed artifact comes from that recorded source commit.
 ${rows.join("\n")}
 
 The observed range is ${values.minimumSpeed.toFixed(2)}×–${values.maximumSpeed.toFixed(2)}×, with a ${values.meanSpeed.toFixed(2)}× geometric-mean speedup.
-The corresponding files are ${values.minimumSize.toFixed(2)}×–${values.maximumSize.toFixed(2)}× larger, with a ${values.meanSize.toFixed(2)}× geometric mean.
+wtfgif's files are ${sizeRange(values)}.
 This is the library's intended tradeoff: encode latency takes priority over
 compression ratio.
 
@@ -105,7 +104,7 @@ These results describe the ${values.rows.length} committed fixtures on the recor
 and Node.js ${receipt.environment.node} runtime. They do not claim codec-only performance, equal
 output size, or unmeasured hardware and runtimes.
 
-Every category exceeds the 100× floor on its first real encode after
+${values.rows.every((row) => row.speedupVsImageQOmggif > 100) ? "Every category exceeds" : `${values.rows.filter((row) => row.speedupVsImageQOmggif > 100).length} of ${values.rows.length} categories exceed`} 100× on its first real encode after
 initialization. The ${sorted[0].fixture.label.toLowerCase()} fixture has the narrowest margin at ${sorted[0].speedupVsImageQOmggif.toFixed(2)}×, followed by
 ${sorted[1].fixture.label.toLowerCase()} at ${sorted[1].speedupVsImageQOmggif.toFixed(2)}×. No result depends on a known palette, source cache,
 previous result, or reduced-quality mode.
@@ -120,8 +119,9 @@ survived palette mapping exactly. Shape, frame timing, and binary alpha must be
 exact on every fixture regardless of that RGB label.
 
 The baseline uses image-q \`rgbquant\` palette generation and nearest-color
-mapping followed by omggif LZW. wtfgif uses its global quality quantizer and
-literal LZW. The algorithms can select different indexed pixels, so the receipt
+mapping followed by omggif LZW. wtfgif uses its global quality quantizer,
+fixed-width run-aware LZW codes, and changed-rectangle frames. The algorithms
+can select different indexed pixels, so the receipt
 reports output bytes, opaque-source RGB PSNR, and per-frame SSIM after binary
 alpha compositing against black. Every output is decoded and checked for shape,
 frame count, delays, and exact binary alpha before it is accepted.
@@ -141,26 +141,23 @@ function sortedRaceRows(receipt) {
 	);
 }
 
+function formatKilobytes(bytes) {
+	return `${(bytes / 1024).toFixed(0)} KiB`;
+}
+
 function readmeBrowser(receipt) {
 	const rows = sortedRaceRows(receipt);
 	const wtfgif = rows.find((row) => row.id === "wtfgif");
 	const competitors = rows.filter((row) => row.id !== "wtfgif");
-	return `![Browser GIF encoder benchmark](docs/encoder-race.svg)
+	const smallest = Math.min(...competitors.map((row) => row.bytes));
+	const largest = Math.max(...competitors.map((row) => row.bytes));
+	return `![Encode time in Chrome for six GIF encoders](docs/encoder-race.svg)
 
-These are public-API time-to-result medians from ${receipt.environment.iterations} fresh Chrome processes per
-encoder on the same ${receipt.fixture.frames}-frame MakeEmoji workload. Package loading and wtfgif
-initialization are outside the clock. Each process evicts 64 MiB of unrelated
-memory and waits one animation frame before timing. wtfgif took **${wtfgif.medianMs.toFixed(3)} ms**;
-the five alternatives took **${Math.min(...competitors.map((row) => row.medianMs)).toFixed(3)}–${Math.max(...competitors.map((row) => row.medianMs)).toFixed(3)} ms** and were
-**${Math.min(...competitors.map((row) => row.slowerThanWtfgif)).toFixed(2)}×–${Math.max(...competitors.map((row) => row.slowerThanWtfgif)).toFixed(2)}× slower**.
-wtfgif emitted ${wtfgif.bytes.toLocaleString("en-US")} bytes. The alternatives emitted ${Math.min(...competitors.map((row) => row.bytes)).toLocaleString("en-US")}–${Math.max(...competitors.map((row) => row.bytes)).toLocaleString("en-US")} bytes.
-The dashed line marks 100× wtfgif's measured latency. The chart gives output
-size, PSNR, and alpha agreement with every timing. gif.js worker creation is
-part of its public timed operation. [BENCHMARKS.md](BENCHMARKS.md) gives the
-exact settings and raw samples.
-
-The raw receipt is [\`benchmarks/encoder-race.json\`](benchmarks/encoder-race.json).
-\`scripts/bench/render-encoder-race-chart.mjs\` generates the chart from it.`;
+Encoding the same ${receipt.fixture.frames}-frame ${receipt.fixture.width}×${receipt.fixture.height} MakeEmoji animation through each library's
+public API in ${receipt.environment.browser.replace(/^Google /, "")}, wtfgif took **${wtfgif.medianMs.toFixed(2)} ms**. The other five took
+${Math.min(...competitors.map((row) => row.medianMs)).toFixed(0)}–${Math.max(...competitors.map((row) => row.medianMs)).toFixed(0)} ms (**${Math.min(...competitors.map((row) => row.slowerThanWtfgif)).toFixed(0)}×–${Math.max(...competitors.map((row) => row.slowerThanWtfgif)).toFixed(0)}× slower**). wtfgif's GIF was
+${formatKilobytes(wtfgif.bytes)}; theirs were ${formatKilobytes(smallest)}–${formatKilobytes(largest)}. Medians of ${receipt.environment.iterations} fresh browser processes
+per encoder; raw data in [\`benchmarks/encoder-race.json\`](benchmarks/encoder-race.json).`;
 }
 
 function browserVersion(row) {

@@ -22,9 +22,27 @@ npm run check
 
 Changes to decoding or encoding must include a regression test. Compatibility
 changes should compare behavior with omggif when applicable. Performance
-changes should preserve decoded pixels and report the command, fixture set, and
-whether the measurement used a warm process, cold process, WebAssembly, or the
-experimental native addon. Headline encoding claims must come from a clean
+changes should report the command, fixture set, and whether the measurement
+used a warm process, cold process, WebAssembly, or the experimental native
+addon.
+
+Encoder changes are accepted by what their GIFs decode to, not by their bytes.
+Build the baseline, keep a copy of its `dist` directory, build the candidate,
+and run:
+
+```bash
+EQUIVALENCE_BASELINE=path/to/baseline/dist npm run validate:equivalence
+```
+
+The default lossless gate requires every corpus fixture to decode to the same
+composited frames, delays, and loop count. Bitstream, frame-layout, and speed
+changes must pass it. Palette or mapping changes that may choose different
+pixels use `EQUIVALENCE_GATE=quality` instead: shape, delays, and binary alpha
+stay exact, and RGB PSNR and SSIM may fall by at most
+`EQUIVALENCE_MAX_PSNR_LOSS` (default 0.05 dB) and `EQUIVALENCE_MAX_SSIM_LOSS`
+(default 0.0005). The paired first-encode profiler,
+`scripts/profile/first-quality-paired.mjs`, applies the same rule through
+`PROFILE_GATE=pixels` (the default) or `PROFILE_GATE=quality`. Headline encoding claims must come from a clean
 `npm run bench` receipt and report output size and quality beside latency.
 Regenerate the committed charts with `npm run bench:charts` after accepting a
 new receipt. Run `npm run bench:docs` to also update all current benchmark text

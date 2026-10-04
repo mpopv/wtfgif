@@ -30,6 +30,8 @@ pub fn fuzz_encode(data: &[u8]) {
     for (index, byte) in rgba.iter_mut().enumerate() {
         *byte = data[4 + index % (data.len() - 4)];
     }
+    // The high bit of the height byte selects the independent-frame layout.
+    let independent_frames = data[1] & 0x80 != 0;
     let encoded = encode_rgba_quality_gif_inner_with_output(
         &rgba,
         width,
@@ -38,6 +40,7 @@ pub fn fuzz_encode(data: &[u8]) {
         DelaySource::Constant(u16::from(data[3])),
         0,
         data[3],
+        independent_frames,
         Vec::new(),
     )
     .expect("bounded RGBA input must encode");
@@ -45,5 +48,26 @@ pub fn fuzz_encode(data: &[u8]) {
     assert_eq!(metadata.width, width);
     assert_eq!(metadata.height, height);
     assert_eq!(metadata.frames.len(), frame_count);
+
+    // Run codes and frame differencing are lossless: every composited frame
+    // must equal the same palette indices written as literal full frames.
+    let (palette, indexed, transparent_index) = index_rgba_frames_quality(&rgba, data[3]);
+    let literal = encode_indexed_literal_gif_inner(
+        &indexed,
+        width,
+        height,
+        frame_count,
+        &palette,
+        DelaySource::Constant(u16::from(data[3])),
+        0,
+        transparent_index,
+    )
+    .expect("indexed quality frames must encode");
+    let literal_metadata = parse_metadata(&literal).expect("literal output must parse");
+    let requested = vec![1; frame_count];
+    assert_eq!(
+        prepare_composited_frames_inner(&encoded, &metadata, &requested, PixelFormat::Rgba),
+        prepare_composited_frames_inner(&literal, &literal_metadata, &requested, PixelFormat::Rgba),
+    );
     fuzz_decode(&encoded);
 }

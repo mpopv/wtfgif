@@ -325,31 +325,6 @@ fn four_bit_literal_direct_subblocks_match_buffered_writer() {
 }
 
 #[test]
-fn four_bit_aligned_subblocks_decode_every_boundary() {
-    for length in [
-        1usize, 5, 6, 7, 11, 12, 13, 431, 432, 433, 863, 864, 865, 4096,
-    ] {
-        let indices: Vec<u8> = (0..length)
-            .map(|index| ((index * 5 + index / 3) & 7) as u8)
-            .collect();
-        let mut image_data = Vec::new();
-        encode_four_bit_aligned_literal_lzw_to_unchecked(&mut image_data, &indices).unwrap();
-        assert_eq!(
-            image_data.len(),
-            four_bit_aligned_literal_lzw_block_size(length).unwrap(),
-            "length {length}",
-        );
-
-        let mut payload = Vec::new();
-        collect_image_data_into(&image_data, 0, &mut payload).unwrap();
-        let mut decoded = vec![0u8; length];
-        let mut scratch = LzwStackScratch::default();
-        lzw_decode_to_indices_copy_with_scratch(3, &payload, &mut decoded, &mut scratch).unwrap();
-        assert_eq!(decoded, indices, "length {length}");
-    }
-}
-
-#[test]
 fn seven_bit_literal_direct_subblocks_match_buffered_writer() {
     for length in [1usize, 62, 63, 255, 508, 4096] {
         let indices: Vec<u8> = (0..length)
@@ -1490,29 +1465,33 @@ fn quality_precision_guard_keeps_smooth_ramps_on_the_fine_histogram() {
 }
 
 #[test]
-fn fused_quality_literal_encoding_preserves_indexed_pixels() {
+fn quality_encoding_preserves_indexed_pixels() {
     let width = 64u16;
     let height = 64u16;
-    let mut rgba = Vec::with_capacity(usize::from(width) * usize::from(height) * 4);
-    for y in 0..height {
-        for x in 0..width {
-            rgba.extend_from_slice(&[
-                ((x * 73 + y * 151) & 255) as u8,
-                ((x * 193 + y * 47) & 255) as u8,
-                ((x * 11 + y * 223) & 255) as u8,
-                if (x + y) % 5 == 0 { 0 } else { 255 },
-            ]);
+    let frame_count = 3usize;
+    let mut rgba = Vec::with_capacity(usize::from(width) * usize::from(height) * frame_count * 4);
+    for frame in 0..frame_count as u16 {
+        for y in 0..height {
+            for x in 0..width {
+                let moving = x >= frame * 9 && x < frame * 9 + 20;
+                rgba.extend_from_slice(&[
+                    ((x * 73 + y * 151 + u16::from(moving) * 40) & 255) as u8,
+                    ((x * 193 + y * 47) & 255) as u8,
+                    ((x * 11 + y * 223) & 255) as u8,
+                    if (x + y) % 5 == 0 && !moving { 0 } else { 255 },
+                ]);
+            }
         }
     }
-    let delays = [10u16];
+    let delays = [10u16, 20, 30];
     let (palette, indexed, transparent_index) =
         index_rgba_frames_quality(&rgba, TRANSPARENT_ALPHA_THRESHOLD);
-    let indexed_output = encode_indexed_literal_gif_inner_with_output(
+    let literal = encode_indexed_literal_gif_inner_with_output(
         Vec::new(),
         &indexed,
         width,
         height,
-        1,
+        frame_count,
         &palette,
         DelaySource::PerFrame(&delays),
         0,
@@ -1520,29 +1499,47 @@ fn fused_quality_literal_encoding_preserves_indexed_pixels() {
     )
     .unwrap();
     recycle_quantized_indexed(indexed);
+    let literal_metadata = parse_metadata(&literal).unwrap();
+    let requested = vec![1u8; frame_count];
+    let expected =
+        prepare_composited_frames_inner(&literal, &literal_metadata, &requested, PixelFormat::Rgba)
+            .unwrap();
 
-    let plan = match index_rgba_frames_quality_result(&rgba, TRANSPARENT_ALPHA_THRESHOLD) {
-        QualityIndexResult::Quantized(plan) => plan,
-        QualityIndexResult::Exact(_) => panic!("fixture should overflow the exact palette"),
-    };
-    let fused_output = encode_quality_index_plan_literal_gif(
-        Vec::new(),
-        &rgba,
-        width,
-        height,
-        1,
-        DelaySource::PerFrame(&delays),
-        0,
-        TRANSPARENT_ALPHA_THRESHOLD,
-        plan,
-    )
-    .unwrap();
-    let indexed_metadata = parse_metadata(&indexed_output).unwrap();
-    let fused_metadata = parse_metadata(&fused_output).unwrap();
-    assert_eq!(
-        decode_frame_indices_inner(&fused_output, &fused_metadata.frames[0]).unwrap(),
-        decode_frame_indices_inner(&indexed_output, &indexed_metadata.frames[0]).unwrap()
-    );
+    for independent_frames in [false, true] {
+        let encoded = encode_rgba_quality_gif_inner_with_output(
+            &rgba,
+            width,
+            height,
+            frame_count,
+            DelaySource::PerFrame(&delays),
+            0,
+            TRANSPARENT_ALPHA_THRESHOLD,
+            independent_frames,
+            Vec::new(),
+        )
+        .unwrap();
+        let metadata = parse_metadata(&encoded).unwrap();
+        assert_eq!(
+            metadata
+                .frames
+                .iter()
+                .map(|frame| frame.delay)
+                .collect::<Vec<_>>(),
+            delays
+        );
+        assert_eq!(
+            prepare_composited_frames_inner(&encoded, &metadata, &requested, PixelFormat::Rgba)
+                .unwrap(),
+            expected,
+            "independent_frames={independent_frames}"
+        );
+        assert!(
+            encoded.len() <= literal.len(),
+            "independent_frames={independent_frames} compact={} literal={}",
+            encoded.len(),
+            literal.len()
+        );
+    }
 }
 
 #[test]
@@ -1762,45 +1759,5 @@ fn reciprocal_quality_averages_match_integer_division() {
             .wrapping_add(1_442_695_040_888_963_407);
         let sum = (wide_state % (maximum_sum + 1)) as u32;
         verify_weighted(sum, count);
-    }
-}
-
-#[test]
-fn small_exact_constant_delay_writer_matches_generic_bytes() {
-    const WIDTH: u16 = 7;
-    const HEIGHT: u16 = 2;
-    const FRAME_COUNT: usize = 2;
-    for palette_len in [4usize, 8] {
-        let palette: Vec<u32> = (0..palette_len)
-            .map(|index| rgb_key((index * 31) as u8, (index * 47) as u8, (index * 73) as u8))
-            .collect();
-        let indices: Vec<u8> = (0..usize::from(WIDTH) * usize::from(HEIGHT) * FRAME_COUNT)
-            .map(|index| (index % palette_len) as u8)
-            .collect();
-        let expected = encode_indexed_literal_gif_inner_with_output_unchecked(
-            Vec::new(),
-            &indices,
-            WIDTH,
-            HEIGHT,
-            FRAME_COUNT,
-            &palette,
-            DelaySource::Constant(7),
-            0,
-            None,
-        )
-        .unwrap();
-        let actual = encode_small_exact_constant_delay_gif_with_output(
-            Vec::new(),
-            &indices,
-            WIDTH,
-            HEIGHT,
-            FRAME_COUNT,
-            &palette,
-            7,
-            0,
-            None,
-        )
-        .unwrap();
-        assert_eq!(actual, expected, "palette_len={palette_len}");
     }
 }

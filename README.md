@@ -1,9 +1,10 @@
 # wtfgif
 
 `wtfgif` encodes and decodes GIF files in Node.js, browsers, Workers, and edge
-runtimes. Its one encoder gives maximum speed without a lower-quality speed
-mode, at the cost of larger files. It is more than 200× faster than the tested
-encoders.
+runtimes. Its one encoder favors speed over compression ratio: it skips full
+LZW dictionary matching, so files are larger than slower encoders produce, but
+it codes repeated pixels and unchanged frame areas compactly without changing a
+decoded pixel. It is more than 100× faster than the tested encoders.
 
 ## Install
 
@@ -135,7 +136,7 @@ The receipt identifies wtfgif 3.0.20 at source commit
 `f626ac2fac04405396e6a19f242a77ea55658858`. Its dirty flag is false.
 <!-- benchmark:readme-corpus:end -->
 
-Current profiling puts about **88%** of the MakeEmoji first-encode latency
+Profiling of the 3.0.20 encoder put about **88%** of the MakeEmoji first-encode latency
 inside the Wasm encoder. Reserving its arena, copying the independent RGBA
 frames in, and copying the GIF out together take about 0.04 ms. Within Wasm,
 about 42% of samples are in palette-histogram construction, 22% in
@@ -181,8 +182,13 @@ checks, and browser checks are in [BENCHMARKS.md](BENCHMARKS.md).
 - GIF delays use hundredths of a second, so `delay: 10` means 100 ms.
 - GIF supports at most 256 colors and only fully transparent or fully opaque
   pixels. Converting from full-color RGBA always involves some color reduction.
-- Encoding always uses wtfgif's latency-first literal-LZW path. Smaller output
-  is not an alternate mode of this library.
+- Output is lossless for the chosen palette. Runs of one color become LZW run
+  codes, and each later frame stores only the area that changed, with
+  unchanged pixels left transparent. Every frame decodes to the same image as
+  a full-frame encoding.
+- Pass `independentFrames: true` to write every frame as a complete,
+  full-canvas image instead. Use it when frames will be reordered without
+  decoding, for example with `CompiledGif.reverseFrames()`.
 - `GifReader` and `GifWriter` are compatible with the equivalent `omggif` APIs
   if you need lower-level palette and frame control.
 

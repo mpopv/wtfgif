@@ -322,8 +322,10 @@ The independent conformance check encodes every corpus fixture with scalar and
 SIMD Wasm, requires byte-for-byte agreement between them, and validates the
 results through both omggif and Sharp/libvips. The browser check compares the
 first rendered frame from Chromium, Firefox, and WebKit with the independent
-decoder pixels. Property tests cover 200 deterministic arbitrary indexed and
-RGBA animations. Bounded libFuzzer targets exercise malformed decoding and
+decoder pixels. Engines that expose WebCodecs' `ImageDecoder` (Chromium)
+also render and compare every composited frame, which covers frames that
+store only a changed rectangle. Property tests cover 200 deterministic
+arbitrary indexed and RGBA animations. Bounded libFuzzer targets exercise malformed decoding and
 encode-then-decode round trips; the local smoke check runs 500 cases per target.
 
 CI is configured for Node 20 and 22 on Linux, Node 22 on macOS and Windows, all

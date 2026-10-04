@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
-import { loadBenchmarkCorpus } from "../bench/lib/corpus.mjs";
+import { ALPHA_THRESHOLD, loadBenchmarkCorpus } from "../bench/lib/corpus.mjs";
+import {
+	decodeCompositedGif,
+	validateAndMeasure,
+} from "../bench/lib/metrics.mjs";
 
 const fixtureId = process.env.PROFILE_FIXTURE ?? "makeemoji-real";
 const fixture = loadBenchmarkCorpus().find((value) => value.id === fixtureId);
@@ -295,9 +299,19 @@ const encode =
 	rgba.length / 4 > 1_000_000 || process.env.PROFILE_GENERAL === "1"
 		? wasm.encode_rgba_quality_gif_constant_delay_scratch_from_input
 		: wasm.encode_rgba_quality_low_res_constant_delay_scratch_from_input;
+const independentFrames = process.env.PROFILE_INDEPENDENT_FRAMES === "1";
 let outputLength = 0;
 for (let iteration = 0; iteration < repeat; iteration += 1) {
-	outputLength = encode(rgba.length, width, height, frameCount, 10, 0, 179);
+	outputLength = encode(
+		rgba.length,
+		width,
+		height,
+		frameCount,
+		10,
+		0,
+		179,
+		independentFrames,
+	);
 }
 const encoded = performance.now();
 const output = new Uint8Array(
@@ -308,6 +322,21 @@ const output = new Uint8Array(
 	),
 );
 const copiedOutput = performance.now();
+
+// Everything below runs after timing. The decoded hash lets paired runs accept
+// a candidate whose bytes differ but whose composited frames do not.
+const decoded = decodeCompositedGif(output);
+const decodedHash = createHash("sha256");
+decodedHash.update(decoded.pixels);
+decodedHash.update(new Uint8Array(decoded.delays.buffer));
+const quality =
+	process.env.PROFILE_MEASURE_QUALITY === "1"
+		? validateAndMeasure(
+				output,
+				{ ...fixture, rgba, delay: 10 },
+				ALPHA_THRESHOLD,
+			)
+		: null;
 
 process.stdout.write(
 	JSON.stringify({
@@ -323,5 +352,7 @@ process.stdout.write(
 		totalMs: copiedOutput - started,
 		outputBytes: output.length,
 		outputSha256: createHash("sha256").update(output).digest("hex"),
+		decodedSha256: decodedHash.digest("hex"),
+		...(quality ? { psnrDb: quality.psnrDb, ssim: quality.ssim } : {}),
 	}),
 );

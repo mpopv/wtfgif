@@ -83,7 +83,17 @@ describe("encode-only quality entry", () => {
 
 		try {
 			expect(prepare).toHaveBeenCalledTimes(1);
-			expect(prepareEncode).toHaveBeenNthCalledWith(1, 0, 1, 1, 0, 0, 0, 128);
+			expect(prepareEncode).toHaveBeenNthCalledWith(
+				1,
+				0,
+				1,
+				1,
+				0,
+				0,
+				0,
+				128,
+				false,
+			);
 			expect(prepareEncode).toHaveBeenNthCalledWith(
 				2,
 				128 * 128 * 8 * 4,
@@ -93,9 +103,19 @@ describe("encode-only quality entry", () => {
 				0,
 				0,
 				128,
+				false,
 			);
 			expect(prepareEncode).toHaveBeenCalledTimes(23);
-			expect(prepareEncode).toHaveBeenLastCalledWith(8, 1, 1, 2, 0, 0, 128);
+			expect(prepareEncode).toHaveBeenLastCalledWith(
+				8,
+				1,
+				1,
+				2,
+				0,
+				0,
+				128,
+				false,
+			);
 			expect(prepareLargeEncode).toHaveBeenCalledExactlyOnceWith(
 				1001 * 1000 * 4,
 				1001,
@@ -104,6 +124,7 @@ describe("encode-only quality entry", () => {
 				0,
 				0,
 				128,
+				false,
 			);
 			expect(prepareOutputPointer).toHaveBeenCalledTimes(2);
 			expect(reserve).toHaveBeenCalledExactlyOnceWith(4 * 1024 * 1024);
@@ -124,7 +145,7 @@ describe("encode-only quality entry", () => {
 		}
 	});
 
-	test("matches the established quality encoder byte for byte", () => {
+	test("matches the general quality encoder byte for byte", () => {
 		const options = {
 			width: 2,
 			height: 1,
@@ -134,15 +155,18 @@ describe("encode-only quality entry", () => {
 			loop: 0,
 			alphaThreshold: 128,
 		} as const;
-		const encoded = encodeRgbaGifFrames(options);
-		const expected = encodeRgbaGifFramesGeneral({
-			...options,
-			backend: "wasm",
-			quantization: "quality",
-			paletteMode: "global",
-		});
+		for (const independentFrames of [false, true]) {
+			const encoded = encodeRgbaGifFrames({ ...options, independentFrames });
+			const expected = encodeRgbaGifFramesGeneral({
+				...options,
+				backend: "wasm",
+				quantization: "quality",
+				paletteMode: "global",
+				...(independentFrames ? { delta: false } : {}),
+			});
 
-		expect(encoded).toStrictEqual(expected);
+			expect(encoded).toStrictEqual(expected);
+		}
 	});
 
 	test.each(frameInputCases)("accepts %s", (_name, createFrames) => {

@@ -226,6 +226,7 @@ pub fn prepare_quality_encoder_code() {
         0,
         128,
         false,
+        false,
         Vec::new(),
     );
     let exact_runs = encode_rgba_quality_low_res_exact_gif_inner_with_output::<true>(
@@ -237,30 +238,27 @@ pub fn prepare_quality_encoder_code() {
         0,
         128,
         false,
+        false,
         Vec::new(),
     );
-    let quantized = encode_rgba_quality_low_res_quantized_gif_inner_with_output::<true>(
+    let quantized = encode_rgba_quality_low_res_quantized_gif_inner_with_output(
         empty,
         1,
         1,
         0,
         DelaySource::Constant(0),
         0,
-        0,
         128,
         true,
+        false,
         Vec::new(),
     );
     let public_quality =
-        encode_rgba_quality_low_res_constant_delay_scratch_from_input(0, 1, 1, 0, 0, 0, 128);
+        encode_rgba_quality_low_res_constant_delay_scratch_from_input(0, 1, 1, 0, 0, 0, 128, false);
+    let compact_prepared = compact::prepare_compact_code();
     let mut lzw_output = Vec::new();
-    let opaque_lzw =
-        encode_nine_bit_literal_lzw_mapped_to::<4, false>(&mut lzw_output, empty, 128, 0, empty);
-    let alpha_lzw =
-        encode_nine_bit_literal_lzw_mapped_to::<4, true>(&mut lzw_output, empty, 128, 0, empty);
-    let exact_lzw = encode_indexed_literal_lzw_direct_to_unchecked(&mut lzw_output, empty, 7, 128);
-    let aligned_four_bit_lzw =
-        encode_four_bit_aligned_literal_lzw_to_unchecked(&mut lzw_output, empty);
+    map_quality_pixels_grouped::<4, false>(empty, 128, 0, empty, &mut []);
+    map_quality_pixels_grouped::<4, true>(empty, 128, 0, empty, &mut []);
     let (palette, mapping) = build_quality_wu_palette(
         false,
         std::hint::black_box(Vec::new()),
@@ -309,15 +307,12 @@ pub fn prepare_quality_encoder_code() {
             ^ usize::from(opaque_spans)
             ^ usize::from(zero_dense)
             ^ usize::from(opaque)
-            ^ usize::from(opaque_lzw.is_ok())
-            ^ usize::from(alpha_lzw.is_ok())
-            ^ usize::from(exact_lzw.is_ok())
-            ^ usize::from(aligned_four_bit_lzw.is_ok())
             ^ dominant_palette_prepared
             ^ usize::from(exact_plain.is_ok())
             ^ usize::from(exact_runs.is_ok())
             ^ usize::from(quantized.is_ok())
-            ^ public_quality,
+            ^ public_quality
+            ^ compact_prepared,
     );
 }
 
@@ -742,6 +737,7 @@ pub fn encode_rgba_quality_low_res_constant_delay_scratch_from_input(
     delay: u16,
     loop_count: i32,
     alpha_threshold: u8,
+    independent_frames: bool,
 ) -> usize {
     // `prepare_quality_encoder_code` uses this sentinel before any user data
     // exists. No reusable input, output, palette, or histogram is touched.
@@ -780,19 +776,18 @@ pub fn encode_rgba_quality_low_res_constant_delay_scratch_from_input(
             alpha_threshold,
             usize::from(width) * usize::from(height),
         ) {
-            let encoded = encode_small_exact_constant_delay_gif_with_output(
+            let encoded = encode_quality_indexed_compact(
                 output,
-                &indexed,
+                palette,
+                indexed,
+                transparent_index,
                 width,
                 height,
                 frame_count,
-                &palette,
-                delay,
+                DelaySource::Constant(delay),
                 loop_count,
-                transparent_index,
+                independent_frames,
             );
-            recycle_quality_palette(palette);
-            recycle_quantized_indexed(indexed);
             let Ok(encoded) = encoded else {
                 return 0;
             };
@@ -805,16 +800,16 @@ pub fn encode_rgba_quality_low_res_constant_delay_scratch_from_input(
         || (!hints.likely_exact
             && quality_low_res_exact_is_impossible(rgba_stream, alpha_threshold))
     {
-        encode_rgba_quality_low_res_quantized_gif_inner_with_output::<true>(
+        encode_rgba_quality_low_res_quantized_gif_inner_with_output(
             rgba_stream,
             width,
             height,
             frame_count,
             DelaySource::Constant(delay),
-            delay,
             loop_count,
             alpha_threshold,
             hints.sampled_alpha_255,
+            independent_frames,
             output,
         )
     } else {
@@ -828,6 +823,7 @@ pub fn encode_rgba_quality_low_res_constant_delay_scratch_from_input(
                 loop_count,
                 alpha_threshold,
                 false,
+                independent_frames,
                 output,
             )
         } else {
@@ -840,6 +836,7 @@ pub fn encode_rgba_quality_low_res_constant_delay_scratch_from_input(
                 loop_count,
                 alpha_threshold,
                 false,
+                independent_frames,
                 output,
             )
         }
@@ -863,6 +860,7 @@ pub fn encode_rgba_quality_gif_constant_delay_scratch_from_input(
     delay: u16,
     loop_count: i32,
     alpha_threshold: u8,
+    independent_frames: bool,
 ) -> usize {
     let input_ptr = REUSABLE_LZW_SCRATCH.with(|scratch| {
         let scratch = scratch.borrow();
@@ -882,16 +880,16 @@ pub fn encode_rgba_quality_gif_constant_delay_scratch_from_input(
             || (!hints.likely_exact
                 && quality_low_res_exact_is_impossible(rgba_stream, alpha_threshold))
         {
-            encode_rgba_quality_low_res_quantized_gif_inner_with_output::<true>(
+            encode_rgba_quality_low_res_quantized_gif_inner_with_output(
                 rgba_stream,
                 width,
                 height,
                 frame_count,
                 DelaySource::Constant(delay),
-                delay,
                 loop_count,
                 alpha_threshold,
                 hints.sampled_alpha_255,
+                independent_frames,
                 output,
             )
         } else {
@@ -905,6 +903,7 @@ pub fn encode_rgba_quality_gif_constant_delay_scratch_from_input(
                     loop_count,
                     alpha_threshold,
                     rgba_stream.len() >= 40_000 * 4 && hints.likely_small_palette,
+                    independent_frames,
                     output,
                 )
             } else {
@@ -917,6 +916,7 @@ pub fn encode_rgba_quality_gif_constant_delay_scratch_from_input(
                     loop_count,
                     alpha_threshold,
                     rgba_stream.len() >= 40_000 * 4 && hints.likely_small_palette,
+                    independent_frames,
                     output,
                 )
             }
@@ -930,6 +930,7 @@ pub fn encode_rgba_quality_gif_constant_delay_scratch_from_input(
             DelaySource::Constant(delay),
             loop_count,
             alpha_threshold,
+            independent_frames,
             output,
         )
     };
@@ -972,6 +973,7 @@ pub fn encode_rgba_quality_gif_scratch_from_input(
     delay_count: usize,
     loop_count: i32,
     alpha_threshold: u8,
+    independent_frames: bool,
 ) -> usize {
     let input_ptr = REUSABLE_LZW_SCRATCH.with(|scratch| {
         let scratch = scratch.borrow();
@@ -1002,16 +1004,16 @@ pub fn encode_rgba_quality_gif_scratch_from_input(
             || (!hints.likely_exact
                 && quality_low_res_exact_is_impossible(rgba_stream, alpha_threshold))
         {
-            encode_rgba_quality_low_res_quantized_gif_inner_with_output::<false>(
+            encode_rgba_quality_low_res_quantized_gif_inner_with_output(
                 rgba_stream,
                 width,
                 height,
                 frame_count,
                 DelaySource::PerFrame(delays),
-                0,
                 loop_count,
                 alpha_threshold,
                 hints.sampled_alpha_255,
+                independent_frames,
                 output,
             )
         } else {
@@ -1024,6 +1026,7 @@ pub fn encode_rgba_quality_gif_scratch_from_input(
                 loop_count,
                 alpha_threshold,
                 rgba_stream.len() >= 40_000 * 4 && hints.likely_small_palette,
+                independent_frames,
                 output,
             )
         }
@@ -1036,6 +1039,7 @@ pub fn encode_rgba_quality_gif_scratch_from_input(
             DelaySource::PerFrame(delays),
             loop_count,
             alpha_threshold,
+            independent_frames,
             output,
         )
     };

@@ -340,6 +340,9 @@ function encodeRgbaQualityWasm(
 		);
 		new Uint16Array(scratchMemory.buffer, delayPointer, delayCount).set(delays);
 	}
+	// `delta: false` asks for independent full-canvas frames. When it is
+	// omitted, the quality encoder may store only changed rectangles.
+	const independentFrames = options.delta === false;
 	const outputLength =
 		typeof delays === "number"
 			? wasmCore.encode_rgba_quality_gif_constant_delay_scratch_from_input(
@@ -350,6 +353,7 @@ function encodeRgbaQualityWasm(
 					delays,
 					loop === null ? -1 : loop,
 					alphaThreshold,
+					independentFrames,
 				)
 			: wasmCore.encode_rgba_quality_gif_scratch_from_input(
 					inputLength,
@@ -359,6 +363,7 @@ function encodeRgbaQualityWasm(
 					delayCount,
 					loop === null ? -1 : loop,
 					alphaThreshold,
+					independentFrames,
 				);
 	if (outputLength === 0) throw new Error("Wasm quality encoding failed.");
 	return new Uint8Array(
