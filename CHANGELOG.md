@@ -2,6 +2,26 @@
 
 All notable changes to wtfgif are documented here.
 
+## 3.1.1 - 2026-10-05
+
+- Fix encodes that could return a GIF of an earlier input or fail with an
+  out-of-bounds error. An encode that passed a `delay` array and had more
+  RGBA input than any earlier encode, and more than the initial 4 MiB, moved
+  the reusable input buffer while JavaScript kept its old address. Later
+  encodes of the same size or smaller then wrote their pixels to freed
+  memory. Every release from 3.0.3 through 3.1.0 is affected.
+- Encode faster with byte-identical output. Frames after the first copy the
+  previous frame's palette indices where pixels did not change, and the
+  low-res histogram counts pixels that hold still once per run of frames.
+  Small exact palettes index the first frame one run of a color at a time,
+  and the dominant palette planner prunes its nearest-color search by green
+  distance.
+- In warm paired runs against 3.1.0, a synthetic photo background under a
+  moving sprite encodes 1.69x faster, the nearly static and pixel-art
+  fixtures 1.20x and 1.06x, and MakeEmoji about 7% faster. The first encode
+  after initialization stays within a few percent of 3.1.0, and the nearly
+  static fixture's is 1.10x faster.
+
 ## 3.1.0 - 2026-10-04
 
 - Write run-aware LZW codes. The stream keeps the literal code width, but runs
