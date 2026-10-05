@@ -1,0 +1,26 @@
+// A tiny module containing `v128.const` is enough to feature-test SIMD without
+// compiling or instantiating the full encoder. The body returns a v128 value.
+const SIMD_PROBE = Uint8Array.from([
+	0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x05, 0x01, 0x60, 0x00,
+	0x01, 0x7b, 0x03, 0x02, 0x01, 0x00, 0x0a, 0x16, 0x01, 0x14, 0x00, 0xfd, 0x0c,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x0b,
+]);
+
+let cachedSupport: boolean | undefined;
+
+export function supportsWasmSimd(): boolean {
+	if (cachedSupport !== undefined) {
+		return cachedSupport;
+	}
+	if (typeof WebAssembly === "undefined") {
+		cachedSupport = false;
+		return cachedSupport;
+	}
+	try {
+		cachedSupport = WebAssembly.validate(SIMD_PROBE);
+	} catch {
+		cachedSupport = false;
+	}
+	return cachedSupport;
+}

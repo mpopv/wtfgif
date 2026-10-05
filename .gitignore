@@ -1,0 +1,36 @@
+.claude
+repomix-output.xml
+.DS_Store
+
+# Dependencies and package output
+node_modules/
+dist/
+*.tgz
+
+# Test, benchmark, and tool output
+coverage/
+output/
+logs/
+*.log
+*.lcov
+.playwright-cli/
+.wrangler/
+
+# Node local state
+.npm/
+*.tsbuildinfo
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+*.pid
+*.pid.lock
+
+# Native and Wasm build output
+native/build/
+crates/**/pkg/
+crates/**/pkg-*/
+crates/**/target/
+crates/**/fuzz/artifacts/
+
+# Local environment files
+.env
+.env.*
+!.env.example

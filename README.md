@@ -1,0 +1,248 @@
+# wtfgif
+
+[![npm version](https://img.shields.io/npm/v/wtfgif)](https://www.npmjs.com/package/wtfgif)
+[![CI](https://github.com/mpopv/wtfgif/actions/workflows/ci.yml/badge.svg)](https://github.com/mpopv/wtfgif/actions/workflows/ci.yml)
+[![license](https://img.shields.io/npm/l/wtfgif)](LICENSE)
+
+Fast GIF encoding and omggif-compatible decoding for Node.js, browsers, Web
+Workers, and edge runtimes.
+
+wtfgif turns RGBA frames into an animated GIF in well under a millisecond at
+sticker and emoji sizes, more than 100 times faster than the JavaScript
+encoders it is benchmarked against. It spends its time on speed rather than on
+squeezing out every byte, so its files are usually larger than a
+compression-first encoder's. The result is a standard GIF that every browser
+and image library can read.
+
+- **Fast.** A Rust/WebAssembly encoder, with SIMD where the runtime has it.
+- **Lossless after the palette.** One adaptive palette per animation, exact
+  frame delays, and exact binary transparency. Run codes and changed-area
+  frames keep files compact without changing a decoded pixel.
+- **A drop-in for omggif.** `GifReader` and `GifWriter` take the same
+  arguments and return the same values.
+- **Runs anywhere.** Node.js, browsers, Web Workers, Cloudflare Workers, and
+  Vercel Edge. No native addon.
+- **Typed.** Ships its own TypeScript declarations.
+
+## Install
+
+```sh
+npm install wtfgif
+```
+
+## Quick start
+
+```ts
+import { writeFile } from "node:fs/promises";
+import { encodeRgbaGifFrames, initializeWasmGlobally } from "wtfgif/encode";
+
+await initializeWasmGlobally(); // Once, when your app starts.
+
+const width = 64;
+const height = 64;
+const red = new Uint8Array(width * height * 4);
+const blue = new Uint8Array(width * height * 4);
+for (let i = 0; i < red.length; i += 4) {
+  red.set([255, 0, 0, 255], i);
+  blue.set([0, 0, 255, 255], i);
+}
+
+const gif = encodeRgbaGifFrames({
+  width,
+  height,
+  frames: [red, blue],
+  delay: 50, // Hundredths of a second: 50 is 500 ms per frame.
+  loop: 0, // Repeat forever.
+});
+
+await writeFile("out.gif", gif);
+```
+
+Each frame holds `width × height × 4` bytes of red, green, blue, and alpha:
+the same layout as `ImageData.data`.
+
+### From a canvas
+
+```ts
+import { encodeRgbaGifFrames, initializeWasmGlobally } from "wtfgif/encode";
+
+await initializeWasmGlobally();
+
+const canvas = document.createElement("canvas");
+canvas.width = 128;
+canvas.height = 128;
+const context = canvas.getContext("2d", { willReadFrequently: true })!;
+
+const frames = images.map((image) => {
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  return context.getImageData(0, 0, canvas.width, canvas.height).data;
+});
+
+const gif = encodeRgbaGifFrames({ width: 128, height: 128, frames, delay: 10, loop: 0 });
+const url = URL.createObjectURL(new Blob([gif], { type: "image/gif" }));
+```
+
+### Decode a GIF
+
+```ts
+import { readFile } from "node:fs/promises";
+import { GifReader, initializeWasmGlobally } from "wtfgif";
+
+await initializeWasmGlobally(); // Optional: prepares frames in WebAssembly.
+
+const reader = new GifReader(await readFile("in.gif"));
+const playback = reader.preparePlayback(); // Every frame composited, disposal applied.
+
+for (let i = 0; i < reader.numFrames(); i++) {
+  const rgba = new Uint8Array(reader.width * reader.height * 4);
+  playback.copyFrame(i, rgba);
+  console.log(`frame ${i} shows for ${playback.frames[i].delay * 10} ms`);
+}
+
+playback.dispose();
+reader.dispose();
+```
+
+## Replacing omggif
+
+Change the import:
+
+```diff
+- import { GifReader, GifWriter } from "omggif";
++ import { GifReader, GifWriter } from "wtfgif";
+```
+
+`GifReader` and `GifWriter` have omggif's constructors, methods, and return
+values, and accept the same plain arrays, typed arrays, and Node.js buffers.
+Decoded pixels match omggif's exactly. Two things differ:
+
+- `GifWriter` writes LZW codes without building omggif's full dictionary, so
+  it is much faster and its files are larger.
+- After `await initializeWasmGlobally()`, `GifReader` prepares frames in
+  WebAssembly; otherwise it uses JavaScript. Both produce the same pixels.
+
+Beyond omggif, `GifReader` adds `preparePlayback()` for composited frames and
+`decodeAndBlitCompositedFrameRGBA()` for one composited frame.
+
+## Performance and tradeoffs
+
+<!-- benchmark:readme-corpus:start -->
+On 10 arbitrary-RGBA workloads, wtfgif's first encode is **130×–780× faster**
+than image-q + omggif, with a **260× geometric mean**. The real 128×128×8
+MakeEmoji animation takes **0.61 ms** instead of 148 ms. wtfgif's files are
+0.37×–22.42× the size of image-q + omggif's, with a 1.99× geometric mean.
+
+![wtfgif speedup over image-q + omggif on ten RGBA workloads](docs/corpus-speedup.svg)
+
+Measured on an Apple M3 Pro with Node.js 22.23.2: 40 fresh processes per
+workload and library, wtfgif 3.1.1 at `f1b1430`. Raw samples are in
+[`benchmarks/corpus.json`](benchmarks/corpus.json).
+<!-- benchmark:readme-corpus:end -->
+
+### In the browser
+
+<!-- benchmark:readme-browser:start -->
+![Encode time in Chrome for six GIF encoders](docs/encoder-race.svg)
+
+Encoding the same 8-frame 128×128 MakeEmoji animation through each library's
+public API in Chrome 154.0.8037.93, wtfgif took **0.67 ms**. The other five took
+90–135 ms (**133×–199× slower**). wtfgif's GIF was
+73 KiB; theirs were 38 KiB–79 KiB. Medians of 15 fresh browser processes
+per encoder; raw data in [`benchmarks/encoder-race.json`](benchmarks/encoder-race.json).
+<!-- benchmark:readme-browser:end -->
+
+### What you give up for speed
+
+- **Larger files than compression-first encoders.** wtfgif codes runs of one
+  color and stores only the changed part of each frame, but skips full LZW
+  dictionary matching. Flat art, transparent backgrounds, and mostly static
+  animations shrink a lot; photographic and noisy frames stay near their
+  uncompressed size. To make a finished GIF smaller, run it through a GIF
+  optimizer such as gifsicle.
+- **One palette per animation.** wtfgif builds a single adaptive palette of up
+  to 256 colors from all frames, without dithering. Pixels map to their
+  nearest palette color.
+- **One-bit transparency.** GIF pixels are opaque or transparent.
+  `alphaThreshold` (128 by default) chooses the cutoff.
+- **Startup work.** `initializeWasmGlobally()` loads WebAssembly and prepares
+  the encoder. The benchmarks keep this one-time step outside the timed encode,
+  so do it at startup, not right before your first GIF.
+
+[BENCHMARKS.md](BENCHMARKS.md) has the full methodology, every fixture, and the
+raw results. Reproduce them with `npm run bench` and `npm run bench:race`.
+
+## API
+
+### `wtfgif/encode`
+
+The smallest entry point: only the RGBA encoder.
+
+#### `initializeWasmGlobally(): Promise<void>`
+
+Loads the encoder, choosing the SIMD build when the runtime supports it, and
+prepares it. Call it once before encoding.
+
+#### `encodeRgbaGifFrames(options): Uint8Array`
+
+| Option | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `width`, `height` | `number` | required | Size in pixels, 1–65535. |
+| `frames` | `Uint8Array` or `Uint8ClampedArray`, or an array of them | required | RGBA pixels: one buffer per frame, or every frame back to back. |
+| `frameCount` | `number` | inferred | Number of frames when `frames` is one buffer. |
+| `delay` | `number` or `number[]` | `0` | Delay in hundredths of a second, for every frame or per frame. |
+| `loop` | `number` or `null` | play once | `0` repeats forever. Other values set the GIF's repeat count. |
+| `alphaThreshold` | `number` | `128` | Alpha values below this become transparent. |
+| `independentFrames` | `boolean` | `false` | Write every frame as a complete, full-canvas image. Files get larger, but frames can be reordered without decoding (see `CompiledGif` below). |
+
+### `wtfgif`
+
+The full package: the encoder, plus decoding and GIF editing.
+
+| Export | Purpose |
+| --- | --- |
+| `GifReader`, `GifWriter` | omggif-compatible decoder and indexed-frame writer. |
+| `encodeRgbaGifFrames` | The RGBA encoder with more controls: a fixed `palette`, `quantization` (`"quality"`, `"fast"`, or `"exact"`), and per-frame palettes. Pass `delta: false` for independent frames. |
+| `encodeIndexedGifFrames` | Encode frames that are already palette indices. |
+| `compileGif`, `CompiledGif` | Change delays or the loop count, reverse, or boomerang an existing GIF without re-encoding its pixels. |
+| `initializeWasmGlobally`, `initializeWasmModule` | Load the WebAssembly core. |
+
+```ts
+import { compileGif } from "wtfgif";
+
+const compiled = compileGif(gifBytes);
+const twiceAsFast = compiled.withDelays(5).toUint8Array();
+const backwards = compiled.reverseFrames(); // Needs independent, full-canvas frames.
+```
+
+### Edge runtimes
+
+Cloudflare Workers, Vercel Edge, and other runtimes that need a statically
+imported WebAssembly module:
+
+```ts
+import { encodeRgbaGifFrames, initializeWasmModule } from "wtfgif/encode";
+import initWasm, * as wasm from "wtfgif/wasm-encode";
+import wasmModule from "wtfgif/wasm-encode/wasm";
+
+await initializeWasmModule({ ...wasm, default: initWasm }, wasmModule);
+```
+
+## Compatibility
+
+- Node.js `^20.16.0 || >=22.3.0`, as ES modules or CommonJS.
+- Browsers and Web Workers with WebAssembly. SIMD is used when available.
+- Cloudflare Workers and Vercel Edge.
+- `wtfgif/global` also assigns the package to `window.wtfgif`.
+
+CI decodes every benchmark GIF with omggif, libvips, Chromium, Firefox, and
+WebKit, and requires the scalar and SIMD builds to produce identical bytes.
+
+## Contributing
+
+Bug reports and focused pull requests are welcome. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for setup and the release checks.
+
+## License
+
+[MIT](LICENSE)

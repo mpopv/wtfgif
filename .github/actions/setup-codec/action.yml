@@ -1,0 +1,25 @@
+name: Set up wtfgif
+description: Install Node.js, Rust, wasm-pack, and Binaryen for wtfgif checks.
+
+inputs:
+  node-version:
+    description: Node.js version to install.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v7
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: npm
+    - run: npm ci
+      shell: bash
+    - run: rustup toolchain install stable --profile minimal --no-self-update
+      shell: bash
+    - run: rustup default stable
+      shell: bash
+    - run: cargo +stable install wasm-pack --version 0.15.0 --locked
+      shell: bash
+    - run: npm install --global binaryen@131.0.0
+      shell: bash

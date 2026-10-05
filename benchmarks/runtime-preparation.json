@@ -1,0 +1,53 @@
+{
+	"schemaVersion": 2,
+	"createdAt": "2026-08-09T02:55:27Z",
+	"boundary": "First user-input encode after source-independent runtime preparation. Both sides use the current fixed synthetic preparation; the baseline is clean main before the SIMD planner and the candidate is clean commit 6c5ced2.",
+	"environment": {
+		"platform": "darwin",
+		"arch": "arm64",
+		"node": "v22.23.2",
+		"cpu": "Apple M3 Pro",
+		"baselineCommit": "46183b257506604de45843d36ae318f35fcf49d8",
+		"candidateCommit": "6c5ced252a2064d1c28e7cf09dd43be150a52951",
+		"baselineWasmSha256": "f29db1c8972cff8748ba8f79ab2eaa9e6719b5b1c39fa67ed8ae757cc760e6e4",
+		"candidateWasmSha256": "38a8968a46e45d5f22933e2fe2ea0a57622949365cdd15930aeb0fd4b70d8099"
+	},
+	"initialization": {
+		"pairs": 180,
+		"fixture": "makeemoji-real",
+		"candidateRustWasmPreparationMedianMs": 3.41,
+		"candidateSyntheticTierPreparationMedianMs": 17.464,
+		"candidateApproximateTotalPreparationMs": 20.874,
+		"note": "The two phase medians are reported separately by the profiler and summed only to communicate the approximate one-time page-load cost. No user or fixture pixels are available during either phase."
+	},
+	"coldCache": {
+		"cacheEvictionBytes": 67108864,
+		"method": "Touch one byte per 64-byte cache line in a new 64 MiB array after initialization and before the encode timer.",
+		"results": [
+			{
+				"fixture": "makeemoji-real",
+				"pairs": 180,
+				"baselineWasmMedianMs": 0.617,
+				"candidateWasmMedianMs": 0.545,
+				"pairedWasmSpeedup": 1.1349,
+				"baselineTotalMedianMs": 0.7,
+				"candidateTotalMedianMs": 0.624,
+				"pairedTotalSpeedup": 1.1272,
+				"baselineOutputSha256": "e997926c952bf2a374b3304debbe7bacb56894b3990101c996c5426b855c6c2d",
+				"candidateOutputSha256": "e997926c952bf2a374b3304debbe7bacb56894b3990101c996c5426b855c6c2d"
+			},
+			{
+				"fixture": "transparency",
+				"pairs": 220,
+				"baselineWasmMedianMs": 0.177,
+				"candidateWasmMedianMs": 0.18,
+				"pairedWasmSpeedup": 0.9991,
+				"baselineTotalMedianMs": 0.394,
+				"candidateTotalMedianMs": 0.363,
+				"pairedTotalSpeedup": 1.0523,
+				"baselineOutputSha256": "698e73c6cbecdf9467da9d00ba2fa09fbf3c9d6aab4196d99ea95eff00f3d321",
+				"candidateOutputSha256": "698e73c6cbecdf9467da9d00ba2fa09fbf3c9d6aab4196d99ea95eff00f3d321"
+			}
+		]
+	}
+}

@@ -1,0 +1,188 @@
+{
+	"name": "wtfgif",
+	"version": "3.1.1",
+	"main": "dist/index.cjs",
+	"module": "dist/index.mjs",
+	"types": "dist/index.d.ts",
+	"engines": {
+		"node": "^20.16.0 || >=22.3.0"
+	},
+	"files": [
+		"dist",
+		"benchmarks",
+		"BENCHMARKS.md",
+		"CHANGELOG.md",
+		"CONTRIBUTING.md"
+	],
+	"sideEffects": [
+		"./dist/global.cjs",
+		"./dist/global.mjs"
+	],
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.mjs",
+			"require": "./dist/index.cjs"
+		},
+		"./encode": {
+			"types": "./dist/encode.d.ts",
+			"import": "./dist/encode.mjs",
+			"require": "./dist/encode.cjs"
+		},
+		"./global": {
+			"types": "./dist/global.d.ts",
+			"import": "./dist/global.mjs",
+			"require": "./dist/global.cjs"
+		},
+		"./wasm-core": {
+			"types": "./dist/wasm-core/wtfgif_core.d.ts",
+			"browser": {
+				"types": "./dist/wasm-web/wtfgif_core.d.ts",
+				"import": "./dist/wasm-web/wtfgif_core.js",
+				"default": "./dist/wasm-web/wtfgif_core.js"
+			},
+			"node": {
+				"types": "./dist/wasm-core/wtfgif_core.d.ts",
+				"import": "./dist/wasm-core/wtfgif_core.js",
+				"require": "./dist/wasm-core/wtfgif_core.js"
+			},
+			"import": "./dist/wasm-web/wtfgif_core.js",
+			"require": "./dist/wasm-core/wtfgif_core.js",
+			"default": "./dist/wasm-web/wtfgif_core.js"
+		},
+		"./wasm-core/wasm": {
+			"browser": "./dist/wasm-web/wtfgif_core_bg.wasm",
+			"node": "./dist/wasm-core/wtfgif_core_bg.wasm",
+			"default": "./dist/wasm-web/wtfgif_core_bg.wasm"
+		},
+		"./wasm-encode": {
+			"types": "./dist/wasm-quality/wtfgif_core.d.ts",
+			"browser": {
+				"types": "./dist/wasm-quality-web/wtfgif_core.d.ts",
+				"import": "./dist/wasm-quality-web/wtfgif_core.js",
+				"default": "./dist/wasm-quality-web/wtfgif_core.js"
+			},
+			"node": {
+				"types": "./dist/wasm-quality/wtfgif_core.d.ts",
+				"import": "./dist/wasm-quality/wtfgif_core.js",
+				"require": "./dist/wasm-quality/wtfgif_core.js"
+			},
+			"import": "./dist/wasm-quality-web/wtfgif_core.js",
+			"require": "./dist/wasm-quality/wtfgif_core.js",
+			"default": "./dist/wasm-quality-web/wtfgif_core.js"
+		},
+		"./wasm-encode/wasm": {
+			"browser": "./dist/wasm-quality-web/wtfgif_core_bg.wasm",
+			"node": "./dist/wasm-quality/wtfgif_core_bg.wasm",
+			"default": "./dist/wasm-quality-web/wtfgif_core_bg.wasm"
+		}
+	},
+	"scripts": {
+		"build": "tsup && tsc -p tsconfig.json --emitDeclarationOnly && node scripts/build/copy-wasm-core.mjs",
+		"build:wasm": "node scripts/build/build-wasm.mjs --all",
+		"build:wasm:node": "node scripts/build/build-wasm.mjs full-node-scalar",
+		"build:wasm:web": "node scripts/build/build-wasm.mjs full-web-scalar",
+		"build:wasm:quality": "node scripts/build/build-wasm.mjs quality-node-scalar quality-web-scalar",
+		"build:wasm:node:quality": "node scripts/build/build-wasm.mjs quality-node-scalar",
+		"build:wasm:web:quality": "node scripts/build/build-wasm.mjs quality-web-scalar",
+		"build:wasm:simd": "node scripts/build/build-wasm.mjs full-node-simd full-web-simd",
+		"build:wasm:node:simd": "node scripts/build/build-wasm.mjs full-node-simd",
+		"build:wasm:web:simd": "node scripts/build/build-wasm.mjs full-web-simd",
+		"build:wasm:simd:quality": "node scripts/build/build-wasm.mjs quality-node-simd quality-web-simd",
+		"build:wasm:node:quality:simd": "node scripts/build/build-wasm.mjs quality-node-simd",
+		"build:wasm:web:quality:simd": "node scripts/build/build-wasm.mjs quality-web-simd",
+		"typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+		"test": "vitest run",
+		"test:coverage": "vitest run --coverage",
+		"test:package": "node scripts/validate/package.mjs",
+		"validate:edge": "node scripts/validate/edge-runtime.mjs",
+		"test:edge": "npm run build:wasm && npm run build && npm run validate:edge",
+		"audit": "npm audit --audit-level=moderate",
+		"lint": "biome check . --diagnostic-level=error",
+		"rust:fmt": "cargo fmt --manifest-path crates/wtfgif-core/Cargo.toml -- --check",
+		"rust:clippy": "cargo clippy --manifest-path crates/wtfgif-core/Cargo.toml --all-targets -- -D warnings && cargo clippy --manifest-path crates/wtfgif-core/Cargo.toml --all-targets --features encode-only -- -D warnings",
+		"rust:test": "cargo test --manifest-path crates/wtfgif-core/Cargo.toml --release && cargo test --manifest-path crates/wtfgif-core/Cargo.toml --release --features encode-only",
+		"rust:check": "npm run rust:fmt && npm run rust:clippy && npm run rust:test",
+		"validate:wasm-core": "node scripts/validate/wasm-core.mjs",
+		"validate:equivalence": "node scripts/validate/equivalence.mjs",
+		"test:conformance:independent": "node scripts/validate/independent-decoders.mjs",
+		"test:conformance:browsers": "node scripts/validate/browser-conformance.mjs",
+		"fuzz:smoke": "node scripts/validate/fuzz-smoke.mjs",
+		"bench": "npm run bench:corpus",
+		"bench:corpus": "npm run build:wasm:node:quality && npm run build:wasm:node:quality:simd && npm run build && node scripts/bench/corpus.mjs",
+		"bench:corpus:stress": "BENCH_CORPUS_INCLUDE_STRESS=1 npm run bench:corpus",
+		"bench:charts": "node scripts/bench/render-corpus-speedup-chart.mjs && node scripts/bench/render-encoder-race-chart.mjs",
+		"bench:docs": "node scripts/bench/update-docs.mjs",
+		"bench:micro": "npm run bench:rgba",
+		"bench:cold": "npm run build && npm run build:native:prototype && node scripts/bench/cold.mjs",
+		"bench:decode": "npm run build && node scripts/bench/drop-in.mjs decode",
+		"bench:drop-in": "npm run build && node scripts/bench/drop-in.mjs",
+		"bench:encode": "npm run build && node scripts/bench/drop-in.mjs encode",
+		"bench:rgba": "npm run build && node scripts/bench/rgba.mjs",
+		"bench:rgba:stress": "BENCH_RGBA_INCLUDE_STRESS=1 npm run bench:rgba",
+		"bench:rgba:cold": "npm run build && node scripts/bench/cold-rgba.mjs",
+		"bench:rgba:cold:encode": "BENCH_WTFFIG_ENTRY=encode npm run bench:rgba:cold",
+		"bench:race": "npm run build:wasm:web:quality && npm run build:wasm:web:quality:simd && npm run build && node scripts/bench/encoder-race.mjs",
+		"bench:in-process": "npm run build && npm run build:native:prototype && node scripts/bench/in-process.mjs",
+		"bench:makeemoji-retime": "npm run build && node scripts/bench/makeemoji-retime.mjs",
+		"build:native:prototype": "node scripts/experimental/build-native-prototype.mjs",
+		"bench:native:prototype": "npm run build && npm run build:native:prototype && node scripts/experimental/bench-native-prototype.mjs",
+		"check": "npm run lint && npm run typecheck && npm run audit && npm run rust:check && npm run build:wasm && npm run test:coverage && npm run build && npm run validate:wasm-core && npm run test:conformance:independent && npm run validate:edge && npm run test:package",
+		"prepublishOnly": "npm run check",
+		"prepack": "npm run build:wasm && npm run build"
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/mpopv/wtfgif.git"
+	},
+	"keywords": [
+		"gif",
+		"wtfgif",
+		"omggif",
+		"encoder",
+		"decoder",
+		"performance",
+		"compression",
+		"performant",
+		"fast",
+		"optimized",
+		"drop-in",
+		"replacement",
+		"typescript",
+		"javascript",
+		"node",
+		"browser"
+	],
+	"author": "Matt Popovich",
+	"license": "MIT",
+	"bugs": {
+		"url": "https://github.com/mpopv/wtfgif/issues"
+	},
+	"homepage": "https://github.com/mpopv/wtfgif#readme",
+	"description": "Latency-optimized GIF encoding and omggif-compatible decoding for Node.js, browsers, Workers, and edge runtimes.",
+	"devDependencies": {
+		"@biomejs/biome": "^2.5.4",
+		"@edge-runtime/vm": "^5.0.0",
+		"@types/node": "^24.13.3",
+		"@types/omggif": "^1.0.5",
+		"@vitest/coverage-v8": "^4.1.11",
+		"esbuild": "0.27.2",
+		"fast-check": "^4.9.0",
+		"gif.js": "^0.2.0",
+		"gif.js.optimized": "^1.0.1",
+		"gifenc": "^1.0.3",
+		"image-q": "2.1.2",
+		"modern-gif": "^2.1.0",
+		"omggif": "^1.0.10",
+		"playwright": "^1.62.1",
+		"sharp": "^0.35.5",
+		"ssim.js": "^3.5.0",
+		"tsup": "^8.5.1",
+		"typescript": "^5.9.3",
+		"vite": "^6.4.3",
+		"vitest": "^4.1.11"
+	}
+}

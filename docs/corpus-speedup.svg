@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1060" height="798" viewBox="0 0 1060 798" role="img" aria-labelledby="title desc">
+<title id="title">wtfgif speedup by arbitrary-RGBA workload</title>
+<desc id="desc">Horizontal bars show wtfgif speedup over image-q plus omggif for 10 workloads. 10 of 10 bars exceed the marked 100 times threshold. Labels also report both median encode times, wtfgif's output size relative to the baseline, and RGB quality.</desc>
+<rect width="100%" height="100%" fill="#ffffff"/>
+<g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" fill="#172026">
+<text x="40" y="46" font-size="25" font-weight="700">10/10 tested RGBA workloads exceed 100×</text>
+<text x="40" y="74" font-size="14" fill="#51606a">Cold-cache first real encode after initialization · 64 MiB eviction · 40 fresh Node processes per implementation · higher is faster</text>
+<text x="40" y="98" font-size="13" fill="#51606a">129.81×–780.24× · 260.05× geometric mean · output 0.37×–22.42× baseline size</text>
+<line x1="328" y1="112" x2="328" y2="692" stroke="#b34b3f" stroke-width="2" stroke-dasharray="5 4"/>
+<text x="335" y="124" font-size="12" font-weight="700" fill="#9b3d33">100×</text>
+<text x="230" y="160" text-anchor="end" font-size="14" font-weight="600">MakeEmoji production sample</text>
+<text x="230" y="175" text-anchor="end" font-size="11" fill="#687780">128×128×8</text>
+<rect x="260" y="142" width="164.67" height="27" rx="3" fill="#0d8f6f"/>
+<text x="432.67" y="161" font-size="13" font-weight="700">242.17×</text>
+<text x="260" y="183" font-size="11" fill="#51606a">0.609 ms wtfgif vs 147.510 ms baseline · output 1.90× baseline size</text>
+<text x="260" y="196" font-size="11" fill="#687780">34.12 dB vs 31.84 dB baseline</text>
+<text x="230" y="216" text-anchor="end" font-size="14" font-weight="600">Photographic animation</text>
+<text x="230" y="231" text-anchor="end" font-size="11" fill="#687780">128×96×8</text>
+<rect x="260" y="198" width="129.35" height="27" rx="3" fill="#0d8f6f"/>
+<text x="397.35" y="217" font-size="13" font-weight="700">190.22×</text>
+<text x="260" y="239" font-size="11" fill="#51606a">0.387 ms wtfgif vs 73.686 ms baseline · output 1.52× baseline size</text>
+<text x="260" y="252" font-size="11" fill="#687780">38.21 dB vs 38.64 dB baseline</text>
+<text x="230" y="272" text-anchor="end" font-size="14" font-weight="600">Pixel art</text>
+<text x="230" y="287" text-anchor="end" font-size="11" fill="#687780">64×64×12</text>
+<rect x="260" y="254" width="141.04" height="27" rx="3" fill="#0d8f6f"/>
+<text x="409.04" y="273" font-size="13" font-weight="700">207.41×</text>
+<text x="260" y="295" font-size="11" fill="#51606a">0.133 ms wtfgif vs 27.516 ms baseline · output 0.68× baseline size</text>
+<text x="260" y="308" font-size="11" fill="#687780">lossless RGB vs lossless RGB baseline</text>
+<text x="230" y="328" text-anchor="end" font-size="14" font-weight="600">Smooth gradients</text>
+<text x="230" y="343" text-anchor="end" font-size="11" fill="#687780">128×128×8</text>
+<rect x="260" y="310" width="147.23" height="27" rx="3" fill="#0d8f6f"/>
+<text x="415.23" y="329" font-size="13" font-weight="700">216.52×</text>
+<text x="260" y="351" font-size="11" fill="#51606a">0.596 ms wtfgif vs 129.027 ms baseline · output 1.70× baseline size</text>
+<text x="260" y="364" font-size="11" fill="#687780">27.79 dB vs 10.79 dB baseline</text>
+<text x="230" y="384" text-anchor="end" font-size="14" font-weight="600">Deterministic noise</text>
+<text x="230" y="399" text-anchor="end" font-size="11" fill="#687780">128×128×8</text>
+<rect x="260" y="366" width="208.66" height="27" rx="3" fill="#0d8f6f"/>
+<text x="476.66" y="385" font-size="13" font-weight="700">306.85×</text>
+<text x="260" y="407" font-size="11" fill="#51606a">0.339 ms wtfgif vs 103.946 ms baseline · output 7.28× baseline size</text>
+<text x="260" y="420" font-size="11" fill="#687780">26.31 dB vs 10.34 dB baseline</text>
+<text x="230" y="440" text-anchor="end" font-size="14" font-weight="600">Transparent edges</text>
+<text x="230" y="455" text-anchor="end" font-size="11" fill="#687780">128×128×8</text>
+<rect x="260" y="422" width="88.27" height="27" rx="3" fill="#0d8f6f"/>
+<text x="356.27" y="441" font-size="13" font-weight="700">129.81×</text>
+<text x="260" y="463" font-size="11" fill="#51606a">0.363 ms wtfgif vs 47.083 ms baseline · output 2.10× baseline size</text>
+<text x="260" y="476" font-size="11" fill="#687780">36.70 dB vs 8.92 dB baseline</text>
+<text x="230" y="496" text-anchor="end" font-size="14" font-weight="600">Disjoint frame palettes</text>
+<text x="230" y="511" text-anchor="end" font-size="11" fill="#687780">128×128×8</text>
+<rect x="260" y="478" width="168.56" height="27" rx="3" fill="#0d8f6f"/>
+<text x="436.56" y="497" font-size="13" font-weight="700">247.88×</text>
+<text x="260" y="519" font-size="11" fill="#51606a">0.275 ms wtfgif vs 68.042 ms baseline · output 1.96× baseline size</text>
+<text x="260" y="532" font-size="11" fill="#687780">lossless RGB vs lossless RGB baseline</text>
+<text x="230" y="552" text-anchor="end" font-size="14" font-weight="600">Nearly static animation</text>
+<text x="230" y="567" text-anchor="end" font-size="11" fill="#687780">128×128×12</text>
+<rect x="260" y="534" width="296.63" height="27" rx="3" fill="#0d8f6f"/>
+<text x="564.63" y="553" font-size="13" font-weight="700">436.23×</text>
+<text x="260" y="575" font-size="11" fill="#51606a">0.193 ms wtfgif vs 84.119 ms baseline · output 0.37× baseline size</text>
+<text x="260" y="588" font-size="11" fill="#687780">lossless RGB vs lossless RGB baseline</text>
+<text x="230" y="608" text-anchor="end" font-size="14" font-weight="600">Tiny animation</text>
+<text x="230" y="623" text-anchor="end" font-size="11" fill="#687780">16×16×6</text>
+<rect x="260" y="590" width="530.56" height="27" rx="3" fill="#0d8f6f"/>
+<text x="798.56" y="609" font-size="13" font-weight="700">780.24×</text>
+<text x="260" y="631" font-size="11" fill="#51606a">0.073 ms wtfgif vs 57.185 ms baseline · output 1.16× baseline size</text>
+<text x="260" y="644" font-size="11" fill="#687780">28.43 dB vs 22.24 dB baseline</text>
+<text x="230" y="664" text-anchor="end" font-size="14" font-weight="600">One-megapixel animation</text>
+<text x="230" y="679" text-anchor="end" font-size="11" fill="#687780">512×512×4</text>
+<rect x="260" y="646" width="138.36" height="27" rx="3" fill="#0d8f6f"/>
+<text x="406.36" y="665" font-size="13" font-weight="700">203.47×</text>
+<text x="260" y="687" font-size="11" fill="#51606a">2.769 ms wtfgif vs 563.414 ms baseline · output 22.42× baseline size</text>
+<text x="260" y="700" font-size="11" fill="#687780">28.82 dB vs 7.94 dB baseline</text>
+<text x="40" y="749" font-size="12" fill="#687780">Latency includes palette creation, mapping, LZW, and GIF assembly · every output has exact shape, timing, and binary alpha.</text>
+<text x="40" y="771" font-size="12" fill="#687780">Apple M3 Pro · Node v22.23.2 · wtfgif 3.1.1 · no known palette, source cache, or reused result</text>
+</g>
+</svg>

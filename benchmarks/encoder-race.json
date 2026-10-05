@@ -1,0 +1,155 @@
+{
+	"boundary": "First user-input encode from arbitrary RGBA after package loading, source-independent wtfgif Wasm runtime preparation, and 64 MiB unrelated-memory cache eviction; zero fixture-derived warmups; includes palette creation, pixel mapping, compression, and output assembly",
+	"environment": {
+		"browser": "Google Chrome 154.0.8037.93",
+		"commit": "f2ff54c4f0a39f05cb59cb3fd96f4df504a8be1f",
+		"dirty": false,
+		"packageLockSha256": "87b4a8583a6e87921446b5603f2792b50dae4f84318115633a3cb35012f6b012",
+		"packageVersion": "3.1.1",
+		"cpu": "Apple M3 Pro",
+		"iterations": 15,
+		"node": "v22.23.2",
+		"os": "darwin 27.0.0"
+	},
+	"fixture": {
+		"alphaThreshold": 179,
+		"bytes": 524288,
+		"cacheEvictionBytes": 67108864,
+		"cacheQuiescence": "One requestAnimationFrame after eviction; no encoder operation or fixture access occurs in the callback.",
+		"frames": 8,
+		"height": 128,
+		"inputLayout": "wtfgif receives eight independently allocated RGBA typed arrays created before cache eviction and timing",
+		"name": "real MakeEmoji images",
+		"width": 128
+	},
+	"generatedAt": "2026-10-05T23:54:39.631Z",
+	"results": [
+		{
+			"alphaAccuracyPercent": 100,
+			"bytes": 74914,
+			"delays": [10, 10, 10, 10, 10, 10, 10, 10],
+			"id": "wtfgif",
+			"label": "wtfgif",
+			"medianMs": 0.6749999970197678,
+			"p25Ms": 0.6550000011920929,
+			"p75Ms": 0.6849999949336052,
+			"palette": "adaptive global palette over all frames",
+			"psnrDb": 34.118407921622115,
+			"samplesMs": [
+				0.7650000005960464, 0.6649999991059303, 0.6799999997019768,
+				0.6299999952316284, 0.6799999997019768, 0.6749999970197678,
+				0.7299999967217445, 0.6499999985098839, 0.6799999997019768,
+				0.6550000011920929, 0.6849999949336052, 0.6549999937415123,
+				0.6749999970197678, 0.7300000041723251, 0.6400000005960464
+			],
+			"version": "3.1.1",
+			"slowerThanWtfgif": 1
+		},
+		{
+			"alphaAccuracyPercent": 100,
+			"bytes": 39101,
+			"delays": [10, 10, 10, 10, 10, 10, 10, 10],
+			"id": "gifenc",
+			"label": "gifenc",
+			"medianMs": 134.65999999642372,
+			"p25Ms": 133.7550000026822,
+			"p75Ms": 135.61500000208616,
+			"palette": "rgb565 global palette over all opaque pixels",
+			"psnrDb": 34.538893234904144,
+			"samplesMs": [
+				130.4350000023842, 133.7550000026822, 134.7199999988079,
+				135.1199999973178, 134.77000000327826, 141.6199999973178,
+				137.45499999821186, 133.59999999403954, 131.79500000178814,
+				134.65999999642372, 135.61500000208616, 141.36500000208616,
+				133.4649999961257, 134.65999999642372, 134.23999999463558
+			],
+			"version": "1.0.3",
+			"slowerThanWtfgif": 199.49629717180596
+		},
+		{
+			"alphaAccuracyPercent": 100,
+			"bytes": 43114,
+			"delays": [10, 10, 10, 10, 10, 10, 10, 10],
+			"id": "modernGif",
+			"label": "modern-gif",
+			"medianMs": 121.42500000447035,
+			"p25Ms": 121.0899999961257,
+			"p75Ms": 123.14999999850988,
+			"palette": "adaptive global palette over all frames",
+			"psnrDb": 32.65043729851962,
+			"samplesMs": [
+				123.55499999970198, 120.32499999552965, 120.70499999821186,
+				121.42500000447035, 123.27499999850988, 121.0899999961257,
+				123.14999999850988, 121.25500000268221, 121.15000000596046,
+				118.85999999940395, 123.21000000089407, 122.60500000417233,
+				120.99499999731779, 121.88500000536442, 122.59000000357628
+			],
+			"version": "2.1.0",
+			"slowerThanWtfgif": 179.88888968974965
+		},
+		{
+			"alphaAccuracyPercent": 100,
+			"bytes": 39350,
+			"delays": [10, 10, 10, 10, 10, 10, 10, 10],
+			"id": "omggif",
+			"label": "image-q + omggif",
+			"medianMs": 117.01999999582767,
+			"p25Ms": 103.66500000655651,
+			"p75Ms": 119.5949999988079,
+			"palette": "image-q rgbquant global palette over all opaque pixels",
+			"psnrDb": 31.8369125394233,
+			"samplesMs": [
+				120.0350000038743, 103.66500000655651, 100.35499999672174,
+				105.82000000029802, 102.20499999821186, 117.70000000298023,
+				100.30000000447035, 117.01999999582767, 103.32500000298023,
+				118.32000000029802, 120.5300000011921, 117.94500000029802,
+				119.5949999988079, 115.29999999701977, 121.5599999949336
+			],
+			"version": "1.0.10",
+			"slowerThanWtfgif": 173.36296372220676
+		},
+		{
+			"alphaAccuracyPercent": 99.78103637695312,
+			"bytes": 80869,
+			"delays": [10, 10, 10, 10, 10, 10, 10, 10],
+			"id": "gif.js",
+			"label": "gif.js",
+			"medianMs": 90.07999999821186,
+			"p25Ms": 88.43999999761581,
+			"p75Ms": 91.2850000038743,
+			"palette": "NeuQuant local palette per frame, quality 1",
+			"psnrDb": 33.08307443628409,
+			"samplesMs": [
+				90.09000000357628, 87.54499999433756, 89, 85.50999999791384,
+				88.43999999761581, 91.2850000038743, 91.53999999910593,
+				90.07999999821186, 97.81000000238419, 106.07499999552965,
+				89.29499999433756, 90.4349999949336, 90.91499999910593,
+				87.58500000089407, 86.86499999463558
+			],
+			"version": "0.2.0",
+			"slowerThanWtfgif": 133.45185243841388
+		},
+		{
+			"alphaAccuracyPercent": 99.75662231445312,
+			"bytes": 80304,
+			"delays": [10, 10, 10, 10, 10, 10, 10, 10],
+			"id": "gif.js.optimized",
+			"label": "gif.js.optimized",
+			"medianMs": 100.52000000327826,
+			"p25Ms": 100.28999999910593,
+			"p75Ms": 101.23499999940395,
+			"palette": "NeuQuant local palette per frame, quality 1",
+			"psnrDb": 32.19672273910519,
+			"samplesMs": [
+				98.32500000298023, 96.46000000089407, 100.52000000327826,
+				101.23499999940395, 101.47500000149012, 100.46500000357628,
+				100.28999999910593, 100.92000000178814, 102.08500000089407,
+				106.60500000417233, 100.36999999731779, 100.6550000011921,
+				99.13499999791384, 100.91999999433756, 98.27499999850988
+			],
+			"version": "1.0.1",
+			"slowerThanWtfgif": 148.9185191808741
+		}
+	],
+	"schemaVersion": 2
+}

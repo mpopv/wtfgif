@@ -1,0 +1,36 @@
+[package]
+name = "wtfgif-core"
+version = "0.1.0"
+edition = "2021"
+repository = "https://github.com/mpopv/wtfgif"
+license = "MIT"
+description = "Rust/Wasm core for wtfgif"
+
+[lib]
+crate-type = ["cdylib", "rlib", "staticlib"]
+
+[features]
+default = []
+encode-only = []
+quality-only = ["encode-only"]
+fuzzing = []
+
+[dependencies]
+wasm-bindgen = "0.2"
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+talc = { version = "=5.0.4", default-features = false }
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = [
+	"-O3",
+	"--inline-max-combined-binary-size=1500",
+	"--converge",
+	"--debuginfo",
+]
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
