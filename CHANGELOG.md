@@ -21,6 +21,9 @@ All notable changes to wtfgif are documented here.
   fixtures 1.20x and 1.06x, and MakeEmoji about 7% faster. The first encode
   after initialization stays within a few percent of 3.1.0, and the nearly
   static fixture's is 1.10x faster.
+- The new receipts measure **129.81x-780.24x** faster than image-q + omggif
+  (**260.05x** geometric mean), and the five browser alternatives
+  **133.45x-199.50x** slower in Chrome.
 
 ## 3.1.0 - 2026-10-04
 

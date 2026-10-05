@@ -128,15 +128,15 @@ Beyond omggif, `GifReader` adds `preparePlayback()` for composited frames and
 ## Performance and tradeoffs
 
 <!-- benchmark:readme-corpus:start -->
-On 10 arbitrary-RGBA workloads, wtfgif's first encode is **138×–739× faster**
-than image-q + omggif, with a **252× geometric mean**. The real 128×128×8
-MakeEmoji animation takes **0.64 ms** instead of 153 ms. wtfgif's files are
+On 10 arbitrary-RGBA workloads, wtfgif's first encode is **130×–780× faster**
+than image-q + omggif, with a **260× geometric mean**. The real 128×128×8
+MakeEmoji animation takes **0.61 ms** instead of 148 ms. wtfgif's files are
 0.37×–22.42× the size of image-q + omggif's, with a 1.99× geometric mean.
 
 ![wtfgif speedup over image-q + omggif on ten RGBA workloads](docs/corpus-speedup.svg)
 
 Measured on an Apple M3 Pro with Node.js 22.23.2: 40 fresh processes per
-workload and library, wtfgif 3.1.0 at `89863c4`. Raw samples are in
+workload and library, wtfgif 3.1.1 at `f1b1430`. Raw samples are in
 [`benchmarks/corpus.json`](benchmarks/corpus.json).
 <!-- benchmark:readme-corpus:end -->
 
@@ -146,8 +146,8 @@ workload and library, wtfgif 3.1.0 at `89863c4`. Raw samples are in
 ![Encode time in Chrome for six GIF encoders](docs/encoder-race.svg)
 
 Encoding the same 8-frame 128×128 MakeEmoji animation through each library's
-public API in Chrome 154.0.8037.93, wtfgif took **0.68 ms**. The other five took
-90–135 ms (**133×–201× slower**). wtfgif's GIF was
+public API in Chrome 154.0.8037.93, wtfgif took **0.67 ms**. The other five took
+90–135 ms (**133×–199× slower**). wtfgif's GIF was
 73 KiB; theirs were 38 KiB–79 KiB. Medians of 15 fresh browser processes
 per encoder; raw data in [`benchmarks/encoder-race.json`](benchmarks/encoder-race.json).
 <!-- benchmark:readme-browser:end -->
