@@ -1761,3 +1761,128 @@ fn reciprocal_quality_averages_match_integer_division() {
         verify_weighted(sum, count);
     }
 }
+
+#[test]
+fn temporal_quality_histogram_matches_the_per_pixel_scan() {
+    let mut state = 0x1234_5678u32;
+    let mut next = || {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        state
+    };
+    for trial in 0..40 {
+        let width = 8 + (next() as usize % 60);
+        let height = 1 + (next() as usize % 40);
+        let frame_count = 2 + (next() as usize % 8);
+        let frame_len = width * height;
+        let mut rgba = Vec::with_capacity(frame_len * frame_count * 4);
+        for _ in 0..frame_len {
+            let alpha = if next() % 9 == 0 { 0 } else { 255 };
+            rgba.extend_from_slice(&[next() as u8, next() as u8, next() as u8, alpha]);
+        }
+        for frame in 1..frame_count {
+            let previous = (frame - 1) * frame_len * 4;
+            rgba.extend_from_within(previous..previous + frame_len * 4);
+            // Change a few spans, sometimes none, so groups both hold and change.
+            for _ in 0..(next() % 4) {
+                let start = next() as usize % frame_len;
+                let end = (start + 1 + next() as usize % 40).min(frame_len);
+                for pixel in start..end {
+                    let offset = (frame * frame_len + pixel) * 4;
+                    rgba[offset..offset + 4].copy_from_slice(&[
+                        next() as u8,
+                        next() as u8,
+                        next() as u8,
+                        if trial % 3 == 0 { next() as u8 } else { 255 },
+                    ]);
+                }
+            }
+        }
+        let threshold = if trial % 4 == 0 { 0 } else { 128 };
+        let expected = if threshold == 0 {
+            index_rgba_frames_quality_low_res_quantized_opaque(&rgba, take_quality_palette(256))
+        } else {
+            index_rgba_frames_quality_low_res_quantized_mixed(
+                &rgba,
+                threshold,
+                take_quality_palette(256),
+            )
+        };
+        let actual = index_rgba_frames_quality_low_res_quantized_temporal(
+            &rgba,
+            frame_len,
+            threshold,
+            take_quality_palette(256),
+        );
+        assert_eq!(actual.palette, expected.palette, "trial {trial}");
+        assert_eq!(
+            actual.histogram_to_palette, expected.histogram_to_palette,
+            "trial {trial}"
+        );
+        assert_eq!(
+            actual.transparent_index, expected.transparent_index,
+            "trial {trial}"
+        );
+    }
+}
+
+#[test]
+fn quality_frame_reuse_matches_a_full_mapping() {
+    let (width, height) = (48usize, 20usize);
+    let frame_len = width * height;
+    let mut state = 0x0bad_5eedu32;
+    let mut next = || {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        state
+    };
+    let mut first = Vec::with_capacity(frame_len * 4);
+    for _ in 0..frame_len {
+        let alpha = if next() % 11 == 0 { 0 } else { 255 };
+        first.extend_from_slice(&[next() as u8, next() as u8, next() as u8, alpha]);
+    }
+    let mut second = first.clone();
+    for pixel in (0..frame_len).step_by(37) {
+        second[pixel * 4..pixel * 4 + 4].copy_from_slice(&[next() as u8, 9, 200, 255]);
+    }
+    let mut rgba = first.clone();
+    rgba.extend_from_slice(&second);
+    let plan = match index_rgba_frames_quality_result(&rgba, TRANSPARENT_ALPHA_THRESHOLD) {
+        QualityIndexResult::Quantized(plan) => plan,
+        QualityIndexResult::Exact(_) => panic!("fixture should need quantization"),
+    };
+    assert_eq!(plan.mapping_bits, 4);
+    let transparent = plan
+        .transparent_index
+        .expect("fixture has transparent pixels");
+    let table = &plan.histogram_to_palette;
+    let mut previous = vec![0u8; frame_len];
+    map_quality_frame::<4, true>(
+        &first,
+        None,
+        TRANSPARENT_ALPHA_THRESHOLD,
+        transparent,
+        table,
+        &mut previous,
+    );
+    let mut reused = vec![0u8; frame_len];
+    map_quality_frame::<4, true>(
+        &second,
+        Some((&first, &previous)),
+        TRANSPARENT_ALPHA_THRESHOLD,
+        transparent,
+        table,
+        &mut reused,
+    );
+    let mut mapped = vec![0u8; frame_len];
+    map_quality_pixels_grouped::<4, true>(
+        &second,
+        TRANSPARENT_ALPHA_THRESHOLD,
+        transparent,
+        table,
+        &mut mapped,
+    );
+    assert_eq!(reused, mapped);
+}

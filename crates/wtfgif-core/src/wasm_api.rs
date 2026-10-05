@@ -259,6 +259,17 @@ pub fn prepare_quality_encoder_code() {
     let mut lzw_output = Vec::new();
     map_quality_pixels_grouped::<4, false>(empty, 128, 0, empty, &mut []);
     map_quality_pixels_grouped::<4, true>(empty, 128, 0, empty, &mut []);
+    map_quality_frame::<4, false>(empty, None, 128, 0, empty, &mut []);
+    map_quality_frame::<4, true>(empty, None, 128, 0, empty, &mut []);
+    let temporal = temporal_histogram_pays(empty, 1, 128);
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    let sorted_nearest = {
+        let mut search = crate::sorted_palette::SortedPaletteSearch::new();
+        search.rebuild(std::hint::black_box(&[0x0010_2030]));
+        search.nearest(1, 2, 3) ^ search.nearest_seeded(4, 5, 6, 0, 0x0010_2030)
+    };
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+    let sorted_nearest = 0u8;
     let (palette, mapping) = build_quality_wu_palette(
         false,
         std::hint::black_box(Vec::new()),
@@ -312,7 +323,9 @@ pub fn prepare_quality_encoder_code() {
             ^ usize::from(exact_runs.is_ok())
             ^ usize::from(quantized.is_ok())
             ^ public_quality
-            ^ compact_prepared,
+            ^ compact_prepared
+            ^ usize::from(temporal)
+            ^ usize::from(sorted_nearest),
     );
 }
 
