@@ -944,21 +944,23 @@ pub fn encode_rgba_quality_gif_constant_delay_scratch_from_input(
     length
 }
 
-/// Reserves an aligned per-frame delay array immediately after the RGBA input
-/// in the reusable input scratch buffer and returns its pointer.
+reusable_cells! {
+    static REUSABLE_QUALITY_DELAYS: Vec<u16> = Vec::new();
+}
+
+/// Reserves space for `delay_count` per-frame delays and returns its pointer.
+/// The delays live in their own buffer: growing the RGBA input buffer here
+/// would move it out from under the input pointer JavaScript already holds,
+/// and the next same-sized encode would write its pixels to freed memory.
 #[wasm_bindgen]
 pub fn quality_delay_scratch_reserve(input_length: usize, delay_count: usize) -> usize {
-    let input_units = input_length.div_ceil(std::mem::size_of::<u32>());
-    let delay_units = delay_count.div_ceil(2);
-    REUSABLE_LZW_SCRATCH.with(|scratch| {
-        let mut scratch = scratch.borrow_mut();
-        let required_units = input_units.saturating_add(delay_units);
-        if scratch.input.len() < required_units {
-            let additional = required_units - scratch.input.len();
-            scratch.input.reserve(additional);
-            unsafe { scratch.input.set_len(required_units) };
+    let _ = input_length;
+    REUSABLE_QUALITY_DELAYS.with(|delays| {
+        let mut delays = delays.borrow_mut();
+        if delays.len() < delay_count {
+            delays.resize(delay_count, 0);
         }
-        unsafe { scratch.input.as_mut_ptr().add(input_units).cast::<u16>() as usize }
+        delays.as_mut_ptr() as usize
     })
 }
 
@@ -983,12 +985,9 @@ pub fn encode_rgba_quality_gif_scratch_from_input(
     let Some(input_ptr) = input_ptr else {
         return 0;
     };
-    let delays_ptr = REUSABLE_LZW_SCRATCH.with(|scratch| {
-        let scratch = scratch.borrow();
-        let input_units = length.div_ceil(std::mem::size_of::<u32>());
-        let delay_units = delay_count.div_ceil(2);
-        (input_units.saturating_add(delay_units) <= scratch.input.len())
-            .then(|| unsafe { scratch.input.as_ptr().add(input_units).cast::<u16>() })
+    let delays_ptr = REUSABLE_QUALITY_DELAYS.with(|delays| {
+        let delays = delays.borrow();
+        (delay_count <= delays.len()).then(|| delays.as_ptr())
     });
     let Some(delays_ptr) = delays_ptr else {
         return 0;
