@@ -396,7 +396,7 @@ mod wasm_api;
 mod fuzzing;
 
 #[cfg(feature = "fuzzing")]
-pub use fuzzing::{fuzz_decode, fuzz_encode};
+pub use fuzzing::{fuzz_decode, fuzz_encode, fuzz_roundtrip};
 
 pub use wasm_api::*;
 

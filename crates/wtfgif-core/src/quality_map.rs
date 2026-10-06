@@ -220,7 +220,8 @@ pub(crate) fn map_quality_frame<const BITS: usize, const HAS_TRANSPARENT: bool>(
 }
 
 /// Map RGBA pixels to palette indices eight at a time through a quality
-/// plan's coarse-cell table. Its final entry holds the transparent index.
+/// plan's coarse-cell table. When the plan has a transparent index, the
+/// table's final entry holds it; otherwise the table has one entry per cell.
 pub(crate) fn map_quality_pixels_grouped<const BITS: usize, const HAS_TRANSPARENT: bool>(
     rgba_stream: &[u8],
     alpha_threshold: u8,
@@ -229,7 +230,10 @@ pub(crate) fn map_quality_pixels_grouped<const BITS: usize, const HAS_TRANSPAREN
     indexed: &mut [u8],
 ) {
     debug_assert_eq!(rgba_stream.len(), indexed.len() * 4);
-    debug_assert!(indexed.is_empty() || histogram_to_palette.len() > 1 << (BITS * 3));
+    debug_assert!(
+        indexed.is_empty()
+            || histogram_to_palette.len() >= (1 << (BITS * 3)) + usize::from(HAS_TRANSPARENT)
+    );
     let rgba_pointer = rgba_stream.as_ptr();
     let table = histogram_to_palette.as_ptr();
     let indexed_pointer = indexed.as_mut_ptr();

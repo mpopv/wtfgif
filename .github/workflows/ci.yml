@@ -64,6 +64,7 @@ jobs:
 
   fuzz-smoke:
     runs-on: ubuntu-latest
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -71,7 +72,9 @@ jobs:
           node-version: 22
       - run: rustup toolchain install nightly --profile minimal --no-self-update
       - run: cargo +nightly install cargo-fuzz --version 0.13.2 --locked
-      - name: Fuzz decode and encode
+      # Pull requests fuzz each target for 30 seconds; the weekly schedule
+      # runs a 15-minute campaign per target.
+      - name: Fuzz decode, encode, and round trip
         run: npm run fuzz:smoke
         env:
-          FUZZ_RUNS: ${{ github.event_name == 'schedule' && '10000' || '500' }}
+          FUZZ_SECONDS: ${{ github.event_name == 'schedule' && '900' || '30' }}
