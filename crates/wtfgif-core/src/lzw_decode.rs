@@ -267,10 +267,16 @@ pub(crate) fn decode_literal_9_bit_stream(image_data: &[u8], output: &mut [u8]) 
     let mut offset = 0usize;
     let mut output_index = 0usize;
     let mut saw_clear = false;
+    let mut since_clear = 0u16;
     let output_length = output.len();
     let output_pointer = output.as_mut_ptr();
 
     loop {
+        // A decoder reads 10-bit codes once a clear interval holds 255 codes,
+        // so this fixed-width parse is only valid while intervals are shorter.
+        if since_clear >= CLEAR - 1 {
+            return false;
+        }
         while bit_count < 9 && offset < image_data.len() {
             if bit_count <= 32 && image_data.len().saturating_sub(offset) >= 4 {
                 let word = unsafe {
@@ -294,6 +300,7 @@ pub(crate) fn decode_literal_9_bit_stream(image_data: &[u8], output: &mut [u8]) 
 
         if code == CLEAR {
             saw_clear = true;
+            since_clear = 0;
             continue;
         }
         if code == EOI {
@@ -304,13 +311,15 @@ pub(crate) fn decode_literal_9_bit_stream(image_data: &[u8], output: &mut [u8]) 
         }
         unsafe { output_pointer.add(output_index).write(code as u8) };
         output_index += 1;
+        since_clear += 1;
     }
 }
 
 /// Decode a literal-only GIF stream whose code width is one bit wider than
 /// the minimum code size.  wtfgif uses these streams for small indexed
-/// palettes; validating the exact packed length and every clear/EOI marker
-/// keeps this a safe probe for ordinary dictionary-compressed GIFs too.
+/// palettes; validating the exact packed length, every clear/EOI marker, and
+/// that no clear interval reaches the length at which a decoder widens its
+/// codes keeps this a safe probe for ordinary dictionary-compressed GIFs too.
 #[inline(always)]
 pub(crate) fn decode_fixed_literal_stream<const CODE_BITS: usize>(
     image_data: &[u8],
@@ -347,9 +356,15 @@ pub(crate) fn decode_fixed_literal_stream<const CODE_BITS: usize>(
     let mut offset = 0usize;
     let mut output_index = 0usize;
     let mut saw_clear = false;
+    let mut since_clear = 0usize;
     let output_pointer = output.as_mut_ptr();
 
     loop {
+        // After `clear - 1` codes without a clear, a decoder reads codes one
+        // bit wider, which this fixed-width parse cannot follow.
+        if since_clear >= clear - 1 {
+            return false;
+        }
         while bit_count < CODE_BITS && offset < image_data.len() {
             if bit_count <= 32 && image_data.len().saturating_sub(offset) >= 4 {
                 let word = unsafe {
@@ -373,6 +388,7 @@ pub(crate) fn decode_fixed_literal_stream<const CODE_BITS: usize>(
 
         if code == clear {
             saw_clear = true;
+            since_clear = 0;
             continue;
         }
         if code == eoi {
@@ -383,6 +399,7 @@ pub(crate) fn decode_fixed_literal_stream<const CODE_BITS: usize>(
         }
         unsafe { output_pointer.add(output_index).write(code as u8) };
         output_index += 1;
+        since_clear += 1;
     }
 }
 
@@ -693,12 +710,18 @@ pub(crate) fn decode_literal_9_bit_pixels(
     let mut offset = 0usize;
     let mut output_index = 0usize;
     let mut saw_clear = false;
+    let mut since_clear = 0u16;
     let output_length = output.len();
     let output_pointer = output.as_mut_ptr();
     let palette_length = palette.len();
     let palette_pointer = palette.as_ptr();
 
     loop {
+        // A decoder reads 10-bit codes once a clear interval holds 255 codes,
+        // so this fixed-width parse is only valid while intervals are shorter.
+        if since_clear >= CLEAR - 1 {
+            return false;
+        }
         while bit_count < 9 && offset < image_data.len() {
             if bit_count <= 32 && image_data.len().saturating_sub(offset) >= 4 {
                 let word = unsafe {
@@ -722,6 +745,7 @@ pub(crate) fn decode_literal_9_bit_pixels(
 
         if code == CLEAR {
             saw_clear = true;
+            since_clear = 0;
             continue;
         }
         if code == EOI {
@@ -740,6 +764,7 @@ pub(crate) fn decode_literal_9_bit_pixels(
                 .write(*palette_pointer.add(palette_index));
         }
         output_index += 1;
+        since_clear += 1;
     }
 }
 

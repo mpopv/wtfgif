@@ -1886,3 +1886,63 @@ fn quality_frame_reuse_matches_a_full_mapping() {
     );
     assert_eq!(reused, mapped);
 }
+
+fn pack_codes(codes: &[(u32, u32)]) -> Vec<u8> {
+    let (mut bytes, mut bits, mut count) = (Vec::new(), 0u64, 0u32);
+    for &(code, width) in codes {
+        bits |= u64::from(code) << count;
+        count += width;
+        while count >= 8 {
+            bytes.push(bits as u8);
+            bits >>= 8;
+            count -= 8;
+        }
+    }
+    if count > 0 {
+        bytes.push(bits as u8);
+    }
+    bytes
+}
+
+#[test]
+fn literal_probes_decline_streams_whose_codes_widen() {
+    let pixels = [0u8, 1, 0, 0, 2, 0];
+    // Greedy LZW at minimum code size 2: after the clear and three codes the
+    // decoder reads 4-bit codes. The stream has the same length as a literal
+    // one, and a fixed 3-bit parse of it sees only literals, so the probe
+    // once decoded it as [0, 1, 0, 0, 0, 0].
+    let widening = pack_codes(&[
+        (4, 3),
+        (0, 3),
+        (1, 3),
+        (0, 3),
+        (0, 4),
+        (2, 4),
+        (0, 4),
+        (5, 4),
+    ]);
+    assert_eq!(widening, [68, 0, 2, 5]);
+    let mut probe = [0u8; 6];
+    assert!(!decode_fixed_literal_stream::<3>(&widening, &mut probe));
+    let mut scratch = LzwStackScratch::default();
+    let mut decoded = [0u8; 6];
+    lzw_decode_to_indices_copy_with_scratch(2, &widening, &mut decoded, &mut scratch).unwrap();
+    assert_eq!(decoded, pixels);
+
+    // A literal stream clears every two codes and keeps the fast path.
+    let literal = pack_codes(&[
+        (4, 3),
+        (0, 3),
+        (1, 3),
+        (4, 3),
+        (0, 3),
+        (0, 3),
+        (4, 3),
+        (2, 3),
+        (0, 3),
+        (5, 3),
+    ]);
+    let mut probe = [0u8; 6];
+    assert!(decode_fixed_literal_stream::<3>(&literal, &mut probe));
+    assert_eq!(probe, pixels);
+}
