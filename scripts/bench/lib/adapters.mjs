@@ -27,15 +27,16 @@ export const implementations = {
 	wtfgif: {
 		label: "wtfgif fastest",
 		configuration:
-			"global quality quantization, run-aware LZW, and changed-rectangle frames through the wtfgif/encode entry point",
+			'wtfgif/encode with mode: "fastest": global quality quantization, run-aware LZW, and changed-rectangle frames',
 		frameArrays: true,
 		initialize: initializeWtfgif,
-		encode: (value, alphaThreshold) => encodeWtfgif(value, alphaThreshold),
+		encode: (value, alphaThreshold) =>
+			encodeWtfgif(value, alphaThreshold, { mode: "fastest" }),
 	},
 	"wtfgif-smallest": {
 		label: "wtfgif smallest",
 		configuration:
-			'wtfgif/encode with mode: "smallest": full-dictionary LZW where it is shorter than the run-aware stream',
+			'wtfgif/encode with mode: "smallest", the default: full-dictionary LZW where it is shorter than the run-aware stream',
 		frameArrays: true,
 		initialize: initializeWtfgif,
 		encode: (value, alphaThreshold) =>
@@ -44,11 +45,14 @@ export const implementations = {
 	"wtfgif-independent": {
 		label: "wtfgif (independent frames)",
 		configuration:
-			"wtfgif/encode with independentFrames: true, writing every frame as a full-canvas image",
+			'wtfgif/encode with mode: "fastest" and independentFrames: true, writing every frame as a full-canvas image',
 		frameArrays: true,
 		initialize: initializeWtfgif,
 		encode: (value, alphaThreshold) =>
-			encodeWtfgif(value, alphaThreshold, { independentFrames: true }),
+			encodeWtfgif(value, alphaThreshold, {
+				independentFrames: true,
+				mode: "fastest",
+			}),
 	},
 	"image-q-rgbquant+omggif": {
 		label: "image-q + omggif",

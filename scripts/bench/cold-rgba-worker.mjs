@@ -191,6 +191,7 @@ if (implementation === "baseline") {
 		frames: rgba,
 		height,
 		loop: 0,
+		mode: "fastest",
 		width,
 	});
 } else {

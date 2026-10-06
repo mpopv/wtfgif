@@ -218,6 +218,7 @@ function encodeWtfgif(fixture) {
 		frames: fixture.rgba,
 		height: fixture.height,
 		loop: 0,
+		mode: "fastest",
 		width: fixture.width,
 	});
 }
