@@ -117,7 +117,10 @@ export function receiptEnvironment(runtimes) {
 		cpu: cpus()[0]?.model ?? "unknown",
 		packageVersion: packageJson.version,
 		commit: git("rev-parse", "HEAD"),
-		dirty: git("status", "--porcelain") !== "",
+		// Receipts are outputs; one benchmark writing its receipt must not mark
+		// the next one, run from the same commit, as dirty.
+		dirty:
+			git("status", "--porcelain", "--", ".", ":(exclude)benchmarks") !== "",
 		packageLockSha256: sha256(readFileSync(join(root, "package-lock.json"))),
 		runtimes,
 	};
