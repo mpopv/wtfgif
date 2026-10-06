@@ -206,6 +206,7 @@ export interface WasmCoreModule {
 		loopCount: number,
 		alphaThreshold: number,
 		independentFrames: boolean,
+		smallest: boolean,
 	) => number;
 	encode_rgba_quality_gif_constant_delay_scratch_from_input: (
 		length: number,
@@ -216,6 +217,7 @@ export interface WasmCoreModule {
 		loopCount: number,
 		alphaThreshold: number,
 		independentFrames: boolean,
+		smallest: boolean,
 	) => number;
 	encode_rgba_quality_low_res_constant_delay_scratch_from_input: (
 		length: number,
@@ -226,6 +228,7 @@ export interface WasmCoreModule {
 		loopCount: number,
 		alphaThreshold: number,
 		independentFrames: boolean,
+		smallest: boolean,
 	) => number;
 	gif_output_scratch_ptr: () => number;
 }
@@ -273,6 +276,7 @@ export interface WasmQualityCoreModule {
 		loopCount: number,
 		alphaThreshold: number,
 		independentFrames: boolean,
+		smallest: boolean,
 	) => number;
 	quality_delay_scratch_reserve: (
 		inputLength: number,
@@ -287,6 +291,7 @@ export interface WasmQualityCoreModule {
 		loopCount: number,
 		alphaThreshold: number,
 		independentFrames: boolean,
+		smallest: boolean,
 	) => number;
 	encode_rgba_quality_gif_constant_delay_scratch_from_input: (
 		length: number,
@@ -297,6 +302,7 @@ export interface WasmQualityCoreModule {
 		loopCount: number,
 		alphaThreshold: number,
 		independentFrames: boolean,
+		smallest: boolean,
 	) => number;
 	gif_output_scratch_ptr: () => number;
 }

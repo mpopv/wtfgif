@@ -311,7 +311,7 @@ pub unsafe extern "C" fn wtfgif_encode_rgba_quality(
         DelaySource::PerFrame(delays),
         loop_count,
         alpha_threshold,
-        false,
+        CompactOptions::default(),
         Vec::new(),
     ) else {
         return 0;

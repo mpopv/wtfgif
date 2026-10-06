@@ -30,6 +30,12 @@ const PREPARE_FRAME_ARRAY_OPTIONS: EncodeRgbaGifFramesOptions = {
 export type RgbaGifFrame = Uint8Array | Uint8ClampedArray;
 export type RgbaGifFrames = RgbaGifFrame | RgbaGifFrame[];
 export type GifFrameDelay = number | readonly number[] | Uint16Array;
+/**
+ * `"fastest"` codes each image with the run-aware stream. `"smallest"` also
+ * codes it with full-dictionary LZW and keeps the shorter result, which takes
+ * longer. Both decode to the same pixels.
+ */
+export type GifEncodeMode = "fastest" | "smallest";
 
 /** The single quality-first contract exposed by `wtfgif/encode`. */
 export interface EncodeRgbaGifFramesOptions {
@@ -48,6 +54,8 @@ export interface EncodeRgbaGifFramesOptions {
 	 * `CompiledGif.reverseFrames()` or `boomerangFrames()`.
 	 */
 	independentFrames?: boolean;
+	/** Optimize encode time (`"fastest"`, the default) or output size. */
+	mode?: GifEncodeMode;
 }
 
 export let encodeRgbaGifFrames: (
@@ -80,6 +88,7 @@ function prepareQualityEncoderRuntime(
 		0,
 		DEFAULT_ALPHA_THRESHOLD,
 		false,
+		false,
 	);
 
 	const tierPixels = new Uint32Array(
@@ -108,6 +117,7 @@ function prepareQualityEncoderRuntime(
 		0,
 		DEFAULT_ALPHA_THRESHOLD,
 		false,
+		false,
 	);
 	// Tier the ordinary leading-opaque mixed-alpha scanner separately from the
 	// clear-canvas scanner below. Both feeds are source-independent and the
@@ -132,6 +142,7 @@ function prepareQualityEncoderRuntime(
 		0,
 		DEFAULT_ALPHA_THRESHOLD,
 		false,
+		false,
 	);
 	// Tier the normal-resolution Wu planner used once a 4-bit histogram has
 	// more than 2,048 occupied cells. Unequal deterministic cell counts avoid
@@ -151,6 +162,7 @@ function prepareQualityEncoderRuntime(
 		0,
 		0,
 		DEFAULT_ALPHA_THRESHOLD,
+		false,
 		false,
 	);
 	for (let pixel = 0; pixel < tierPixels.length; pixel += 1) {
@@ -177,6 +189,7 @@ function prepareQualityEncoderRuntime(
 			0,
 			DEFAULT_ALPHA_THRESHOLD,
 			false,
+			false,
 		);
 	}
 
@@ -196,6 +209,7 @@ function prepareQualityEncoderRuntime(
 			0,
 			0,
 			DEFAULT_ALPHA_THRESHOLD,
+			false,
 			false,
 		);
 	}
@@ -223,6 +237,7 @@ function prepareQualityEncoderRuntime(
 			0,
 			DEFAULT_ALPHA_THRESHOLD,
 			false,
+			false,
 		);
 	}
 	// A transparent input with all 256 coarse cells exercises the exact
@@ -245,6 +260,7 @@ function prepareQualityEncoderRuntime(
 			0,
 			0,
 			DEFAULT_ALPHA_THRESHOLD,
+			false,
 			false,
 		);
 	}
@@ -270,6 +286,7 @@ function prepareQualityEncoderRuntime(
 			0,
 			DEFAULT_ALPHA_THRESHOLD,
 			false,
+			false,
 		);
 	}
 	// A larger three-color animation finishes tiering the small exact-palette
@@ -289,6 +306,7 @@ function prepareQualityEncoderRuntime(
 		0,
 		0,
 		DEFAULT_ALPHA_THRESHOLD,
+		false,
 		false,
 	);
 }
@@ -314,6 +332,7 @@ export function prepareQualityWasmEncoderModule(
 			0,
 			0,
 			DEFAULT_ALPHA_THRESHOLD,
+			false,
 			false,
 		);
 		module.gif_output_scratch_ptr();
@@ -378,6 +397,7 @@ function encodeRgbaGifFramesPrepared(
 		const loop = requestedLoop | 0;
 		const alphaThreshold = requestedAlphaThreshold | 0;
 		const independentFrames = options.independentFrames === true;
+		const smallest = isSmallestMode(options.mode);
 		// `| 0` keeps the checks cheap; comparing with the original values
 		// rejects fractions, NaN, non-numbers, and values that wrapped.
 		if (
@@ -418,6 +438,7 @@ function encodeRgbaGifFramesPrepared(
 						loop,
 						alphaThreshold,
 						independentFrames,
+						smallest,
 					)
 				: module.encode_rgba_quality_gif_constant_delay_scratch_from_input(
 						inputLength,
@@ -428,6 +449,7 @@ function encodeRgbaGifFramesPrepared(
 						loop,
 						alphaThreshold,
 						independentFrames,
+						smallest,
 					);
 		if (outputLength === 0) throw new Error("Wasm quality encoding failed.");
 		const outputView = new Uint8Array(
@@ -505,6 +527,7 @@ function encodeRgbaGifFramesFallback(
 		"Alpha threshold invalid.",
 	);
 	const independentFrames = options.independentFrames === true;
+	const smallest = isSmallestMode(options.mode);
 
 	const memory = scratchMemory;
 	if (!memory) {
@@ -538,6 +561,7 @@ function encodeRgbaGifFramesFallback(
 						loop,
 						alphaThreshold,
 						independentFrames,
+						smallest,
 					)
 				: module.encode_rgba_quality_gif_constant_delay_scratch_from_input(
 						inputLength,
@@ -548,6 +572,7 @@ function encodeRgbaGifFramesFallback(
 						loop,
 						alphaThreshold,
 						independentFrames,
+						smallest,
 					)
 			: module.encode_rgba_quality_gif_scratch_from_input(
 					inputLength,
@@ -558,6 +583,7 @@ function encodeRgbaGifFramesFallback(
 					loop,
 					alphaThreshold,
 					independentFrames,
+					smallest,
 				);
 	if (outputLength === 0) throw new Error("Wasm quality encoding failed.");
 	const outputView = new Uint8Array(
@@ -566,6 +592,12 @@ function encodeRgbaGifFramesFallback(
 		outputLength,
 	);
 	return new Uint8Array(outputView);
+}
+
+function isSmallestMode(mode: GifEncodeMode | undefined): boolean {
+	if (mode === "smallest") return true;
+	if (mode === undefined || mode === "fastest") return false;
+	throw new Error('Mode must be "fastest" or "smallest".');
 }
 
 function getFrameCount(

@@ -260,7 +260,10 @@ pub(crate) fn encode_rgba_gif_advanced_inner_with_output(
             delays,
             loop_count,
             transparent_index,
-            true,
+            CompactOptions {
+                independent_frames: true,
+                smallest: false,
+            },
         );
         recycle_quantized_indexed(indexed);
         return encoded;
@@ -288,7 +291,7 @@ pub(crate) fn encode_rgba_quality_gif_inner_with_output(
     delays: DelaySource<'_>,
     loop_count: i32,
     alpha_threshold: u8,
-    independent_frames: bool,
+    options: CompactOptions,
     output: Vec<u8>,
 ) -> Result<Vec<u8>, String> {
     #[cfg(not(target_arch = "wasm32"))]
@@ -310,7 +313,7 @@ pub(crate) fn encode_rgba_quality_gif_inner_with_output(
                 frame_count,
                 delays,
                 loop_count,
-                independent_frames,
+                options,
             )
         }
         QualityIndexResult::Quantized(plan) => encode_quality_plan_compact(
@@ -323,7 +326,7 @@ pub(crate) fn encode_rgba_quality_gif_inner_with_output(
             frame_count,
             delays,
             loop_count,
-            independent_frames,
+            options,
         ),
     }
 }
@@ -341,7 +344,7 @@ pub(crate) fn encode_quality_plan_compact(
     frame_count: usize,
     delays: DelaySource<'_>,
     loop_count: i32,
-    independent_frames: bool,
+    options: CompactOptions,
 ) -> Result<Vec<u8>, String> {
     let QualityIndexPlan {
         palette,
@@ -391,7 +394,7 @@ pub(crate) fn encode_quality_plan_compact(
         frame_count,
         delays,
         loop_count,
-        independent_frames,
+        options,
     )
 }
 
@@ -408,7 +411,7 @@ pub(crate) fn encode_quality_indexed_compact(
     frame_count: usize,
     delays: DelaySource<'_>,
     loop_count: i32,
-    independent_frames: bool,
+    options: CompactOptions,
 ) -> Result<Vec<u8>, String> {
     let encoded = compact::encode_indexed_gif_compact(
         output,
@@ -420,7 +423,7 @@ pub(crate) fn encode_quality_indexed_compact(
         delays,
         loop_count,
         transparent_index,
-        independent_frames,
+        options,
     );
     recycle_quality_palette(palette);
     recycle_quantized_indexed(indexed);
@@ -442,7 +445,7 @@ pub(crate) fn encode_rgba_quality_low_res_quantized_gif_inner_with_output(
     loop_count: i32,
     alpha_threshold: u8,
     sampled_alpha_255: bool,
-    independent_frames: bool,
+    options: CompactOptions,
     output: Vec<u8>,
 ) -> Result<Vec<u8>, String> {
     // Explicit Wasm initialization enters with an empty sentinel solely to
@@ -487,7 +490,7 @@ pub(crate) fn encode_rgba_quality_low_res_quantized_gif_inner_with_output(
         frame_count,
         delays,
         loop_count,
-        independent_frames,
+        options,
     )
 }
 
@@ -506,7 +509,7 @@ pub(crate) fn encode_rgba_quality_low_res_exact_gif_inner_with_output<const COAL
     loop_count: i32,
     alpha_threshold: u8,
     try_small_palette: bool,
-    independent_frames: bool,
+    options: CompactOptions,
     output: Vec<u8>,
 ) -> Result<Vec<u8>, String> {
     #[cfg(not(target_arch = "wasm32"))]
@@ -532,7 +535,7 @@ pub(crate) fn encode_rgba_quality_low_res_exact_gif_inner_with_output<const COAL
                 frame_count,
                 delays,
                 loop_count,
-                independent_frames,
+                options,
             );
         }
     }
@@ -552,7 +555,7 @@ pub(crate) fn encode_rgba_quality_low_res_exact_gif_inner_with_output<const COAL
                 frame_count,
                 delays,
                 loop_count,
-                independent_frames,
+                options,
             )
         }
         QualityIndexResult::Quantized(plan) => encode_quality_plan_compact(
@@ -565,7 +568,7 @@ pub(crate) fn encode_rgba_quality_low_res_exact_gif_inner_with_output<const COAL
             frame_count,
             delays,
             loop_count,
-            independent_frames,
+            options,
         ),
     }
 }

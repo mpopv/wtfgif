@@ -409,6 +409,7 @@ mod blit;
 use blit::*;
 mod changed_rect;
 use changed_rect::*;
+use compact::CompactOptions;
 #[cfg(not(all(feature = "encode-only", target_arch = "wasm32")))]
 mod composite;
 #[cfg(not(all(feature = "encode-only", target_arch = "wasm32")))]
@@ -419,6 +420,8 @@ mod core_api;
 mod decode;
 #[cfg(not(all(feature = "encode-only", target_arch = "wasm32")))]
 use decode::*;
+mod dictionary_lzw;
+use dictionary_lzw::*;
 mod encode_rgba;
 use encode_rgba::*;
 mod histogram;

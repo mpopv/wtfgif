@@ -18,6 +18,9 @@
 //!   the transparent index, which turns static areas into long runs. Frames
 //!   that turn an opaque pixel transparent cannot be expressed this way, so
 //!   they fall back to a full frame after a restore-to-background disposal.
+//! * Full-dictionary LZW (smallest mode only). Each image is also coded with
+//!   greedy LZW, and the shorter of the two streams is kept, so the smallest
+//!   mode is never larger than the fastest one.
 
 use super::*;
 
@@ -37,15 +40,33 @@ pub(crate) struct CompactScratch {
     run_codes: Vec<u16>,
     /// Pixels of the current differenced rectangle.
     pixels: Vec<u8>,
+    /// The same rectangle with unchanged pixels marked by the fill index.
+    filled: Vec<u8>,
     plans: Vec<FramePlan>,
+    /// String table for the smallest mode's full-dictionary LZW.
+    dictionary: Vec<u32>,
 }
 
 reusable_cells! {
     static REUSABLE_COMPACT_SCRATCH: CompactScratch = CompactScratch {
             run_codes: Vec::new(),
             pixels: Vec::new(),
+            filled: Vec::new(),
             plans: Vec::new(),
+            dictionary: Vec::new(),
         };
+}
+
+/// How the compact writer lays out and codes frames. Every combination
+/// decodes to the same composited frames.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct CompactOptions {
+    /// Write every frame as a full-canvas image, the historical layout.
+    pub(crate) independent_frames: bool,
+    /// Also code each image with full-dictionary LZW and keep the shorter
+    /// stream: the smallest mode. Otherwise only the run-aware stream is
+    /// written: the fastest mode.
+    pub(crate) smallest: bool,
 }
 
 /// An inclusive pixel rectangle.
@@ -123,8 +144,9 @@ impl FramePlan {
 
 /// Encode already-indexed frames as one global-palette GIF.
 ///
-/// `independent_frames` keeps the historical layout, in which every frame is a
-/// full-canvas image that can be decoded or reordered without its neighbors.
+/// `options.independent_frames` keeps the historical layout, in which every
+/// frame is a full-canvas image that can be decoded or reordered without its
+/// neighbors.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_indexed_gif_compact(
     mut output: Vec<u8>,
@@ -136,7 +158,7 @@ pub(crate) fn encode_indexed_gif_compact(
     delays: DelaySource<'_>,
     loop_count: i32,
     transparent_index: Option<u8>,
-    independent_frames: bool,
+    options: CompactOptions,
 ) -> Result<Vec<u8>, String> {
     // Explicit Wasm initialization compiles this path with an empty sentinel.
     if frame_count == 0 && index_stream.is_empty() && palette_rgb.is_empty() {
@@ -183,10 +205,15 @@ pub(crate) fn encode_indexed_gif_compact(
         let CompactScratch {
             run_codes,
             pixels,
+            filled,
             plans,
+            dictionary,
         } = &mut *scratch;
         if run_codes.len() < RUN_CODE_TABLE_LEN {
             run_codes.resize(RUN_CODE_TABLE_LEN, 0);
+        }
+        if options.smallest && dictionary.len() < DICTIONARY_SLOTS {
+            dictionary.resize(DICTIONARY_SLOTS, 0);
         }
         plan_frames(
             plans,
@@ -195,7 +222,7 @@ pub(crate) fn encode_indexed_gif_compact(
             height,
             frame_count,
             transparent_index,
-            independent_frames,
+            options.independent_frames,
         );
         // A palette with an unused slot can mark unchanged pixels without a
         // larger color table, even when no source pixel is transparent.
@@ -219,47 +246,84 @@ pub(crate) fn encode_indexed_gif_compact(
                 frame_transparent,
                 plan.disposal,
             );
-            // Marking unchanged pixels only pays when the rectangle leaves a
-            // large static area; otherwise write the frame's own pixels.
+            // Marking unchanged pixels with the fill index gives the run-aware
+            // stream long runs, but only pays when the rectangle leaves a large
+            // static area; otherwise the frame's own pixels are written.
             let fills = plan.delta
                 && fill_index.is_some()
                 && plan.rect.width() * plan.rect.height() * 4 <= frame_len * 3;
-            let image: &[u8] = if fills {
-                fill_delta_pixels(
-                    previous,
-                    frame,
-                    usize::from(width),
-                    plan,
-                    fill_index,
-                    transparent_index,
-                    pixels,
-                );
-                pixels.as_slice()
-            } else if plan.covers(usize::from(width), usize::from(height)) {
-                frame
-            } else {
-                fill_delta_pixels(
-                    previous,
-                    frame,
-                    usize::from(width),
-                    plan,
-                    None,
-                    transparent_index,
-                    pixels,
-                );
-                pixels.as_slice()
-            };
-            let code_size = choose_minimum_code_size(image, minimum_code_size, run_codes);
             let image_start = output.len();
-            write_run_lzw_image(&mut output, image, code_size, run_codes);
-            // The wider-code choice is a heuristic; never let it lose to the
-            // literal stream at the palette's own code size.
-            if code_size != minimum_code_size
-                && output.len() - image_start
-                    > literal_lzw_block_size(image.len(), minimum_code_size).unwrap_or(usize::MAX)
-            {
-                output.truncate(image_start);
-                write_run_lzw_image(&mut output, image, minimum_code_size, run_codes);
+            if options.smallest {
+                // LZW codes a frame's own pixels as well as or better than
+                // marked ones on the corpus, so it only crops.
+                let own = cropped_pixels(
+                    previous,
+                    frame,
+                    width,
+                    height,
+                    plan,
+                    transparent_index,
+                    pixels,
+                );
+                write_dictionary_lzw_image(&mut output, own, minimum_code_size, dictionary);
+                let mut best_length = output.len() - image_start;
+                let mut run_image = None;
+                // Images LZW cannot shrink, such as noise, are shorter as the
+                // run-aware stream, which never exceeds a literal one. That
+                // stream spends at least one code per run of equal pixels, so
+                // it is only counted exactly when LZW is longer than that.
+                let runs = own.len() - count_equal_neighbors(own);
+                let run_floor = (runs * (usize::from(minimum_code_size) + 1)).div_ceil(8) + 2;
+                if best_length > run_floor {
+                    let length = run_lzw_image_length(own, minimum_code_size, run_codes);
+                    if length < best_length {
+                        (best_length, run_image) = (length, Some(own));
+                    }
+                }
+                // The fastest mode's stream for this frame is also a candidate,
+                // so the smallest mode is never larger.
+                if fills {
+                    fill_delta_pixels(
+                        previous,
+                        frame,
+                        usize::from(width),
+                        plan,
+                        fill_index,
+                        transparent_index,
+                        filled,
+                    );
+                    if run_lzw_image_length(filled, minimum_code_size, run_codes) < best_length {
+                        run_image = Some(filled.as_slice());
+                    }
+                }
+                if let Some(image) = run_image {
+                    output.truncate(image_start);
+                    write_run_lzw_image_best(&mut output, image, minimum_code_size, run_codes);
+                }
+            } else {
+                let image: &[u8] = if fills {
+                    fill_delta_pixels(
+                        previous,
+                        frame,
+                        usize::from(width),
+                        plan,
+                        fill_index,
+                        transparent_index,
+                        filled,
+                    );
+                    filled.as_slice()
+                } else {
+                    cropped_pixels(
+                        previous,
+                        frame,
+                        width,
+                        height,
+                        plan,
+                        transparent_index,
+                        pixels,
+                    )
+                };
+                write_run_lzw_image_best(&mut output, image, minimum_code_size, run_codes);
             }
             previous = frame;
         }
@@ -539,6 +603,32 @@ fn opaque_span(pixels: &[u8], transparent: u8) -> Option<(usize, usize)> {
         last -= 1;
     }
     Some((first, last - 1))
+}
+
+/// The frame's own pixels inside the plan's rectangle: the frame itself when
+/// the rectangle covers the canvas, otherwise a copy in `pixels`.
+fn cropped_pixels<'a>(
+    previous: &[u8],
+    frame: &'a [u8],
+    width: u16,
+    height: u16,
+    plan: &FramePlan,
+    transparent_index: Option<u8>,
+    pixels: &'a mut Vec<u8>,
+) -> &'a [u8] {
+    if plan.covers(usize::from(width), usize::from(height)) {
+        return frame;
+    }
+    fill_delta_pixels(
+        previous,
+        frame,
+        usize::from(width),
+        plan,
+        None,
+        transparent_index,
+        pixels,
+    );
+    pixels
 }
 
 /// Copy the plan's rectangle of `current` into `pixels`. With a fill index,
@@ -864,6 +954,55 @@ fn count_run_lzw_codes(pixels: &[u8], minimum_code_size: u8, run_codes: &mut [u1
     counter.codes
 }
 
+/// The code size the run-aware stream uses for `pixels`: a wider one when the
+/// heuristic expects it to help, unless that would exceed the literal stream
+/// at the palette's own code size.
+fn run_lzw_code_size(pixels: &[u8], palette_code_size: u8, run_codes: &mut [u16]) -> (u8, usize) {
+    let code_size = choose_minimum_code_size(pixels, palette_code_size, run_codes);
+    let length = run_lzw_block_length(pixels, code_size, run_codes);
+    if code_size != palette_code_size
+        && length > literal_lzw_block_size(pixels.len(), palette_code_size).unwrap_or(usize::MAX)
+    {
+        let narrow = run_lzw_block_length(pixels, palette_code_size, run_codes);
+        return (palette_code_size, narrow);
+    }
+    (code_size, length)
+}
+
+/// Bytes of the image-data block the run-aware writer emits at this code
+/// size, including the code size byte, sub-block lengths, and terminator.
+fn run_lzw_block_length(pixels: &[u8], minimum_code_size: u8, run_codes: &mut [u16]) -> usize {
+    let codes = count_run_lzw_codes(pixels, minimum_code_size, run_codes);
+    let raw = (codes * (usize::from(minimum_code_size) + 1)).div_ceil(8);
+    1 + raw + raw.div_ceil(255) + 1
+}
+
+/// Bytes of the image-data block `write_run_lzw_image_best` emits.
+fn run_lzw_image_length(pixels: &[u8], palette_code_size: u8, run_codes: &mut [u16]) -> usize {
+    run_lzw_code_size(pixels, palette_code_size, run_codes).1
+}
+
+/// Append the run-aware image-data block at its best code size.
+fn write_run_lzw_image_best(
+    output: &mut Vec<u8>,
+    pixels: &[u8],
+    palette_code_size: u8,
+    run_codes: &mut [u16],
+) {
+    let code_size = choose_minimum_code_size(pixels, palette_code_size, run_codes);
+    let image_start = output.len();
+    write_run_lzw_image(output, pixels, code_size, run_codes);
+    // The wider-code choice is a heuristic; never let it lose to the literal
+    // stream at the palette's own code size.
+    if code_size != palette_code_size
+        && output.len() - image_start
+            > literal_lzw_block_size(pixels.len(), palette_code_size).unwrap_or(usize::MAX)
+    {
+        output.truncate(image_start);
+        write_run_lzw_image(output, pixels, palette_code_size, run_codes);
+    }
+}
+
 /// Append one complete image-data block: minimum code size, sub-blocks, and
 /// the block terminator.
 pub(crate) fn write_run_lzw_image(
@@ -895,21 +1034,7 @@ pub(crate) fn write_run_lzw_image(
     if writer.bit_count > 0 {
         writer.position += 1;
     }
-    let raw_length = writer.position - start;
-    let block_count = raw_length.div_ceil(255);
-    let final_length = start + raw_length + block_count + 1;
-    debug_assert!(final_length <= output.capacity());
-    // SAFETY: the reserved capacity holds the raw stream, which is moved
-    // backwards into 255-byte sub-blocks before any byte is read.
-    unsafe { output.set_len(final_length) };
-    for block in (0..block_count).rev() {
-        let source = start + block * 255;
-        let length = (raw_length - block * 255).min(255);
-        let destination = start + block * 256;
-        output.copy_within(source..source + length, destination + 1);
-        output[destination] = length as u8;
-    }
-    output[final_length - 1] = 0;
+    frame_sub_blocks(output, start, writer.position - start);
 }
 
 #[inline(always)]
@@ -1063,7 +1188,7 @@ pub(crate) fn prepare_compact_code() -> usize {
         DelaySource::Constant(0),
         0,
         None,
-        false,
+        CompactOptions::default(),
     );
     count ^ usize::from(encoded.is_ok()) ^ plans.len()
 }
@@ -1134,6 +1259,48 @@ mod tests {
         }
     }
 
+    fn dictionary_round_trip(pixels: &[u8], minimum_code_size: u8) -> usize {
+        let mut encoded = Vec::new();
+        let mut table = vec![0u32; DICTIONARY_SLOTS];
+        write_dictionary_lzw_image(&mut encoded, pixels, minimum_code_size, &mut table);
+        assert_eq!(
+            decode_image(&encoded, pixels.len()),
+            pixels,
+            "dictionary LZW, code size {minimum_code_size}"
+        );
+        encoded.len()
+    }
+
+    #[test]
+    fn dictionary_lzw_round_trips_every_code_size_and_resets() {
+        let mut state = 0x2545_f491u32;
+        for minimum_code_size in 2..=8u8 {
+            let colors = 1u32 << minimum_code_size;
+            for case in 0..30 {
+                // Long inputs fill the 4,096-entry dictionary and force clears.
+                let length = 1 + (xorshift(&mut state) % 40_000) as usize;
+                let mean_run = 1 + case % 6 * 5;
+                let mut pixels = Vec::with_capacity(length);
+                while pixels.len() < length {
+                    let value = (xorshift(&mut state) % colors) as u8;
+                    let run = 1 + (xorshift(&mut state) as usize % (mean_run * 2));
+                    pixels.extend(std::iter::repeat_n(value, run.min(length - pixels.len())));
+                }
+                dictionary_round_trip(&pixels, minimum_code_size);
+            }
+            dictionary_round_trip(&[0], minimum_code_size);
+            dictionary_round_trip(&vec![1; 70_000], minimum_code_size);
+        }
+    }
+
+    #[test]
+    fn dictionary_lzw_beats_run_codes_on_repeated_patterns() {
+        // A repeating multi-color pattern has no runs for the run-aware
+        // writer, but LZW learns it.
+        let pattern: Vec<u8> = (0..128 * 128).map(|index| (index % 7 * 31) as u8).collect();
+        assert!(dictionary_round_trip(&pattern, 8) * 4 < round_trip(&pattern, 8));
+    }
+
     #[test]
     fn run_codes_shrink_flat_images_and_never_grow_noise() {
         let flat = vec![3u8; 128 * 128];
@@ -1193,20 +1360,36 @@ mod tests {
         let expected = expected_frames(indices, palette, transparent);
         let mut lengths = [0usize; 2];
         for (slot, independent) in [false, true].into_iter().enumerate() {
-            let encoded = encode_indexed_gif_compact(
-                Vec::new(),
-                indices,
-                width,
-                height,
-                frame_count,
-                palette,
-                DelaySource::Constant(4),
-                0,
-                transparent,
-                independent,
-            )
-            .unwrap();
+            let encode = |smallest| {
+                encode_indexed_gif_compact(
+                    Vec::new(),
+                    indices,
+                    width,
+                    height,
+                    frame_count,
+                    palette,
+                    DelaySource::Constant(4),
+                    0,
+                    transparent,
+                    CompactOptions {
+                        independent_frames: independent,
+                        smallest,
+                    },
+                )
+                .unwrap()
+            };
+            let encoded = encode(false);
             assert_eq!(composite(&encoded), expected, "independent={independent}");
+            let smallest = encode(true);
+            assert_eq!(
+                composite(&smallest),
+                expected,
+                "smallest, independent={independent}"
+            );
+            assert!(
+                smallest.len() <= encoded.len(),
+                "smallest grew, independent={independent}"
+            );
             let literal = encode_indexed_literal_gif_inner(
                 indices,
                 width,
@@ -1309,7 +1492,7 @@ mod tests {
             DelaySource::Constant(4),
             0,
             transparent,
-            false,
+            CompactOptions::default(),
         )
         .unwrap();
         // Later frames stay near the sprite instead of covering the canvas.

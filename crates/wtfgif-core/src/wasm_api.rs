@@ -225,7 +225,7 @@ pub fn prepare_quality_encoder_code() {
         0,
         128,
         false,
-        false,
+        CompactOptions::default(),
         Vec::new(),
     );
     let exact_runs = encode_rgba_quality_low_res_exact_gif_inner_with_output::<true>(
@@ -237,7 +237,7 @@ pub fn prepare_quality_encoder_code() {
         0,
         128,
         false,
-        false,
+        CompactOptions::default(),
         Vec::new(),
     );
     let quantized = encode_rgba_quality_low_res_quantized_gif_inner_with_output(
@@ -249,11 +249,12 @@ pub fn prepare_quality_encoder_code() {
         0,
         128,
         true,
-        false,
+        CompactOptions::default(),
         Vec::new(),
     );
-    let public_quality =
-        encode_rgba_quality_low_res_constant_delay_scratch_from_input(0, 1, 1, 0, 0, 0, 128, false);
+    let public_quality = encode_rgba_quality_low_res_constant_delay_scratch_from_input(
+        0, 1, 1, 0, 0, 0, 128, false, false,
+    );
     let compact_prepared = compact::prepare_compact_code();
     let mut lzw_output = Vec::new();
     map_quality_pixels_grouped::<4, false>(empty, 128, 0, empty, &mut []);
@@ -748,7 +749,12 @@ pub fn encode_rgba_quality_low_res_constant_delay_scratch_from_input(
     loop_count: i32,
     alpha_threshold: u8,
     independent_frames: bool,
+    smallest: bool,
 ) -> usize {
+    let options = CompactOptions {
+        independent_frames,
+        smallest,
+    };
     // `prepare_quality_encoder_code` uses this sentinel before any user data
     // exists. No reusable input, output, palette, or histogram is touched.
     if length == 0 {
@@ -796,7 +802,7 @@ pub fn encode_rgba_quality_low_res_constant_delay_scratch_from_input(
                 frame_count,
                 DelaySource::Constant(delay),
                 loop_count,
-                independent_frames,
+                options,
             );
             let Ok(encoded) = encoded else {
                 return 0;
@@ -819,7 +825,7 @@ pub fn encode_rgba_quality_low_res_constant_delay_scratch_from_input(
             loop_count,
             alpha_threshold,
             hints.sampled_alpha_255,
-            independent_frames,
+            options,
             output,
         )
     } else {
@@ -833,7 +839,7 @@ pub fn encode_rgba_quality_low_res_constant_delay_scratch_from_input(
                 loop_count,
                 alpha_threshold,
                 false,
-                independent_frames,
+                options,
                 output,
             )
         } else {
@@ -846,7 +852,7 @@ pub fn encode_rgba_quality_low_res_constant_delay_scratch_from_input(
                 loop_count,
                 alpha_threshold,
                 false,
-                independent_frames,
+                options,
                 output,
             )
         }
@@ -871,7 +877,12 @@ pub fn encode_rgba_quality_gif_constant_delay_scratch_from_input(
     loop_count: i32,
     alpha_threshold: u8,
     independent_frames: bool,
+    smallest: bool,
 ) -> usize {
+    let options = CompactOptions {
+        independent_frames,
+        smallest,
+    };
     let input_ptr = REUSABLE_LZW_SCRATCH.with(|scratch| {
         let scratch = scratch.borrow();
         (length <= scratch.input.len() * std::mem::size_of::<u32>())
@@ -899,7 +910,7 @@ pub fn encode_rgba_quality_gif_constant_delay_scratch_from_input(
                 loop_count,
                 alpha_threshold,
                 hints.sampled_alpha_255,
-                independent_frames,
+                options,
                 output,
             )
         } else {
@@ -913,7 +924,7 @@ pub fn encode_rgba_quality_gif_constant_delay_scratch_from_input(
                     loop_count,
                     alpha_threshold,
                     rgba_stream.len() >= 40_000 * 4 && hints.likely_small_palette,
-                    independent_frames,
+                    options,
                     output,
                 )
             } else {
@@ -926,7 +937,7 @@ pub fn encode_rgba_quality_gif_constant_delay_scratch_from_input(
                     loop_count,
                     alpha_threshold,
                     rgba_stream.len() >= 40_000 * 4 && hints.likely_small_palette,
-                    independent_frames,
+                    options,
                     output,
                 )
             }
@@ -940,7 +951,7 @@ pub fn encode_rgba_quality_gif_constant_delay_scratch_from_input(
             DelaySource::Constant(delay),
             loop_count,
             alpha_threshold,
-            independent_frames,
+            options,
             output,
         )
     };
@@ -986,7 +997,12 @@ pub fn encode_rgba_quality_gif_scratch_from_input(
     loop_count: i32,
     alpha_threshold: u8,
     independent_frames: bool,
+    smallest: bool,
 ) -> usize {
+    let options = CompactOptions {
+        independent_frames,
+        smallest,
+    };
     let input_ptr = REUSABLE_LZW_SCRATCH.with(|scratch| {
         let scratch = scratch.borrow();
         (length <= scratch.input.len() * std::mem::size_of::<u32>())
@@ -1022,7 +1038,7 @@ pub fn encode_rgba_quality_gif_scratch_from_input(
                 loop_count,
                 alpha_threshold,
                 hints.sampled_alpha_255,
-                independent_frames,
+                options,
                 output,
             )
         } else {
@@ -1035,7 +1051,7 @@ pub fn encode_rgba_quality_gif_scratch_from_input(
                 loop_count,
                 alpha_threshold,
                 rgba_stream.len() >= 40_000 * 4 && hints.likely_small_palette,
-                independent_frames,
+                options,
                 output,
             )
         }
@@ -1048,7 +1064,7 @@ pub fn encode_rgba_quality_gif_scratch_from_input(
             DelaySource::PerFrame(delays),
             loop_count,
             alpha_threshold,
-            independent_frames,
+            options,
             output,
         )
     };

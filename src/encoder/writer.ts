@@ -20,6 +20,7 @@ import {
 } from "../utils/validate";
 import { getWasmEncodeCoreModule } from "../wasm/encodeRuntime";
 import { getWasmQualityCoreModule } from "../wasm/qualityRuntime";
+import type { GifEncodeMode } from "./quality";
 
 const WASM_LZW_MIN_INDEX_COUNT = 8192;
 const TRANSPARENT_ALPHA_THRESHOLD = 128;
@@ -118,6 +119,7 @@ export type RgbaGifFrames = Uint8Array | Uint8ClampedArray | RgbaGifFrame[];
 export type GifFrameDelay = number | readonly number[] | Uint16Array;
 export type GifQuantizationMode = "exact" | "fast" | "quality";
 export type GifPaletteMode = "global" | "local";
+export type { GifEncodeMode } from "./quality";
 
 export interface EncodeIndexedGifFramesOptions {
 	width: number;
@@ -144,6 +146,13 @@ export interface EncodeRgbaGifFramesOptions {
 	alphaThreshold?: number;
 	quantization?: GifQuantizationMode;
 	paletteMode?: GifPaletteMode;
+	/**
+	 * Optimize encode time (`"fastest"`, the default) or output size
+	 * (`"smallest"`). Both decode to the same pixels. `"smallest"` needs the
+	 * default quality encoder: a global quality palette, no caller-supplied
+	 * palette or legacy deltas, and WebAssembly.
+	 */
+	mode?: GifEncodeMode;
 }
 
 type IndexedSourceRect = {
@@ -283,11 +292,23 @@ export function encodeIndexedGifFrames(
 export function encodeRgbaGifFrames(
 	options: EncodeRgbaGifFramesOptions,
 ): Uint8Array {
+	const smallest = isSmallestMode(options.mode);
 	if (isQualityWasmRequest(options)) {
-		const wasmOutput = encodeRgbaQualityWasm(options);
+		const wasmOutput = encodeRgbaQualityWasm(options, smallest);
 		if (wasmOutput !== null) return wasmOutput;
 	}
+	if (smallest) {
+		throw new Error(
+			'mode: "smallest" needs the default quality encoder with WebAssembly initialized.',
+		);
+	}
 	return encodeRgbaGifFramesGeneral(options);
+}
+
+function isSmallestMode(mode: GifEncodeMode | undefined): boolean {
+	if (mode === "smallest") return true;
+	if (mode === undefined || mode === "fastest") return false;
+	throw new Error('Mode must be "fastest" or "smallest".');
 }
 
 function isQualityWasmRequest(options: EncodeRgbaGifFramesOptions): boolean {
@@ -305,6 +326,7 @@ function isQualityWasmRequest(options: EncodeRgbaGifFramesOptions): boolean {
 
 function encodeRgbaQualityWasm(
 	options: EncodeRgbaGifFramesOptions,
+	smallest: boolean,
 ): Uint8Array | null {
 	const wasmCore = getQualityEncoderWasmCoreModule();
 	if (!wasmCore) return null;
@@ -356,6 +378,7 @@ function encodeRgbaQualityWasm(
 					loop === null ? -1 : loop,
 					alphaThreshold,
 					independentFrames,
+					smallest,
 				)
 			: wasmCore.encode_rgba_quality_gif_scratch_from_input(
 					inputLength,
@@ -366,6 +389,7 @@ function encodeRgbaQualityWasm(
 					loop === null ? -1 : loop,
 					alphaThreshold,
 					independentFrames,
+					smallest,
 				);
 	if (outputLength === 0) throw new Error("Wasm quality encoding failed.");
 	return new Uint8Array(

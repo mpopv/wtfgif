@@ -1514,7 +1514,10 @@ fn quality_encoding_preserves_indexed_pixels() {
             DelaySource::PerFrame(&delays),
             0,
             TRANSPARENT_ALPHA_THRESHOLD,
-            independent_frames,
+            CompactOptions {
+                independent_frames,
+                smallest: false,
+            },
             Vec::new(),
         )
         .unwrap();
