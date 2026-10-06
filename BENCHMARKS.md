@@ -157,22 +157,28 @@ npm run bench:pareto
 
 <!-- benchmark:pareto-receipt:start -->
 The receipt records wtfgif 3.3.0 at clean commit
-`84eda6ffabdf6073ee01c938fedc499a34e3dcaa` and uses the corpus timing boundary above: one
+`c23a05d50a44c4c80affb1fb10afa03b2fd35d82` and uses the corpus timing boundary above: one
 first encode of the MakeEmoji production sample (128×128×8) per fresh Node process,
 40 processes per configuration.
 
-| Configuration | Median | Bytes | PSNR | SSIM | Frontier |
-| --- | ---: | ---: | ---: | ---: | :---: |
-| **wtfgif fastest** | 0.687 ms | 74,914 | 34.12 dB | 0.9841 | yes |
-| **wtfgif smallest** | 1.317 ms | 41,422 | 34.12 dB | 0.9841 | yes |
-| sharp effort 1 | 23.355 ms | 76,024 | 40.80 dB | 0.9972 |  |
-| sharp effort 4 | 35.828 ms | 76,091 | 41.25 dB | 0.9975 |  |
-| sharp effort 7 | 137.182 ms | 75,339 | 41.80 dB | 0.9976 |  |
-| sharp defaults | 149.752 ms | 75,642 | 41.79 dB | 0.9976 |  |
-| **image-q + omggif** | 154.758 ms | 39,350 | 31.84 dB | 0.9858 | yes |
-| modern-gif | 160.441 ms | 43,114 | 32.65 dB | 0.9898 |  |
-| **gifenc** | 176.162 ms | 39,101 | 34.54 dB | 0.9832 | yes |
-| sharp effort 10 | 256.207 ms | 75,247 | 41.81 dB | 0.9976 |  |
+| Configuration | Median | Bytes | PSNR | SSIM | Alpha match | Frontier |
+| --- | ---: | ---: | ---: | ---: | ---: | :---: |
+| **wtfgif fastest** | 0.708 ms | 74,914 | 34.12 dB | 0.9841 | 100% | yes |
+| **wtfgif smallest** | 1.394 ms | 41,422 | 34.12 dB | 0.9841 | 100% | yes |
+| sharp effort 1 | 24.415 ms | 76,024 | 40.80 dB | 0.9972 | 100% |  |
+| sharp effort 4 | 35.539 ms | 76,091 | 41.25 dB | 0.9975 | 100% |  |
+| magick-wasm | 42.969 ms | 67,490 | 40.18 dB | 0.9954 | 100% |  |
+| gif-encoder-2 | 62.297 ms | 75,939 | 31.48 dB | 0.7770 | 81.52% |  |
+| gifencoder | 62.922 ms | 75,939 | 31.48 dB | 0.7770 | 81.52% |  |
+| ffmpeg.wasm | 65.192 ms | 54,906 | 32.13 dB | 0.8186 | 85.88% |  |
+| wasm-vips effort 1 | 76.874 ms | 76,103 | 40.83 dB | 0.9972 | 100% |  |
+| sharp effort 7 | 142.832 ms | 75,339 | 41.80 dB | 0.9976 | 100% |  |
+| sharp defaults | 155.725 ms | 75,642 | 41.79 dB | 0.9976 | 100% |  |
+| gifski-wasm | 172.384 ms | 77,104 | 40.40 dB | 0.9979 | 100% |  |
+| **image-q + omggif** | 173.327 ms | 39,350 | 31.84 dB | 0.9858 | 100% | yes |
+| modern-gif | 190.162 ms | 43,114 | 32.65 dB | 0.9898 | 100% |  |
+| **gifenc** | 193.952 ms | 39,101 | 34.54 dB | 0.9832 | 100% | yes |
+| sharp effort 10 | 255.780 ms | 75,247 | 41.81 dB | 0.9976 | 100% |  |
 
 - **wtfgif fastest**: global quality quantization, run-aware LZW, and changed-rectangle frames through the wtfgif/encode entry point.
 - **wtfgif smallest**: wtfgif/encode with mode: "smallest": full-dictionary LZW where it is shorter than the run-aware stream.
@@ -184,9 +190,23 @@ first encode of the MakeEmoji production sample (128×128×8) per fresh Node pro
 - **sharp effort 7**: sharp (libvips + cgif + libimagequant) gif({ effort: 7, dither: 0 }), alpha thresholded first.
 - **sharp effort 10**: sharp (libvips + cgif + libimagequant) gif({ effort: 10, dither: 0 }), alpha thresholded first.
 - **sharp defaults**: sharp gif() defaults (effort 7, dither 1.0), alpha thresholded first.
+- **gif-encoder-2**: gif-encoder-2 defaults (NeuQuant), transparent pixels as a color key.
+- **gifencoder**: gifencoder defaults (NeuQuant), transparent pixels as a color key.
+- **gifski-wasm**: gifski-wasm defaults (quality 90), alpha thresholded first.
+- **wasm-vips effort 1**: wasm-vips (libvips + cgif + libimagequant in Wasm) gifsave effort 1, dither 0, alpha thresholded first.
+- **magick-wasm**: @imagemagick/magick-wasm GIF defaults with restore-to-background disposal, alpha thresholded first.
+- **ffmpeg.wasm**: @ffmpeg/core palettegen + paletteuse (one palette, default dithering), alpha thresholded first.
 
 A configuration is on the frontier when no other is at least as fast and at
-least as small, and strictly better in one of them. gif.js and gif.js.optimized render in browser Web Workers and do not run in Node.
+least as small, and strictly better in one of them. Libraries without an
+alpha-threshold option receive alpha already thresholded inside their timed
+call, and gif-encoder-2 and gifencoder, which cannot store alpha, mark
+transparent pixels with a color key. Each Wasm library encodes a fixed 2×2
+animation during initialization, as wtfgif and sharp do. The PSNR here counts
+a pixel decoded transparent where the source is opaque as black.
+gif.js and gif.js.optimized render in browser Web Workers and do not run in Node. FFmpeg (GPL-2.0) and gifski (AGPL-3.0) are
+development dependencies of this benchmark only; the published package does
+not include or link them.
 Run `npm run bench:pareto` to measure it and `npm run bench:charts` to render
 [`docs/encoder-pareto.svg`](docs/encoder-pareto.svg).
 <!-- benchmark:pareto-receipt:end -->

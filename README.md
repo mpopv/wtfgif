@@ -162,8 +162,9 @@ workload and library, wtfgif 3.3.0 at `84eda6f`. Raw samples are in
 <!-- benchmark:readme-pareto:start -->
 ![Encode time against file size for GIF encoders that run in Node](docs/encoder-pareto.svg)
 
-The same MakeEmoji animation through every encoder that runs in Node, with
-sharp at four effort levels. On the frontier, where no other encoder is both
+The same MakeEmoji animation through every encoder that runs in Node: pure
+JavaScript libraries, sharp at four effort levels, and Wasm builds of gifski,
+libvips, ImageMagick, and FFmpeg. gif-encoder-2 (82%), gifencoder (82%), and ffmpeg.wasm (86%) get some pixels' transparency wrong. On the frontier, where no other encoder is both
 faster and smaller: wtfgif fastest, wtfgif smallest, image-q + omggif, and gifenc. Labels give RGB
 PSNR, since size alone does not show palette quality. Medians of 40 fresh processes per
 encoder; raw data in [`benchmarks/pareto.json`](benchmarks/pareto.json). gif.js
