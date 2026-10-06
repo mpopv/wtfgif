@@ -2,6 +2,32 @@
 
 All notable changes to wtfgif are documented here.
 
+## 3.3.0 - 2026-10-06
+
+- Add `mode` to `encodeRgbaGifFrames()` in both entry points: `"fastest"`,
+  the default and the existing encoder, or `"smallest"`. Both decode to the
+  same pixels. The smallest mode also codes each image with full-dictionary
+  LZW and keeps the shorter stream, including the one the fastest mode would
+  write, so it is never larger. Changed rectangles keep the frame's own
+  pixels, which LZW codes as well as or better than marked ones.
+- The fastest mode is unchanged: every benchmark fixture encodes to the same
+  bytes as 3.2.0. No lossless speedup measured above noise. Skipping the
+  changed-rectangle search was within 4% on full-motion fixtures and up to
+  8.5 times larger on static ones, and the rest of the time is exact palette
+  work that both modes share.
+- Rejected for the smallest mode after measuring: flexible LZW parsing (12%
+  larger by geometric mean, because its duplicate entries hurt flat images),
+  keeping a full dictionary instead of clearing it (larger), and an
+  initialization warmup (6 ms more for everyone, 4% off its first encode).
+- Fix the Rust decoder's literal-stream fast paths, which could decode a
+  short dictionary-coded LZW stream as literals and return wrong pixels. They
+  now give up once a clear interval reaches the length at which a decoder
+  widens its codes. Any encoder's GIF could hit this through the Wasm
+  `GifReader` and prepared playback; the round-trip fuzz target found it.
+- Benchmark both modes in the corpus, speed-against-size, and Chrome
+  comparisons. The `wtfgif` entry throws when `mode: "smallest"` is combined
+  with options that use another encoder.
+
 ## 3.2.0 - 2026-10-06
 
 - Publish the 3.1.1 fix for encodes that could return a GIF of an earlier
