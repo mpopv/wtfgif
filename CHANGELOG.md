@@ -2,6 +2,27 @@
 
 All notable changes to wtfgif are documented here.
 
+## 3.3.1 - 2026-10-06
+
+- `encodeRgbaGifFrames()` now defaults to `mode: "smallest"` in both entry
+  points. Files from the default are 0.41x-0.95x the size they were in 3.3.0
+  (0.62x geometric mean) at about twice the encode time, with the same
+  decoded pixels. Pass `mode: "fastest"` for the 3.3.0 default's bytes and
+  speed; both modes encode exactly as they did in 3.3.0.
+- In the `wtfgif` entry, options that use an encoder other than the default
+  quality encoder (a fixed palette, `"fast"` or `"exact"` quantization,
+  per-frame palettes, legacy deltas, or no WebAssembly) still encode as
+  before; only an explicit `mode: "smallest"` throws there.
+- Initialization's frame-array warmup now runs the default mode. Over 60
+  fresh processes per variant, initialization time and both modes' first
+  encodes were unchanged within noise.
+- Benchmark six more encoders on speed against file size: gif-encoder-2,
+  gifencoder, ffmpeg.wasm, magick-wasm, wasm-vips, and gifski-wasm. None is on
+  the frontier. The README now shows that chart under the feature list.
+- Benchmarks that measure the fastest mode now pass `mode: "fastest"`
+  explicitly. The receipts are the 3.3.0 measurements, which still describe
+  both modes exactly.
+
 ## 3.3.0 - 2026-10-06
 
 - Add `mode` to `encodeRgbaGifFrames()` in both entry points: `"fastest"`,
