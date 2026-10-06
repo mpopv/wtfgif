@@ -43,30 +43,52 @@ quality measurement are outside the clock. Results below are medians from 40
 processes per implementation on an Apple M3 Pro with Node.js 22.23.2.
 
 <!-- benchmark:corpus-receipt:start -->
-The receipt records package version 3.2.0 at source commit
-`ec326c98294ea4ef6180fd6f45e8fb401c1152c1`. Its dirty flag is false. The
+The receipt records package version 3.3.0 at source commit
+`84eda6ffabdf6073ee01c938fedc499a34e3dcaa`. Its dirty flag is false. The
 benchmark command rebuilds both scalar and SIMD quality Wasm before bundling,
 so the timed artifact comes from that recorded source commit.
 
 | Fixture | Shape | wtfgif | image-q + omggif | sharp | vs image-q + omggif | vs sharp | Size vs image-q + omggif | Size vs sharp |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| MakeEmoji production sample | 128×128×8 | 0.631 ms | 149.891 ms | 22.344 ms | **237.61×** | **35.42×** | 1.90× | 0.99× |
-| Photographic animation | 128×96×8 | 0.421 ms | 74.137 ms | 12.583 ms | **176.17×** | **29.90×** | 1.52× | 1.35× |
-| Pixel art | 64×64×12 | 0.152 ms | 27.879 ms | 2.663 ms | **183.31×** | **17.51×** | 0.68× | 2.46× |
-| Smooth gradients | 128×128×8 | 0.625 ms | 131.947 ms | 36.589 ms | **211.02×** | **58.51×** | 1.70× | 0.60× |
-| Deterministic noise | 128×128×8 | 0.372 ms | 106.056 ms | 51.120 ms | **284.91×** | **137.33×** | 7.28× | 1.22× |
-| Transparent edges | 128×128×8 | 0.386 ms | 47.632 ms | 14.690 ms | **123.37×** | **38.05×** | 2.10× | 0.64× |
-| Disjoint frame palettes | 128×128×8 | 0.304 ms | 67.765 ms | 4.021 ms | **223.22×** | **13.25×** | 1.96× | 1.97× |
-| Nearly static animation | 128×128×12 | 0.218 ms | 84.667 ms | 4.612 ms | **387.57×** | **21.11×** | 0.37× | 2.41× |
-| Tiny animation | 16×16×6 | 0.097 ms | 57.010 ms | 6.196 ms | **585.47×** | **63.63×** | 1.16× | 0.41× |
-| One-megapixel animation | 512×512×4 | 2.822 ms | 569.634 ms | 143.795 ms | **201.88×** | **50.96×** | 22.42× | 1.71× |
+| MakeEmoji production sample | 128×128×8 | 0.663 ms | 153.548 ms | 23.405 ms | **231.67×** | **35.31×** | 1.90× | 0.99× |
+| Photographic animation | 128×96×8 | 0.447 ms | 75.954 ms | 13.124 ms | **169.86×** | **29.35×** | 1.52× | 1.35× |
+| Pixel art | 64×64×12 | 0.167 ms | 28.554 ms | 2.830 ms | **171.46×** | **16.99×** | 0.68× | 2.46× |
+| Smooth gradients | 128×128×8 | 0.665 ms | 135.406 ms | 37.771 ms | **203.68×** | **56.82×** | 1.70× | 0.60× |
+| Deterministic noise | 128×128×8 | 0.403 ms | 112.064 ms | 53.308 ms | **278.08×** | **132.28×** | 7.28× | 1.22× |
+| Transparent edges | 128×128×8 | 0.410 ms | 48.891 ms | 15.338 ms | **119.32×** | **37.43×** | 2.10× | 0.64× |
+| Disjoint frame palettes | 128×128×8 | 0.332 ms | 70.470 ms | 4.191 ms | **212.34×** | **12.63×** | 1.96× | 1.97× |
+| Nearly static animation | 128×128×12 | 0.240 ms | 87.123 ms | 4.835 ms | **363.71×** | **20.18×** | 0.37× | 2.41× |
+| Tiny animation | 16×16×6 | 0.096 ms | 57.029 ms | 6.333 ms | **593.28×** | **65.88×** | 1.16× | 0.41× |
+| One-megapixel animation | 512×512×4 | 2.933 ms | 586.129 ms | 147.898 ms | **199.82×** | **50.42×** | 22.42× | 1.71× |
 
-Against image-q + omggif the observed range is 123.37×–585.47×, with a 237.95× geometric-mean
+Against image-q + omggif the observed range is 119.32×–593.28×, with a 230.18× geometric-mean
 speedup, and wtfgif's files are 0.37×–22.42× the size (1.99× geometric mean). Against
-sharp the range is 13.25×–137.33× (37.25× geometric mean), and wtfgif's files are
+sharp the range is 12.63×–132.28× (36.50× geometric mean), and wtfgif's files are
 0.41×–2.46× the size (1.18× geometric mean). This is the library's intended
 tradeoff: encode latency takes priority over compression ratio and palette
 quality.
+
+### Smallest mode
+
+| Fixture | Smallest | Bytes | Size vs fastest | Time vs fastest | vs image-q + omggif | vs sharp | Size vs image-q + omggif | Size vs sharp |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| MakeEmoji production sample | 1.329 ms | 41,422 | 0.55× | 2.00× | **115.57×** | **17.62×** | 1.05× | 0.54× |
+| Photographic animation | 1.068 ms | 56,267 | 0.61× | 2.39× | **71.10×** | **12.29×** | 0.92× | 0.82× |
+| Pixel art | 0.252 ms | 1,263 | 0.41× | 1.52× | **113.12×** | **11.21×** | 0.28× | 1.00× |
+| Smooth gradients | 1.594 ms | 27,744 | 0.87× | 2.40× | **84.95×** | **23.70×** | 1.48× | 0.52× |
+| Deterministic noise | 1.175 ms | 126,386 | 0.84× | 2.92× | **95.34×** | **45.35×** | 6.15× | 1.03× |
+| Transparent edges | 0.743 ms | 14,265 | 0.95× | 1.81× | **65.80×** | **20.64×** | 1.99× | 0.60× |
+| Disjoint frame palettes | 0.937 ms | 17,449 | 0.51× | 2.82× | **75.24×** | **4.48×** | 1.00× | 1.00× |
+| Nearly static animation | 0.390 ms | 1,393 | 0.41× | 1.63× | **223.51×** | **12.40×** | 0.15× | 1.00× |
+| Tiny animation | 0.139 ms | 2,061 | 0.77× | 1.44× | **411.52×** | **45.70×** | 0.90× | 0.32× |
+| One-megapixel animation | 9.993 ms | 613,784 | 0.52× | 3.41× | **58.65×** | **14.80×** | 11.73× | 0.90× |
+
+The smallest mode decodes to the same pixels as the fastest mode; it also codes
+each image with full-dictionary LZW and keeps the shorter stream, so it is
+never larger. Its files are 0.41×–0.95× the fastest mode's (0.62× geometric
+mean) at 1.44×–3.41× its time (2.15×).
+
+### Quality
 
 | Fixture | wtfgif PSNR | image-q + omggif PSNR | sharp PSNR | wtfgif SSIM | image-q + omggif SSIM | sharp SSIM |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -91,8 +113,8 @@ and Node.js v22.23.2 runtime. They do not claim codec-only performance, equal
 output size, or unmeasured hardware and runtimes.
 
 Every category exceeds 100× over image-q + omggif on its first real encode after
-initialization. The transparent edges fixture has the narrowest margin at 123.37×, followed by
-photographic animation at 176.17×. No result depends on a known palette, source cache,
+initialization. The transparent edges fixture has the narrowest margin at 119.32×, followed by
+photographic animation at 169.86×. No result depends on a known palette, source cache,
 previous result, or reduced-quality mode.
 
 ![wtfgif speedup across the arbitrary-RGBA corpus](docs/corpus-speedup.svg)
@@ -134,26 +156,26 @@ npm run bench:pareto
 ```
 
 <!-- benchmark:pareto-receipt:start -->
-The receipt records wtfgif 3.2.0 at clean commit
-`ec326c98294ea4ef6180fd6f45e8fb401c1152c1` and uses the corpus timing boundary above: one
+The receipt records wtfgif 3.3.0 at clean commit
+`84eda6ffabdf6073ee01c938fedc499a34e3dcaa` and uses the corpus timing boundary above: one
 first encode of the MakeEmoji production sample (128×128×8) per fresh Node process,
 40 processes per configuration.
 
 | Configuration | Median | Bytes | PSNR | SSIM | Frontier |
 | --- | ---: | ---: | ---: | ---: | :---: |
-| **wtfgif (independent frames)** | 0.593 ms | 75,558 | 34.12 dB | 0.9841 | yes |
-| **wtfgif** | 0.640 ms | 74,914 | 34.12 dB | 0.9841 | yes |
-| sharp effort 1 | 22.441 ms | 76,024 | 40.80 dB | 0.9972 |  |
-| sharp effort 4 | 34.210 ms | 76,091 | 41.25 dB | 0.9975 |  |
-| sharp effort 7 | 131.702 ms | 75,339 | 41.80 dB | 0.9976 |  |
-| sharp defaults | 144.813 ms | 75,642 | 41.79 dB | 0.9976 |  |
-| **image-q + omggif** | 149.845 ms | 39,350 | 31.84 dB | 0.9858 | yes |
-| modern-gif | 151.550 ms | 43,114 | 32.65 dB | 0.9898 |  |
-| **gifenc** | 169.448 ms | 39,101 | 34.54 dB | 0.9832 | yes |
-| sharp effort 10 | 246.603 ms | 75,247 | 41.81 dB | 0.9976 |  |
+| **wtfgif fastest** | 0.687 ms | 74,914 | 34.12 dB | 0.9841 | yes |
+| **wtfgif smallest** | 1.317 ms | 41,422 | 34.12 dB | 0.9841 | yes |
+| sharp effort 1 | 23.355 ms | 76,024 | 40.80 dB | 0.9972 |  |
+| sharp effort 4 | 35.828 ms | 76,091 | 41.25 dB | 0.9975 |  |
+| sharp effort 7 | 137.182 ms | 75,339 | 41.80 dB | 0.9976 |  |
+| sharp defaults | 149.752 ms | 75,642 | 41.79 dB | 0.9976 |  |
+| **image-q + omggif** | 154.758 ms | 39,350 | 31.84 dB | 0.9858 | yes |
+| modern-gif | 160.441 ms | 43,114 | 32.65 dB | 0.9898 |  |
+| **gifenc** | 176.162 ms | 39,101 | 34.54 dB | 0.9832 | yes |
+| sharp effort 10 | 256.207 ms | 75,247 | 41.81 dB | 0.9976 |  |
 
-- **wtfgif**: global quality quantization, run-aware LZW, and changed-rectangle frames through the wtfgif/encode entry point.
-- **wtfgif (independent frames)**: wtfgif/encode with independentFrames: true, writing every frame as a full-canvas image.
+- **wtfgif fastest**: global quality quantization, run-aware LZW, and changed-rectangle frames through the wtfgif/encode entry point.
+- **wtfgif smallest**: wtfgif/encode with mode: "smallest": full-dictionary LZW where it is shorter than the run-aware stream.
 - **image-q + omggif**: global image-q rgbquant palette, nearest mapping, and omggif LZW.
 - **gifenc**: global gifenc rgb565 quantize over opaque pixels, applyPalette per frame, gifenc LZW.
 - **modern-gif**: modern-gif Encoder with 255 colors on the main thread, alpha thresholded first.
@@ -439,18 +461,19 @@ is inside their timed jobs. The README chart uses bar length for median encode
 time. It marks 100× wtfgif latency with a dashed reference line. It also gives
 each encoder's emitted GIF size, relative slowdown, PSNR, and alpha agreement.
 
-| Implementation | Version | Median | wtfgif advantage | Bytes | PSNR | Alpha match |
+| Implementation | Version | Median | Slower than wtfgif fastest | Bytes | PSNR | Alpha match |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| **wtfgif** | 3.2.0 | **0.675 ms** | — | 74,914 | 34.12 dB | 100% |
-| gif.js | 0.2.0 | 88.145 ms | **130.59×** | 80,869 | 33.08 dB | 99.78% |
-| gif.js.optimized | 1.0.1 | 99.800 ms | **147.85×** | 80,304 | 32.20 dB | 99.76% |
-| image-q + omggif | 2.1.2 + 1.0.10 | 116.795 ms | **173.03×** | 39,350 | 31.84 dB | 100% |
-| modern-gif | 2.1.0 | 120.755 ms | **178.90×** | 43,114 | 32.65 dB | 100% |
-| gifenc | 1.0.3 | 135.005 ms | **200.01×** | 39,101 | 34.54 dB | 100% |
+| **wtfgif fastest** | 3.3.0 | **0.685 ms** | — | 74,914 | 34.12 dB | 100% |
+| **wtfgif smallest** | 3.3.0 | **1.295 ms** | — | 41,422 | 34.12 dB | 100% |
+| gif.js | 0.2.0 | 90.115 ms | **131.55×** | 80,869 | 33.08 dB | 99.78% |
+| gif.js.optimized | 1.0.1 | 101.710 ms | **148.48×** | 80,304 | 32.20 dB | 99.76% |
+| image-q + omggif | 2.1.2 + 1.0.10 | 116.445 ms | **169.99×** | 39,350 | 31.84 dB | 100% |
+| modern-gif | 2.1.0 | 124.815 ms | **182.21×** | 43,114 | 32.65 dB | 100% |
+| gifenc | 1.0.3 | 135.910 ms | **198.41×** | 39,101 | 34.54 dB | 100% |
 
-The browser receipt records wtfgif 3.2.0 at clean commit
-`c0d1605d4d58cab50569903cb5f8fe93a3b27326`, together with the package-lock
-hash and complete runtime environment. wtfgif's median is 0.675 ms.
+The browser receipt records wtfgif 3.3.0 at clean commit
+`960d7e72561646cddd62e1d52d0d608f413a5da1`, together with the package-lock
+hash and complete runtime environment. wtfgif's median is 0.685 ms.
 
 Every output must parse as an 8-frame 128×128 animation with exact 100 ms
 delays before its sample is accepted. The validator composites all frames,

@@ -27,6 +27,14 @@ All notable changes to wtfgif are documented here.
 - Benchmark both modes in the corpus, speed-against-size, and Chrome
   comparisons. The `wtfgif` entry throws when `mode: "smallest"` is combined
   with options that use another encoder.
+- The new receipts measure the smallest mode at **0.41x-0.95x** the fastest
+  mode's size (**0.62x** geometric mean) and 1.44x-3.41x its time (2.15x);
+  MakeEmoji goes from 74,914 to 41,422 bytes in 1.33 ms. The smallest mode is
+  **58.65x-411.52x** faster than image-q + omggif and **4.48x-45.70x** faster
+  than sharp. The fastest mode is **119.32x-593.28x** faster than image-q +
+  omggif (**230.18x** geometric mean) and **12.63x-132.28x** faster than sharp
+  (**36.50x**), and the five browser alternatives are **131.55x-198.41x**
+  slower in Chrome.
 
 ## 3.2.0 - 2026-10-06
 

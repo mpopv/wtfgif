@@ -1,11 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1120" height="740" viewBox="0 0 1120 740" role="img" aria-labelledby="title desc">
 <title id="title">GIF encoder speed against file size</title>
-<desc id="desc">Scatter plot of median first-encode time on a logarithmic axis against output size for 10 encoder configurations on the 128×128×8 MakeEmoji animation. A dashed step line marks the Pareto frontier: wtfgif (independent frames), wtfgif, image-q + omggif, gifenc. Labels give each configuration's time, size, and RGB PSNR.</desc>
+<desc id="desc">Scatter plot of median first-encode time on a logarithmic axis against output size for 10 encoder configurations on the 128×128×8 MakeEmoji animation. A dashed step line marks the Pareto frontier: wtfgif fastest, wtfgif smallest, image-q + omggif, gifenc. Labels give each configuration's time, size, and RGB PSNR.</desc>
 <rect width="100%" height="100%" fill="#ffffff"/>
 <g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" fill="#172026">
 <text x="40" y="46" font-size="25" font-weight="700">Encode time against file size</text>
 <text x="40" y="74" font-size="14" fill="#51606a">MakeEmoji production sample, 128×128×8 · first encode in 40 fresh Node processes per encoder · down and left is better</text>
-<text x="40" y="96" font-size="13" fill="#172026">wtfgif is 35× faster than the next encoder, sharp effort 1, whose GIF is 1.01× the size with 6.7 dB higher PSNR. The smallest, gifenc, is 0.52× the size at 265× the time.</text>
+<text x="40" y="96" font-size="13" fill="#172026">wtfgif fastest is 34× faster than sharp effort 1 (1.01× the size, 6.7 dB higher PSNR). wtfgif smallest is 0.55× fastest's size; gifenc, the smallest other, is 0.94× that at 134× the time.</text>
 <text x="40" y="116" font-size="12" fill="#b34b3f">Dashed line: Pareto frontier, where no other encoder is both faster and smaller · PSNR is RGB quality on opaque pixels, higher is better</text>
 <line x1="96" y1="140" x2="96" y2="610" stroke="#e3e8eb"/>
 <text x="96" y="630" text-anchor="middle" font-size="12" fill="#687780">0.1 ms</text>
@@ -31,49 +31,49 @@
 <text x="86" y="144" text-anchor="end" font-size="12" fill="#687780">100 KiB</text>
 <text x="588" y="654" text-anchor="middle" font-size="13" fill="#51606a">Median first-encode time (logarithmic)</text>
 <text x="30" y="375" text-anchor="middle" font-size="13" fill="#51606a" transform="rotate(-90 30 375)">Output size</text>
-<polyline points="674.36,261.06 719.4,260.75 863.42,264.21 930.43,264.63" fill="none" stroke="#3b6fd6" stroke-width="1.5" stroke-opacity="0.45"/>
-<polyline points="286.1,263.2 294.35,263.2 294.35,266.16 877.21,266.16 877.21,429.39 890.34,429.39 890.34,430.53" fill="none" stroke="#b34b3f" stroke-width="2" stroke-dasharray="6 4"/>
-<line x1="286.1" y1="263.2" x2="298.1" y2="238.2" stroke="#9aa6ad" stroke-width="1"/>
-<line x1="294.35" y1="266.16" x2="306.35" y2="271.16" stroke="#9aa6ad" stroke-width="1"/>
-<line x1="877.21" y1="429.39" x2="865.21" y2="429.39" stroke="#9aa6ad" stroke-width="1"/>
-<line x1="890.34" y1="430.53" x2="902.34" y2="430.53" stroke="#9aa6ad" stroke-width="1"/>
-<line x1="674.36" y1="261.06" x2="662.36" y2="256.06" stroke="#9aa6ad" stroke-width="1"/>
-<line x1="719.4" y1="260.75" x2="731.4" y2="235.75" stroke="#9aa6ad" stroke-width="1"/>
-<line x1="863.42" y1="264.21" x2="851.42" y2="269.21" stroke="#9aa6ad" stroke-width="1"/>
-<line x1="873.56" y1="262.82" x2="885.56" y2="237.82" stroke="#9aa6ad" stroke-width="1"/>
-<line x1="878.42" y1="412.11" x2="890.42" y2="407.11" stroke="#9aa6ad" stroke-width="1"/>
-<line x1="930.43" y1="264.63" x2="942.43" y2="264.63" stroke="#9aa6ad" stroke-width="1"/>
-<circle cx="294.35" cy="266.16" r="7" fill="#0d8f6f" stroke="#ffffff" stroke-width="1.5"/>
-<circle cx="286.1" cy="263.2" r="7" fill="#0d8f6f" stroke="#ffffff" stroke-width="1.5"/>
-<circle cx="877.21" cy="429.39" r="6" fill="#5c6b75" stroke="#ffffff" stroke-width="1.5"/>
-<circle cx="890.34" cy="430.53" r="6" fill="#5c6b75" stroke="#ffffff" stroke-width="1.5"/>
-<circle cx="878.42" cy="412.11" r="6" fill="#5c6b75" stroke="#ffffff" stroke-width="1.5"/>
-<circle cx="674.36" cy="261.06" r="6" fill="#3b6fd6" stroke="#ffffff" stroke-width="1.5"/>
-<circle cx="719.4" cy="260.75" r="6" fill="#3b6fd6" stroke="#ffffff" stroke-width="1.5"/>
-<circle cx="863.42" cy="264.21" r="6" fill="#3b6fd6" stroke="#ffffff" stroke-width="1.5"/>
-<circle cx="930.43" cy="264.63" r="6" fill="#3b6fd6" stroke="#ffffff" stroke-width="1.5"/>
-<circle cx="873.56" cy="262.82" r="6" fill="#3b6fd6" stroke="#ffffff" stroke-width="1.5"/>
-<text x="298.1" y="220.2" font-size="13" font-weight="700" fill="#0d8f6f">wtfgif (independent frames)</text>
-<text x="298.1" y="234.2" font-size="11" fill="#51606a">0.59 ms · 73.8 KiB · 34.1 dB</text>
-<text x="306.35" y="283.16" font-size="13" font-weight="700" fill="#0d8f6f">wtfgif</text>
-<text x="306.35" y="297.16" font-size="11" fill="#51606a">0.64 ms · 73.2 KiB · 34.1 dB</text>
-<text x="705.91" y="426.39" font-size="13" font-weight="700" fill="#5c6b75">image-q + omggif</text>
-<text x="705.91" y="440.39" font-size="11" fill="#51606a">150 ms · 38.4 KiB · 31.8 dB</text>
-<text x="902.34" y="427.53" font-size="13" font-weight="700" fill="#5c6b75">gifenc</text>
-<text x="902.34" y="441.53" font-size="11" fill="#51606a">169 ms · 38.2 KiB · 34.5 dB</text>
-<text x="508.96" y="238.06" font-size="13" font-weight="700" fill="#3b6fd6">sharp effort 1</text>
-<text x="508.96" y="252.06" font-size="11" fill="#51606a">22 ms · 74.2 KiB · 40.8 dB</text>
-<text x="731.4" y="217.75" font-size="13" font-weight="700" fill="#3b6fd6">sharp effort 4</text>
-<text x="731.4" y="231.75" font-size="11" fill="#51606a">34 ms · 74.3 KiB · 41.2 dB</text>
-<text x="692.12" y="281.21" font-size="13" font-weight="700" fill="#3b6fd6">sharp effort 7</text>
-<text x="692.12" y="295.21" font-size="11" fill="#51606a">132 ms · 73.6 KiB · 41.8 dB</text>
-<text x="885.56" y="219.82" font-size="13" font-weight="700" fill="#3b6fd6">sharp defaults</text>
-<text x="885.56" y="233.82" font-size="11" fill="#51606a">145 ms · 73.9 KiB · 41.8 dB</text>
-<text x="890.42" y="389.11" font-size="13" font-weight="700" fill="#5c6b75">modern-gif</text>
-<text x="890.42" y="403.11" font-size="11" fill="#51606a">152 ms · 42.1 KiB · 32.7 dB</text>
-<text x="942.43" y="261.63" font-size="13" font-weight="700" fill="#3b6fd6">sharp effort 10</text>
-<text x="942.43" y="275.63" font-size="11" fill="#51606a">247 ms · 73.5 KiB · 41.8 dB</text>
+<polyline points="678.62,261.06 724.34,260.75 867.77,264.21 934.51,264.63" fill="none" stroke="#3b6fd6" stroke-width="1.5" stroke-opacity="0.45"/>
+<polyline points="301.81,266.16 371.38,266.16 371.38,419.88 880.65,419.88 880.65,429.39 894.49,429.39 894.49,430.53" fill="none" stroke="#b34b3f" stroke-width="2" stroke-dasharray="6 4"/>
+<line x1="301.81" y1="266.16" x2="289.81" y2="266.16" stroke="#9aa6ad" stroke-width="1"/>
+<line x1="371.38" y1="419.88" x2="359.38" y2="419.88" stroke="#9aa6ad" stroke-width="1"/>
+<line x1="880.65" y1="429.39" x2="868.65" y2="434.39" stroke="#9aa6ad" stroke-width="1"/>
+<line x1="894.49" y1="430.53" x2="906.49" y2="430.53" stroke="#9aa6ad" stroke-width="1"/>
+<line x1="678.62" y1="261.06" x2="666.62" y2="261.06" stroke="#9aa6ad" stroke-width="1"/>
+<line x1="724.34" y1="260.75" x2="736.34" y2="235.75" stroke="#9aa6ad" stroke-width="1"/>
+<line x1="867.77" y1="264.21" x2="855.77" y2="269.21" stroke="#9aa6ad" stroke-width="1"/>
+<line x1="877.14" y1="262.82" x2="889.14" y2="287.82" stroke="#9aa6ad" stroke-width="1"/>
+<line x1="884.51" y1="412.11" x2="896.51" y2="407.11" stroke="#9aa6ad" stroke-width="1"/>
+<line x1="934.51" y1="264.63" x2="946.51" y2="264.63" stroke="#9aa6ad" stroke-width="1"/>
+<circle cx="301.81" cy="266.16" r="7" fill="#0d8f6f" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="371.38" cy="419.88" r="7" fill="#0d8f6f" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="880.65" cy="429.39" r="6" fill="#5c6b75" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="894.49" cy="430.53" r="6" fill="#5c6b75" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="884.51" cy="412.11" r="6" fill="#5c6b75" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="678.62" cy="261.06" r="6" fill="#3b6fd6" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="724.34" cy="260.75" r="6" fill="#3b6fd6" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="867.77" cy="264.21" r="6" fill="#3b6fd6" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="934.51" cy="264.63" r="6" fill="#3b6fd6" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="877.14" cy="262.82" r="6" fill="#3b6fd6" stroke="#ffffff" stroke-width="1.5"/>
+<text x="124.61" y="263.16" font-size="13" font-weight="700" fill="#0d8f6f">wtfgif fastest</text>
+<text x="124.61" y="277.16" font-size="11" fill="#51606a">0.69 ms · 73.2 KiB · 34.1 dB</text>
+<text x="194.18" y="416.88" font-size="13" font-weight="700" fill="#0d8f6f">wtfgif smallest</text>
+<text x="194.18" y="430.88" font-size="11" fill="#51606a">1.32 ms · 40.5 KiB · 34.1 dB</text>
+<text x="709.35" y="446.39" font-size="13" font-weight="700" fill="#5c6b75">image-q + omggif</text>
+<text x="709.35" y="460.39" font-size="11" fill="#51606a">155 ms · 38.4 KiB · 31.8 dB</text>
+<text x="906.49" y="427.53" font-size="13" font-weight="700" fill="#5c6b75">gifenc</text>
+<text x="906.49" y="441.53" font-size="11" fill="#51606a">176 ms · 38.2 KiB · 34.5 dB</text>
+<text x="513.22" y="258.06" font-size="13" font-weight="700" fill="#3b6fd6">sharp effort 1</text>
+<text x="513.22" y="272.06" font-size="11" fill="#51606a">23 ms · 74.2 KiB · 40.8 dB</text>
+<text x="736.34" y="217.75" font-size="13" font-weight="700" fill="#3b6fd6">sharp effort 4</text>
+<text x="736.34" y="231.75" font-size="11" fill="#51606a">36 ms · 74.3 KiB · 41.2 dB</text>
+<text x="696.47" y="281.21" font-size="13" font-weight="700" fill="#3b6fd6">sharp effort 7</text>
+<text x="696.47" y="295.21" font-size="11" fill="#51606a">137 ms · 73.6 KiB · 41.8 dB</text>
+<text x="889.14" y="299.82" font-size="13" font-weight="700" fill="#3b6fd6">sharp defaults</text>
+<text x="889.14" y="313.82" font-size="11" fill="#51606a">150 ms · 73.9 KiB · 41.8 dB</text>
+<text x="896.51" y="389.11" font-size="13" font-weight="700" fill="#5c6b75">modern-gif</text>
+<text x="896.51" y="403.11" font-size="11" fill="#51606a">160 ms · 42.1 KiB · 32.7 dB</text>
+<text x="946.51" y="261.63" font-size="13" font-weight="700" fill="#3b6fd6">sharp effort 10</text>
+<text x="946.51" y="275.63" font-size="11" fill="#51606a">256 ms · 73.5 KiB · 41.8 dB</text>
 <text x="40" y="698" font-size="12" fill="#687780">sharp may use a palette per frame; wtfgif uses one palette without dithering. gif.js and gif.js.optimized render in browser Web Workers and do not run in Node.</text>
-<text x="40" y="718" font-size="12" fill="#687780">Apple M3 Pro · Node v22.23.2 · wtfgif 3.2.0 · raw samples in benchmarks/pareto.json</text>
+<text x="40" y="718" font-size="12" fill="#687780">Apple M3 Pro · Node v22.23.2 · wtfgif 3.3.0 · raw samples in benchmarks/pareto.json</text>
 </g>
 </svg>

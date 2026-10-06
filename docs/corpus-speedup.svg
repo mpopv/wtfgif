@@ -1,103 +1,113 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="1170" viewBox="0 0 1120 1170" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="1330" viewBox="0 0 1120 1330" role="img" aria-labelledby="title desc">
 <title id="title">wtfgif speedup over a JavaScript and a native GIF encoder</title>
-<desc id="desc">For 10 RGBA workloads, paired bars on a logarithmic axis show how many times faster wtfgif's first encode is than image-q plus omggif and than sharp. Labels give all three median encode times, wtfgif's output size relative to each, and each encoder's RGB quality.</desc>
+<desc id="desc">For 10 RGBA workloads, paired bars on a logarithmic axis show how many times faster wtfgif's first encode in its fastest mode is than image-q plus omggif and than sharp. Labels give all three median encode times, wtfgif's output size relative to each, each encoder's RGB quality, and wtfgif's smallest mode time and size.</desc>
 <rect width="100%" height="100%" fill="#ffffff"/>
 <g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" fill="#172026">
-<text x="40" y="46" font-size="25" font-weight="700">wtfgif first-encode speedup on 10 RGBA workloads</text>
+<text x="40" y="46" font-size="25" font-weight="700">wtfgif fastest-mode speedup on 10 RGBA workloads</text>
 <text x="40" y="74" font-size="14" fill="#51606a">Cold-cache first real encode after initialization · 40 fresh Node processes per encoder · logarithmic axis, longer is faster</text>
 <rect x="40" y="92" width="14" height="14" rx="2" fill="#0d8f6f"/>
-<text x="62" y="104" font-size="13">vs image-q + omggif (JavaScript): 123×–585× (238× geometric mean)</text>
+<text x="62" y="104" font-size="13">vs image-q + omggif (JavaScript): 119×–593× (230× geometric mean)</text>
 <rect x="40" y="114" width="14" height="14" rx="2" fill="#3b6fd6"/>
-<text x="62" y="126" font-size="13">vs sharp (libvips), effort 1, no dither (native): 13×–137× (37× geometric mean)</text>
-<line x1="250" y1="152" x2="250" y2="1076" stroke="#e3e8eb" stroke-width="1"/>
+<text x="62" y="126" font-size="13">vs sharp (libvips), effort 1, no dither (native): 13×–132× (36× geometric mean)</text>
+<line x1="250" y1="152" x2="250" y2="1236" stroke="#e3e8eb" stroke-width="1"/>
 <text x="250" y="146" text-anchor="middle" font-size="11" fill="#687780">1×</text>
-<line x1="500" y1="152" x2="500" y2="1076" stroke="#e3e8eb" stroke-width="1"/>
+<line x1="500" y1="152" x2="500" y2="1236" stroke="#e3e8eb" stroke-width="1"/>
 <text x="500" y="146" text-anchor="middle" font-size="11" fill="#687780">10×</text>
-<line x1="750" y1="152" x2="750" y2="1076" stroke="#e3e8eb" stroke-width="1"/>
+<line x1="750" y1="152" x2="750" y2="1236" stroke="#e3e8eb" stroke-width="1"/>
 <text x="750" y="146" text-anchor="middle" font-size="11" fill="#687780">100×</text>
-<line x1="1000" y1="152" x2="1000" y2="1076" stroke="#e3e8eb" stroke-width="1"/>
+<line x1="1000" y1="152" x2="1000" y2="1236" stroke="#e3e8eb" stroke-width="1"/>
 <text x="1000" y="146" text-anchor="middle" font-size="11" fill="#687780">1000×</text>
 <text x="220" y="188" text-anchor="end" font-size="14" font-weight="600">MakeEmoji production sample</text>
 <text x="220" y="204" text-anchor="end" font-size="11" fill="#687780">128×128×8</text>
-<rect x="250" y="170" width="593.97" height="18" rx="3" fill="#0d8f6f"/>
-<text x="851.97" y="184" font-size="12" font-weight="700">237.6×</text>
-<rect x="250" y="192" width="387.31" height="18" rx="3" fill="#3b6fd6"/>
-<text x="645.31" y="206" font-size="12" font-weight="700">35.4×</text>
-<text x="250" y="228" font-size="11" fill="#51606a">0.631 ms wtfgif · 149.9 ms image-q + omggif · 22.3 ms sharp</text>
-<text x="250" y="243" font-size="11" fill="#687780">wtfgif size 1.90× image-q + omggif, 0.99× sharp · RGB 34.1 dB wtfgif, 31.8 dB image-q + omggif, 40.8 dB sharp</text>
-<text x="220" y="280" text-anchor="end" font-size="14" font-weight="600">Photographic animation</text>
-<text x="220" y="296" text-anchor="end" font-size="11" fill="#687780">128×96×8</text>
-<rect x="250" y="262" width="561.48" height="18" rx="3" fill="#0d8f6f"/>
-<text x="819.48" y="276" font-size="12" font-weight="700">176.2×</text>
-<rect x="250" y="284" width="368.92" height="18" rx="3" fill="#3b6fd6"/>
-<text x="626.92" y="298" font-size="12" font-weight="700">29.9×</text>
-<text x="250" y="320" font-size="11" fill="#51606a">0.421 ms wtfgif · 74.1 ms image-q + omggif · 12.6 ms sharp</text>
-<text x="250" y="335" font-size="11" fill="#687780">wtfgif size 1.52× image-q + omggif, 1.35× sharp · RGB 38.2 dB wtfgif, 38.6 dB image-q + omggif, 49.7 dB sharp</text>
-<text x="220" y="372" text-anchor="end" font-size="14" font-weight="600">Pixel art</text>
-<text x="220" y="388" text-anchor="end" font-size="11" fill="#687780">64×64×12</text>
-<rect x="250" y="354" width="565.8" height="18" rx="3" fill="#0d8f6f"/>
-<text x="823.8" y="368" font-size="12" font-weight="700">183.3×</text>
-<rect x="250" y="376" width="310.81" height="18" rx="3" fill="#3b6fd6"/>
-<text x="568.81" y="390" font-size="12" font-weight="700">17.5×</text>
-<text x="250" y="412" font-size="11" fill="#51606a">0.152 ms wtfgif · 27.9 ms image-q + omggif · 2.663 ms sharp</text>
-<text x="250" y="427" font-size="11" fill="#687780">wtfgif size 0.68× image-q + omggif, 2.46× sharp · RGB lossless wtfgif, lossless image-q + omggif, 55.3 dB sharp</text>
-<text x="220" y="464" text-anchor="end" font-size="14" font-weight="600">Smooth gradients</text>
-<text x="220" y="480" text-anchor="end" font-size="11" fill="#687780">128×128×8</text>
-<rect x="250" y="446" width="581.08" height="18" rx="3" fill="#0d8f6f"/>
-<text x="839.08" y="460" font-size="12" font-weight="700">211.0×</text>
-<rect x="250" y="468" width="441.82" height="18" rx="3" fill="#3b6fd6"/>
-<text x="699.82" y="482" font-size="12" font-weight="700">58.5×</text>
-<text x="250" y="504" font-size="11" fill="#51606a">0.625 ms wtfgif · 131.9 ms image-q + omggif · 36.6 ms sharp</text>
-<text x="250" y="519" font-size="11" fill="#687780">wtfgif size 1.70× image-q + omggif, 0.60× sharp · RGB 27.8 dB wtfgif, 10.8 dB image-q + omggif, 35.1 dB sharp</text>
-<text x="220" y="556" text-anchor="end" font-size="14" font-weight="600">Deterministic noise</text>
-<text x="220" y="572" text-anchor="end" font-size="11" fill="#687780">128×128×8</text>
-<rect x="250" y="538" width="613.68" height="18" rx="3" fill="#0d8f6f"/>
-<text x="871.68" y="552" font-size="12" font-weight="700">284.9×</text>
-<rect x="250" y="560" width="534.44" height="18" rx="3" fill="#3b6fd6"/>
-<text x="792.44" y="574" font-size="12" font-weight="700">137.3×</text>
-<text x="250" y="596" font-size="11" fill="#51606a">0.372 ms wtfgif · 106.1 ms image-q + omggif · 51.1 ms sharp</text>
-<text x="250" y="611" font-size="11" fill="#687780">wtfgif size 7.28× image-q + omggif, 1.22× sharp · RGB 26.3 dB wtfgif, 10.3 dB image-q + omggif, 25.7 dB sharp</text>
-<text x="220" y="648" text-anchor="end" font-size="14" font-weight="600">Transparent edges</text>
-<text x="220" y="664" text-anchor="end" font-size="11" fill="#687780">128×128×8</text>
-<rect x="250" y="630" width="522.8" height="18" rx="3" fill="#0d8f6f"/>
-<text x="780.8" y="644" font-size="12" font-weight="700">123.4×</text>
-<rect x="250" y="652" width="395.09" height="18" rx="3" fill="#3b6fd6"/>
-<text x="653.09" y="666" font-size="12" font-weight="700">38.0×</text>
-<text x="250" y="688" font-size="11" fill="#51606a">0.386 ms wtfgif · 47.6 ms image-q + omggif · 14.7 ms sharp</text>
-<text x="250" y="703" font-size="11" fill="#687780">wtfgif size 2.10× image-q + omggif, 0.64× sharp · RGB 36.7 dB wtfgif, 8.9 dB image-q + omggif, 37.9 dB sharp</text>
-<text x="220" y="740" text-anchor="end" font-size="14" font-weight="600">Disjoint frame palettes</text>
-<text x="220" y="756" text-anchor="end" font-size="11" fill="#687780">128×128×8</text>
-<rect x="250" y="722" width="587.18" height="18" rx="3" fill="#0d8f6f"/>
-<text x="845.18" y="736" font-size="12" font-weight="700">223.2×</text>
-<rect x="250" y="744" width="280.53" height="18" rx="3" fill="#3b6fd6"/>
-<text x="538.53" y="758" font-size="12" font-weight="700">13.2×</text>
-<text x="250" y="780" font-size="11" fill="#51606a">0.304 ms wtfgif · 67.8 ms image-q + omggif · 4.021 ms sharp</text>
-<text x="250" y="795" font-size="11" fill="#687780">wtfgif size 1.96× image-q + omggif, 1.97× sharp · RGB lossless wtfgif, lossless image-q + omggif, 51.1 dB sharp</text>
-<text x="220" y="832" text-anchor="end" font-size="14" font-weight="600">Nearly static animation</text>
-<text x="220" y="848" text-anchor="end" font-size="11" fill="#687780">128×128×12</text>
-<rect x="250" y="814" width="647.09" height="18" rx="3" fill="#0d8f6f"/>
-<text x="905.09" y="828" font-size="12" font-weight="700">387.6×</text>
-<rect x="250" y="836" width="331.12" height="18" rx="3" fill="#3b6fd6"/>
-<text x="589.12" y="850" font-size="12" font-weight="700">21.1×</text>
-<text x="250" y="872" font-size="11" fill="#51606a">0.218 ms wtfgif · 84.7 ms image-q + omggif · 4.612 ms sharp</text>
-<text x="250" y="887" font-size="11" fill="#687780">wtfgif size 0.37× image-q + omggif, 2.41× sharp · RGB lossless wtfgif, lossless image-q + omggif, 50.5 dB sharp</text>
-<text x="220" y="924" text-anchor="end" font-size="14" font-weight="600">Tiny animation</text>
-<text x="220" y="940" text-anchor="end" font-size="11" fill="#687780">16×16×6</text>
-<rect x="250" y="906" width="691.88" height="18" rx="3" fill="#0d8f6f"/>
-<text x="949.88" y="920" font-size="12" font-weight="700">585.5×</text>
-<rect x="250" y="928" width="450.92" height="18" rx="3" fill="#3b6fd6"/>
-<text x="708.92" y="942" font-size="12" font-weight="700">63.6×</text>
-<text x="250" y="964" font-size="11" fill="#51606a">0.097 ms wtfgif · 57.0 ms image-q + omggif · 6.196 ms sharp</text>
-<text x="250" y="979" font-size="11" fill="#687780">wtfgif size 1.16× image-q + omggif, 0.41× sharp · RGB 28.4 dB wtfgif, 22.2 dB image-q + omggif, 50.1 dB sharp</text>
-<text x="220" y="1016" text-anchor="end" font-size="14" font-weight="600">One-megapixel animation</text>
-<text x="220" y="1032" text-anchor="end" font-size="11" fill="#687780">512×512×4</text>
-<rect x="250" y="998" width="576.27" height="18" rx="3" fill="#0d8f6f"/>
-<text x="834.27" y="1012" font-size="12" font-weight="700">201.9×</text>
-<rect x="250" y="1020" width="426.81" height="18" rx="3" fill="#3b6fd6"/>
-<text x="684.81" y="1034" font-size="12" font-weight="700">51.0×</text>
-<text x="250" y="1056" font-size="11" fill="#51606a">2.822 ms wtfgif · 569.6 ms image-q + omggif · 143.8 ms sharp</text>
-<text x="250" y="1071" font-size="11" fill="#687780">wtfgif size 22.42× image-q + omggif, 1.71× sharp · RGB 28.8 dB wtfgif, 7.9 dB image-q + omggif, 33.5 dB sharp</text>
-<text x="40" y="1121" font-size="12" fill="#687780">Latency includes palette creation, mapping, LZW, and GIF assembly · every output has exact shape, timing, and binary alpha · sharp may use a palette per frame.</text>
-<text x="40" y="1143" font-size="12" fill="#687780">Apple M3 Pro · Node v22.23.2 · wtfgif 3.2.0 · no known palette, source cache, or reused result</text>
+<rect x="250" y="170" width="591.22" height="18" rx="3" fill="#0d8f6f"/>
+<text x="849.22" y="184" font-size="12" font-weight="700">231.7×</text>
+<rect x="250" y="192" width="386.98" height="18" rx="3" fill="#3b6fd6"/>
+<text x="644.98" y="206" font-size="12" font-weight="700">35.3×</text>
+<text x="250" y="228" font-size="11" fill="#51606a">0.663 ms wtfgif fastest · 153.5 ms image-q + omggif · 23.4 ms sharp</text>
+<text x="250" y="243" font-size="11" fill="#687780">fastest size 1.90× image-q + omggif, 0.99× sharp · RGB 34.1 dB wtfgif, 31.8 dB image-q + omggif, 40.8 dB sharp</text>
+<text x="250" y="258" font-size="11" fill="#0b6e55">smallest mode 1.329 ms, 0.55× fastest's size · 1.05× image-q + omggif, 0.54× sharp · same pixels</text>
+<text x="220" y="296" text-anchor="end" font-size="14" font-weight="600">Photographic animation</text>
+<text x="220" y="312" text-anchor="end" font-size="11" fill="#687780">128×96×8</text>
+<rect x="250" y="278" width="557.52" height="18" rx="3" fill="#0d8f6f"/>
+<text x="815.52" y="292" font-size="12" font-weight="700">169.9×</text>
+<rect x="250" y="300" width="366.9" height="18" rx="3" fill="#3b6fd6"/>
+<text x="624.9" y="314" font-size="12" font-weight="700">29.3×</text>
+<text x="250" y="336" font-size="11" fill="#51606a">0.447 ms wtfgif fastest · 76.0 ms image-q + omggif · 13.1 ms sharp</text>
+<text x="250" y="351" font-size="11" fill="#687780">fastest size 1.52× image-q + omggif, 1.35× sharp · RGB 38.2 dB wtfgif, 38.6 dB image-q + omggif, 49.7 dB sharp</text>
+<text x="250" y="366" font-size="11" fill="#0b6e55">smallest mode 1.068 ms, 0.61× fastest's size · 0.92× image-q + omggif, 0.82× sharp · same pixels</text>
+<text x="220" y="404" text-anchor="end" font-size="14" font-weight="600">Pixel art</text>
+<text x="220" y="420" text-anchor="end" font-size="11" fill="#687780">64×64×12</text>
+<rect x="250" y="386" width="558.54" height="18" rx="3" fill="#0d8f6f"/>
+<text x="816.54" y="400" font-size="12" font-weight="700">171.5×</text>
+<rect x="250" y="408" width="307.57" height="18" rx="3" fill="#3b6fd6"/>
+<text x="565.57" y="422" font-size="12" font-weight="700">17.0×</text>
+<text x="250" y="444" font-size="11" fill="#51606a">0.167 ms wtfgif fastest · 28.6 ms image-q + omggif · 2.830 ms sharp</text>
+<text x="250" y="459" font-size="11" fill="#687780">fastest size 0.68× image-q + omggif, 2.46× sharp · RGB lossless wtfgif, lossless image-q + omggif, 55.3 dB sharp</text>
+<text x="250" y="474" font-size="11" fill="#0b6e55">smallest mode 0.252 ms, 0.41× fastest's size · 0.28× image-q + omggif, 1.00× sharp · same pixels</text>
+<text x="220" y="512" text-anchor="end" font-size="14" font-weight="600">Smooth gradients</text>
+<text x="220" y="528" text-anchor="end" font-size="11" fill="#687780">128×128×8</text>
+<rect x="250" y="494" width="577.24" height="18" rx="3" fill="#0d8f6f"/>
+<text x="835.24" y="508" font-size="12" font-weight="700">203.7×</text>
+<rect x="250" y="516" width="438.62" height="18" rx="3" fill="#3b6fd6"/>
+<text x="696.62" y="530" font-size="12" font-weight="700">56.8×</text>
+<text x="250" y="552" font-size="11" fill="#51606a">0.665 ms wtfgif fastest · 135.4 ms image-q + omggif · 37.8 ms sharp</text>
+<text x="250" y="567" font-size="11" fill="#687780">fastest size 1.70× image-q + omggif, 0.60× sharp · RGB 27.8 dB wtfgif, 10.8 dB image-q + omggif, 35.1 dB sharp</text>
+<text x="250" y="582" font-size="11" fill="#0b6e55">smallest mode 1.594 ms, 0.87× fastest's size · 1.48× image-q + omggif, 0.52× sharp · same pixels</text>
+<text x="220" y="620" text-anchor="end" font-size="14" font-weight="600">Deterministic noise</text>
+<text x="220" y="636" text-anchor="end" font-size="11" fill="#687780">128×128×8</text>
+<rect x="250" y="602" width="611.04" height="18" rx="3" fill="#0d8f6f"/>
+<text x="869.04" y="616" font-size="12" font-weight="700">278.1×</text>
+<rect x="250" y="624" width="530.37" height="18" rx="3" fill="#3b6fd6"/>
+<text x="788.37" y="638" font-size="12" font-weight="700">132.3×</text>
+<text x="250" y="660" font-size="11" fill="#51606a">0.403 ms wtfgif fastest · 112.1 ms image-q + omggif · 53.3 ms sharp</text>
+<text x="250" y="675" font-size="11" fill="#687780">fastest size 7.28× image-q + omggif, 1.22× sharp · RGB 26.3 dB wtfgif, 10.3 dB image-q + omggif, 25.7 dB sharp</text>
+<text x="250" y="690" font-size="11" fill="#0b6e55">smallest mode 1.175 ms, 0.84× fastest's size · 6.15× image-q + omggif, 1.03× sharp · same pixels</text>
+<text x="220" y="728" text-anchor="end" font-size="14" font-weight="600">Transparent edges</text>
+<text x="220" y="744" text-anchor="end" font-size="11" fill="#687780">128×128×8</text>
+<rect x="250" y="710" width="519.18" height="18" rx="3" fill="#0d8f6f"/>
+<text x="777.18" y="724" font-size="12" font-weight="700">119.3×</text>
+<rect x="250" y="732" width="393.31" height="18" rx="3" fill="#3b6fd6"/>
+<text x="651.31" y="746" font-size="12" font-weight="700">37.4×</text>
+<text x="250" y="768" font-size="11" fill="#51606a">0.410 ms wtfgif fastest · 48.9 ms image-q + omggif · 15.3 ms sharp</text>
+<text x="250" y="783" font-size="11" fill="#687780">fastest size 2.10× image-q + omggif, 0.64× sharp · RGB 36.7 dB wtfgif, 8.9 dB image-q + omggif, 37.9 dB sharp</text>
+<text x="250" y="798" font-size="11" fill="#0b6e55">smallest mode 0.743 ms, 0.95× fastest's size · 1.99× image-q + omggif, 0.60× sharp · same pixels</text>
+<text x="220" y="836" text-anchor="end" font-size="14" font-weight="600">Disjoint frame palettes</text>
+<text x="220" y="852" text-anchor="end" font-size="11" fill="#687780">128×128×8</text>
+<rect x="250" y="818" width="581.76" height="18" rx="3" fill="#0d8f6f"/>
+<text x="839.76" y="832" font-size="12" font-weight="700">212.3×</text>
+<rect x="250" y="840" width="275.34" height="18" rx="3" fill="#3b6fd6"/>
+<text x="533.34" y="854" font-size="12" font-weight="700">12.6×</text>
+<text x="250" y="876" font-size="11" fill="#51606a">0.332 ms wtfgif fastest · 70.5 ms image-q + omggif · 4.191 ms sharp</text>
+<text x="250" y="891" font-size="11" fill="#687780">fastest size 1.96× image-q + omggif, 1.97× sharp · RGB lossless wtfgif, lossless image-q + omggif, 51.1 dB sharp</text>
+<text x="250" y="906" font-size="11" fill="#0b6e55">smallest mode 0.937 ms, 0.51× fastest's size · 1.00× image-q + omggif, 1.00× sharp · same pixels</text>
+<text x="220" y="944" text-anchor="end" font-size="14" font-weight="600">Nearly static animation</text>
+<text x="220" y="960" text-anchor="end" font-size="11" fill="#687780">128×128×12</text>
+<rect x="250" y="926" width="640.19" height="18" rx="3" fill="#0d8f6f"/>
+<text x="898.19" y="940" font-size="12" font-weight="700">363.7×</text>
+<rect x="250" y="948" width="326.26" height="18" rx="3" fill="#3b6fd6"/>
+<text x="584.26" y="962" font-size="12" font-weight="700">20.2×</text>
+<text x="250" y="984" font-size="11" fill="#51606a">0.240 ms wtfgif fastest · 87.1 ms image-q + omggif · 4.835 ms sharp</text>
+<text x="250" y="999" font-size="11" fill="#687780">fastest size 0.37× image-q + omggif, 2.41× sharp · RGB lossless wtfgif, lossless image-q + omggif, 50.5 dB sharp</text>
+<text x="250" y="1014" font-size="11" fill="#0b6e55">smallest mode 0.390 ms, 0.41× fastest's size · 0.15× image-q + omggif, 1.00× sharp · same pixels</text>
+<text x="220" y="1052" text-anchor="end" font-size="14" font-weight="600">Tiny animation</text>
+<text x="220" y="1068" text-anchor="end" font-size="11" fill="#687780">16×16×6</text>
+<rect x="250" y="1034" width="693.32" height="18" rx="3" fill="#0d8f6f"/>
+<text x="951.32" y="1048" font-size="12" font-weight="700">593.3×</text>
+<rect x="250" y="1056" width="454.69" height="18" rx="3" fill="#3b6fd6"/>
+<text x="712.69" y="1070" font-size="12" font-weight="700">65.9×</text>
+<text x="250" y="1092" font-size="11" fill="#51606a">0.096 ms wtfgif fastest · 57.0 ms image-q + omggif · 6.333 ms sharp</text>
+<text x="250" y="1107" font-size="11" fill="#687780">fastest size 1.16× image-q + omggif, 0.41× sharp · RGB 28.4 dB wtfgif, 22.2 dB image-q + omggif, 50.1 dB sharp</text>
+<text x="250" y="1122" font-size="11" fill="#0b6e55">smallest mode 0.139 ms, 0.77× fastest's size · 0.90× image-q + omggif, 0.32× sharp · same pixels</text>
+<text x="220" y="1160" text-anchor="end" font-size="14" font-weight="600">One-megapixel animation</text>
+<text x="220" y="1176" text-anchor="end" font-size="11" fill="#687780">512×512×4</text>
+<rect x="250" y="1142" width="575.16" height="18" rx="3" fill="#0d8f6f"/>
+<text x="833.16" y="1156" font-size="12" font-weight="700">199.8×</text>
+<rect x="250" y="1164" width="425.65" height="18" rx="3" fill="#3b6fd6"/>
+<text x="683.65" y="1178" font-size="12" font-weight="700">50.4×</text>
+<text x="250" y="1200" font-size="11" fill="#51606a">2.933 ms wtfgif fastest · 586.1 ms image-q + omggif · 147.9 ms sharp</text>
+<text x="250" y="1215" font-size="11" fill="#687780">fastest size 22.42× image-q + omggif, 1.71× sharp · RGB 28.8 dB wtfgif, 7.9 dB image-q + omggif, 33.5 dB sharp</text>
+<text x="250" y="1230" font-size="11" fill="#0b6e55">smallest mode 9.993 ms, 0.52× fastest's size · 11.73× image-q + omggif, 0.90× sharp · same pixels</text>
+<text x="40" y="1281" font-size="12" fill="#687780">Latency includes palette creation, mapping, LZW, and GIF assembly · every output has exact shape, timing, and binary alpha · sharp may use a palette per frame.</text>
+<text x="40" y="1303" font-size="12" fill="#687780">Apple M3 Pro · Node v22.23.2 · wtfgif 3.3.0 · no known palette, source cache, or reused result</text>
 </g>
 </svg>
