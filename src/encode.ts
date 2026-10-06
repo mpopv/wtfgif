@@ -11,6 +11,7 @@ import {
 
 export type {
 	EncodeRgbaGifFramesOptions,
+	GifEncodeMode,
 	GifFrameDelay,
 	RgbaGifFrame,
 	RgbaGifFrames,

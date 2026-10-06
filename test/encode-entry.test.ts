@@ -93,6 +93,7 @@ describe("encode-only quality entry", () => {
 				0,
 				128,
 				false,
+				false,
 			);
 			expect(prepareEncode).toHaveBeenNthCalledWith(
 				2,
@@ -103,6 +104,7 @@ describe("encode-only quality entry", () => {
 				0,
 				0,
 				128,
+				false,
 				false,
 			);
 			expect(prepareEncode).toHaveBeenCalledTimes(23);
@@ -115,6 +117,7 @@ describe("encode-only quality entry", () => {
 				0,
 				128,
 				false,
+				false,
 			);
 			expect(prepareLargeEncode).toHaveBeenCalledExactlyOnceWith(
 				1001 * 1000 * 4,
@@ -124,6 +127,7 @@ describe("encode-only quality entry", () => {
 				0,
 				0,
 				128,
+				false,
 				false,
 			);
 			expect(prepareOutputPointer).toHaveBeenCalledTimes(2);

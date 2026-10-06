@@ -40,7 +40,10 @@ pub fn fuzz_encode(data: &[u8]) {
         DelaySource::Constant(u16::from(data[3])),
         0,
         data[3],
-        independent_frames,
+        CompactOptions {
+            independent_frames,
+            smallest: false,
+        },
         Vec::new(),
     )
     .expect("bounded RGBA input must encode");
@@ -136,7 +139,10 @@ pub fn fuzz_roundtrip(data: &[u8]) {
         delays,
         loop_count,
         alpha_threshold,
-        independent_frames,
+        CompactOptions {
+            independent_frames,
+            smallest: false,
+        },
         Vec::new(),
     )
     .expect("bounded RGBA input must encode");
@@ -153,6 +159,47 @@ pub fn fuzz_roundtrip(data: &[u8]) {
         prepare_composited_frames_inner(&encoded, &metadata, &requested, PixelFormat::Rgba)
             .expect("encoder output must decode");
     assert_eq!(decoded.len(), pixel_count);
+
+    // The smallest mode changes only how images are coded.
+    let smallest = encode_rgba_quality_gif_inner_with_output(
+        &rgba,
+        width,
+        height,
+        frame_count,
+        delays,
+        loop_count,
+        alpha_threshold,
+        CompactOptions {
+            independent_frames,
+            smallest: true,
+        },
+        Vec::new(),
+    )
+    .expect("bounded RGBA input must encode in the smallest mode");
+    assert!(
+        smallest.len() <= encoded.len(),
+        "the smallest mode grew the GIF"
+    );
+    let smallest_metadata = parse_metadata(&smallest).expect("smallest output must parse");
+    assert_eq!(smallest_metadata.loop_count, metadata.loop_count);
+    for (frame, info) in smallest_metadata.frames.iter().enumerate() {
+        assert_eq!(
+            info.delay,
+            delays.get(frame),
+            "smallest frame {frame} delay"
+        );
+    }
+    assert_eq!(
+        prepare_composited_frames_inner(
+            &smallest,
+            &smallest_metadata,
+            &requested,
+            PixelFormat::Rgba
+        )
+        .expect("smallest output must decode"),
+        decoded,
+        "the smallest mode changed decoded pixels"
+    );
 
     let mut decoded_color_of = std::collections::HashMap::new();
     let mut has_transparency = false;
