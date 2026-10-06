@@ -10,7 +10,8 @@ import {
 	writeReceipt,
 } from "./lib/run-corpus.mjs";
 
-// Speed against file size for every encoder that runs in Node. gif.js and
+// Speed against file size for every encoder that runs in Node, including
+// Wasm builds of gifski, libvips, ImageMagick, and FFmpeg. gif.js and
 // gif.js.optimized need browser Web Workers, so they appear only in the
 // browser race.
 const iterations = Number(process.env.BENCH_ITERATIONS ?? 40);
@@ -34,6 +35,12 @@ const implementations = [
 	"sharp-effort7",
 	"sharp-effort10",
 	"sharp-default",
+	"gif-encoder-2",
+	"gifencoder",
+	"gifski-wasm",
+	"wasm-vips",
+	"magick-wasm",
+	"ffmpeg-wasm",
 ];
 const runtimes = {};
 const results = benchmarkFixture({
@@ -43,6 +50,8 @@ const results = benchmarkFixture({
 	iterations,
 	includeStress: false,
 	runtimes,
+	// Some libraries cannot keep exact binary alpha; record their agreement.
+	strict: false,
 });
 
 // A result is on the frontier when no other result is both at least as fast

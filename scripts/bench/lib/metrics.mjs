@@ -62,7 +62,19 @@ function blackComposite(frame, alphaThreshold) {
 	return output;
 }
 
-export function validateAndMeasure(bytes, value, alphaThreshold) {
+/**
+ * Decode a GIF, check it against the source, and measure its quality. Strict
+ * mode rejects any delay or binary-alpha difference. Lenient mode, for
+ * encoders that cannot keep exact transparency or timing, records them
+ * instead; a pixel decoded transparent where the source is opaque counts as
+ * black in PSNR.
+ */
+export function validateAndMeasure(
+	bytes,
+	value,
+	alphaThreshold,
+	{ strict = true } = {},
+) {
 	const decoded = decodeCompositedGif(bytes);
 	if (decoded.width !== value.width || decoded.height !== value.height) {
 		throw new Error(`${value.id}: decoded dimensions do not match the source`);
@@ -72,18 +84,25 @@ export function validateAndMeasure(bytes, value, alphaThreshold) {
 			`${value.id}: decoded frame count does not match the source`,
 		);
 	}
+	let delaysExact = true;
 	for (let frame = 0; frame < value.frameCount; frame += 1) {
 		if (decoded.delays[frame] !== delayAt(value.delay, frame)) {
-			throw new Error(`${value.id}: decoded delay differs at frame ${frame}`);
+			if (strict) {
+				throw new Error(`${value.id}: decoded delay differs at frame ${frame}`);
+			}
+			delaysExact = false;
 		}
 	}
-
+	let alphaMatches = 0;
 	let squaredError = 0;
 	let sampleCount = 0;
 	let opaquePixels = 0;
 	for (let offset = 0; offset < value.rgba.length; offset += 4) {
 		const expectedAlpha = value.rgba[offset + 3] >= alphaThreshold ? 255 : 0;
-		if (decoded.pixels[offset + 3] !== expectedAlpha) {
+		const decodedOpaque = decoded.pixels[offset + 3] !== 0;
+		if (decoded.pixels[offset + 3] === expectedAlpha) {
+			alphaMatches += 1;
+		} else if (strict) {
 			throw new Error(
 				`${value.id}: decoded alpha differs at pixel ${offset / 4}`,
 			);
@@ -91,8 +110,8 @@ export function validateAndMeasure(bytes, value, alphaThreshold) {
 		if (expectedAlpha === 0) continue;
 		opaquePixels += 1;
 		for (let channel = 0; channel < 3; channel += 1) {
-			const difference =
-				value.rgba[offset + channel] - decoded.pixels[offset + channel];
+			const shown = decodedOpaque ? decoded.pixels[offset + channel] : 0;
+			const difference = value.rgba[offset + channel] - shown;
 			squaredError += difference * difference;
 			sampleCount += 1;
 		}
@@ -123,6 +142,8 @@ export function validateAndMeasure(bytes, value, alphaThreshold) {
 	}
 
 	return {
+		alphaAgreementPercent: (alphaMatches / (value.rgba.length / 4)) * 100,
+		delaysExact,
 		opaquePixels,
 		psnrDb,
 		ssim: frameSsim.reduce((sum, score) => sum + score, 0) / frameSsim.length,
