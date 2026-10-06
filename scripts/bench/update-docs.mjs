@@ -79,7 +79,7 @@ function readmeCorpus(receipt) {
 		nativeSpeed,
 		nativeSize,
 	} = values;
-	return `On ${values.rows.length} arbitrary-RGBA workloads, wtfgif's first encode is **${times(javascriptSpeed.minimum)}–${times(javascriptSpeed.maximum)} faster**
+	return `On ${values.rows.length} arbitrary-RGBA workloads, wtfgif's first encode in its fastest mode is **${times(javascriptSpeed.minimum)}–${times(javascriptSpeed.maximum)} faster**
 than image-q + omggif (**${times(javascriptSpeed.mean)} geometric mean**) and **${times(nativeSpeed.minimum)}–${times(nativeSpeed.maximum)} faster** than
 [sharp](https://sharp.pixelplumbing.com/), the native libvips encoder, at its fastest setting (**${times(nativeSpeed.mean)} geometric mean**).
 The real ${makeEmoji.fixture.width}×${makeEmoji.fixture.height}×${makeEmoji.fixture.frameCount} MakeEmoji animation takes **${makeEmoji.medianMs.toFixed(2)} ms**, against
@@ -88,7 +88,7 @@ image-q + omggif's (${javascriptSize.mean.toFixed(2)}× geometric mean) and ${na
 (${nativeSize.mean.toFixed(2)}×). sharp, which can choose a palette for each frame, measures higher
 RGB quality on ${values.nativeHigherPsnr} of the ${values.rows.length} workloads.
 
-With \`mode: "smallest"\`, the same pixels take ${values.smallestSize.minimum.toFixed(2)}×–${values.smallestSize.maximum.toFixed(2)}× the bytes of the fastest
+The default smallest mode writes the same pixels in ${values.smallestSize.minimum.toFixed(2)}×–${values.smallestSize.maximum.toFixed(2)}× the bytes of the fastest
 mode (**${values.smallestSize.mean.toFixed(2)}× geometric mean**) and ${values.smallestTime.mean.toFixed(1)}× its time. That is still **${times(values.smallestJavascriptSpeed.minimum)}–${times(values.smallestJavascriptSpeed.maximum)}**
 faster than image-q + omggif and **${times(values.smallestNativeSpeed.minimum)}–${times(values.smallestNativeSpeed.maximum)}** faster than sharp, with files
 ${values.smallestJavascriptSize.mean.toFixed(2)}× and ${values.smallestNativeSize.mean.toFixed(2)}× their size (geometric means). MakeEmoji takes
@@ -110,8 +110,8 @@ function readmeStartup(receipt) {
   and initializing took **${initialization.toFixed(0)} ms** (median across ${values.rows.length * receipt.benchmark.processesPerImplementation} fresh processes),
   once per process and outside the timed encodes above. Do it at startup, not
   right before your first GIF. If each process encodes a single GIF, as in a
-  cold serverless start, compare ${(initialization + makeEmoji.medianMs).toFixed(0)} ms with image-q + omggif's
-  ${makeEmoji.javascript.medianMs.toFixed(0)} ms for MakeEmoji, not ${makeEmoji.medianMs.toFixed(2)} ms.`;
+  cold serverless start, compare ${(initialization + makeEmoji.smallest.medianMs).toFixed(0)} ms with image-q + omggif's
+  ${makeEmoji.javascript.medianMs.toFixed(0)} ms for MakeEmoji, not ${makeEmoji.smallest.medianMs.toFixed(2)} ms.`;
 }
 
 function corpusReceipt(receipt) {
@@ -196,8 +196,10 @@ fastest setting, without dithering to match wtfgif. sharp receives RGBA with
 alpha already thresholded, because it has no threshold option; that pass is
 inside its timed call. Each sharp process first encodes a fixed 2×2 animation
 so that libvips' one-time saver and thread-pool setup stays outside the clock,
-as wtfgif's initialization does. wtfgif uses its global quality quantizer,
-run-aware LZW codes, and changed-rectangle frames. The algorithms can select
+as wtfgif's initialization does. In the main table wtfgif runs its fastest
+mode: its global quality quantizer, run-aware LZW codes, and changed-rectangle
+frames. The default smallest mode, in its own table, adds full-dictionary
+LZW. The algorithms can select
 different indexed pixels, so the receipt reports output bytes, opaque-source
 RGB PSNR, and per-frame SSIM after binary alpha compositing against black.
 Every output is decoded and checked for shape, frame count, delays, and exact
