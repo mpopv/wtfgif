@@ -108,6 +108,7 @@ describe("encode-only quality entry", () => {
 				false,
 			);
 			expect(prepareEncode).toHaveBeenCalledTimes(23);
+			// The frame-array pass runs the default smallest mode.
 			expect(prepareEncode).toHaveBeenLastCalledWith(
 				8,
 				1,
@@ -117,7 +118,7 @@ describe("encode-only quality entry", () => {
 				0,
 				128,
 				false,
-				false,
+				true,
 			);
 			expect(prepareLargeEncode).toHaveBeenCalledExactlyOnceWith(
 				1001 * 1000 * 4,

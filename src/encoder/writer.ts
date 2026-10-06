@@ -147,10 +147,11 @@ export interface EncodeRgbaGifFramesOptions {
 	quantization?: GifQuantizationMode;
 	paletteMode?: GifPaletteMode;
 	/**
-	 * Optimize encode time (`"fastest"`, the default) or output size
-	 * (`"smallest"`). Both decode to the same pixels. `"smallest"` needs the
-	 * default quality encoder: a global quality palette, no caller-supplied
-	 * palette or legacy deltas, and WebAssembly.
+	 * Optimize output size (`"smallest"`, the default) or encode time
+	 * (`"fastest"`). Both decode to the same pixels. The smallest mode needs
+	 * the default quality encoder: a global quality palette, no caller-supplied
+	 * palette or legacy deltas, and WebAssembly. Without it, the default falls
+	 * back to the other encoders and an explicit `"smallest"` throws.
 	 */
 	mode?: GifEncodeMode;
 }
@@ -292,12 +293,12 @@ export function encodeIndexedGifFrames(
 export function encodeRgbaGifFrames(
 	options: EncodeRgbaGifFramesOptions,
 ): Uint8Array {
-	const smallest = isSmallestMode(options.mode);
+	const mode = checkedMode(options.mode);
 	if (isQualityWasmRequest(options)) {
-		const wasmOutput = encodeRgbaQualityWasm(options, smallest);
+		const wasmOutput = encodeRgbaQualityWasm(options, mode !== "fastest");
 		if (wasmOutput !== null) return wasmOutput;
 	}
-	if (smallest) {
+	if (mode === "smallest") {
 		throw new Error(
 			'mode: "smallest" needs the default quality encoder with WebAssembly initialized.',
 		);
@@ -305,9 +306,12 @@ export function encodeRgbaGifFrames(
 	return encodeRgbaGifFramesGeneral(options);
 }
 
-function isSmallestMode(mode: GifEncodeMode | undefined): boolean {
-	if (mode === "smallest") return true;
-	if (mode === undefined || mode === "fastest") return false;
+function checkedMode(
+	mode: GifEncodeMode | undefined,
+): GifEncodeMode | undefined {
+	if (mode === undefined || mode === "fastest" || mode === "smallest") {
+		return mode;
+	}
 	throw new Error('Mode must be "fastest" or "smallest".');
 }
 

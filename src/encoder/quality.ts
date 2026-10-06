@@ -31,9 +31,9 @@ export type RgbaGifFrame = Uint8Array | Uint8ClampedArray;
 export type RgbaGifFrames = RgbaGifFrame | RgbaGifFrame[];
 export type GifFrameDelay = number | readonly number[] | Uint16Array;
 /**
- * `"fastest"` codes each image with the run-aware stream. `"smallest"` also
- * codes it with full-dictionary LZW and keeps the shorter result, which takes
- * longer. Both decode to the same pixels.
+ * `"smallest"`, the default, codes each image with both the run-aware stream
+ * and full-dictionary LZW and keeps the shorter result. `"fastest"` writes only
+ * the run-aware stream, in about half the time. Both decode to the same pixels.
  */
 export type GifEncodeMode = "fastest" | "smallest";
 
@@ -54,7 +54,7 @@ export interface EncodeRgbaGifFramesOptions {
 	 * `CompiledGif.reverseFrames()` or `boomerangFrames()`.
 	 */
 	independentFrames?: boolean;
-	/** Optimize encode time (`"fastest"`, the default) or output size. */
+	/** Optimize output size (`"smallest"`, the default) or encode time. */
 	mode?: GifEncodeMode;
 }
 
@@ -595,8 +595,8 @@ function encodeRgbaGifFramesFallback(
 }
 
 function isSmallestMode(mode: GifEncodeMode | undefined): boolean {
-	if (mode === "smallest") return true;
-	if (mode === undefined || mode === "fastest") return false;
+	if (mode === undefined || mode === "smallest") return true;
+	if (mode === "fastest") return false;
 	throw new Error('Mode must be "fastest" or "smallest".');
 }
 

@@ -71,8 +71,8 @@ describe.each([
 			},
 		);
 
-		test("defaults to the fastest mode", () => {
-			expect(encode(base)).toStrictEqual(encode({ ...base, mode: "fastest" }));
+		test("defaults to the smallest mode", () => {
+			expect(encode(base)).toStrictEqual(encode({ ...base, mode: "smallest" }));
 		});
 	});
 
@@ -91,8 +91,8 @@ describe.each([
 describe("smallest mode", () => {
 	test("halves MakeEmoji", () => {
 		const options = { width: 128, height: 128, frames: makeEmoji, delay: 10 };
-		const fastest = encodeQuality(options);
-		const smallest = encodeQuality({ ...options, mode: "smallest" });
+		const fastest = encodeQuality({ ...options, mode: "fastest" });
+		const smallest = encodeQuality(options);
 		expect(smallest.length).toBeLessThan(fastest.length * 0.6);
 	});
 
@@ -106,6 +106,18 @@ describe("smallest mode", () => {
 				mode: "smallest",
 			}),
 		).toThrow(/needs the default quality encoder/);
+	});
+
+	test("is only the default in wtfgif where the quality encoder runs", () => {
+		const options = {
+			width: 1,
+			height: 1,
+			frames: Uint8Array.of(1, 2, 3, 255),
+			quantization: "exact",
+		} as const;
+		expect(encodeGeneral(options)).toStrictEqual(
+			encodeGeneral({ ...options, mode: "fastest" }),
+		);
 	});
 
 	test("decodes through GifReader when codes widen in a tiny image", () => {

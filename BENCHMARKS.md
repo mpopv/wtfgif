@@ -133,8 +133,10 @@ fastest setting, without dithering to match wtfgif. sharp receives RGBA with
 alpha already thresholded, because it has no threshold option; that pass is
 inside its timed call. Each sharp process first encodes a fixed 2×2 animation
 so that libvips' one-time saver and thread-pool setup stays outside the clock,
-as wtfgif's initialization does. wtfgif uses its global quality quantizer,
-run-aware LZW codes, and changed-rectangle frames. The algorithms can select
+as wtfgif's initialization does. In the main table wtfgif runs its fastest
+mode: its global quality quantizer, run-aware LZW codes, and changed-rectangle
+frames. The default smallest mode, in its own table, adds full-dictionary
+LZW. The algorithms can select
 different indexed pixels, so the receipt reports output bytes, opaque-source
 RGB PSNR, and per-frame SSIM after binary alpha compositing against black.
 Every output is decoded and checked for shape, frame count, delays, and exact
