@@ -46,9 +46,10 @@ stay exact, and RGB PSNR and SSIM may fall by at most
 `npm run bench` receipt and report output size and quality beside latency.
 Regenerate the committed charts with `npm run bench:charts` after accepting a
 new receipt. Run `npm run bench:docs` to also update all current benchmark text
-from the JSON receipts. The corpus chart must keep speed, output size, and both
-encoders' RGB quality visible together. The browser comparison chart must keep
-latency, output size, PSNR, and alpha agreement visible together.
+from the JSON receipts. The corpus chart must keep speed, output size, and every
+encoder's RGB quality visible together. The speed-against-size chart must label
+every point with its PSNR. The browser comparison chart must keep latency,
+output size, PSNR, and alpha agreement visible together.
 
 ## Release checklist
 

@@ -1,10 +1,6 @@
 import { createHash } from "node:crypto";
 import { performance } from "node:perf_hooks";
-import {
-	encodeImageQOmggif,
-	encodeWtfgif,
-	initializeAdapter,
-} from "./lib/adapters.mjs";
+import { implementations } from "./lib/adapters.mjs";
 import { ALPHA_THRESHOLD, loadBenchmarkCorpus } from "./lib/corpus.mjs";
 
 if (process.env.WTFGIF_CORPUS_WORKER !== "1") {
@@ -17,28 +13,25 @@ const value = loadBenchmarkCorpus({
 }).find((fixture) => fixture.id === fixtureId);
 if (!value) throw new Error(`Unknown corpus fixture: ${fixtureId}`);
 
-const benchmarkValue =
-	implementation === "wtfgif"
-		? {
-				...value,
-				frames: Array.from({ length: value.frameCount }, (_, frame) => {
-					const frameByteSize = value.width * value.height * 4;
-					return value.rgba.slice(
-						frame * frameByteSize,
-						(frame + 1) * frameByteSize,
-					);
-				}),
-			}
-		: value;
+const adapter = implementations[implementation];
+if (!adapter) throw new Error(`Unknown implementation: ${implementation}`);
 
-const wasmStatus = await initializeAdapter(implementation);
-const encode =
-	implementation === "wtfgif"
-		? encodeWtfgif
-		: implementation === "image-q-rgbquant+omggif"
-			? encodeImageQOmggif
-			: null;
-if (!encode) throw new Error(`Unknown implementation: ${implementation}`);
+const benchmarkValue = adapter.frameArrays
+	? {
+			...value,
+			frames: Array.from({ length: value.frameCount }, (_, frame) => {
+				const frameByteSize = value.width * value.height * 4;
+				return value.rgba.slice(
+					frame * frameByteSize,
+					(frame + 1) * frameByteSize,
+				);
+			}),
+		}
+	: value;
+
+const initializeStarted = performance.now();
+const runtime = await adapter.initialize();
+const initializeMs = performance.now() - initializeStarted;
 
 const cacheEviction = new Uint8Array(64 * 1024 * 1024);
 cacheEviction.fill(1);
@@ -46,17 +39,20 @@ const cacheQuiescenceMs = Number(process.env.BENCH_CACHE_QUIESCENCE_MS ?? 0);
 await new Promise((resolve) => setTimeout(resolve, cacheQuiescenceMs));
 
 const started = performance.now();
-const bytes = encode(benchmarkValue, ALPHA_THRESHOLD);
+// Synchronous encoders stop the clock without an extra microtask turn.
+const result = adapter.encode(benchmarkValue, ALPHA_THRESHOLD);
+const bytes = result instanceof Promise ? await result : result;
 const milliseconds = performance.now() - started;
 const outputSha256 = createHash("sha256").update(bytes).digest("hex");
 
 process.stdout.write(
 	JSON.stringify({
 		milliseconds,
+		initializeMs,
 		bytes: bytes.length,
 		outputSha256,
 		cacheEvictionSink: cacheEviction[cacheEviction.length - 1],
-		...(implementation === "wtfgif" ? { wasmStatus } : {}),
+		...(runtime ? { runtime } : {}),
 		...(process.env.BENCH_RETURN_OUTPUT === "1"
 			? { outputBase64: Buffer.from(bytes).toString("base64") }
 			: {}),

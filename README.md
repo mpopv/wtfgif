@@ -9,10 +9,12 @@ Workers, and edge runtimes.
 
 wtfgif turns RGBA frames into an animated GIF in well under a millisecond at
 sticker and emoji sizes, more than 100 times faster than the JavaScript
-encoders it is benchmarked against. It spends its time on speed rather than on
-squeezing out every byte, so its files are usually larger than a
-compression-first encoder's. The result is a standard GIF that every browser
-and image library can read.
+encoders it is benchmarked against and faster than sharp's native libvips
+encoder on every benchmark workload. It spends its time on speed rather than on
+squeezing out every byte or the best palette, so its files are usually larger
+than a compression-first encoder's, and an encoder that picks a palette for
+each frame looks better. The result is a standard GIF that every browser and
+image library can read.
 
 - **Fast.** A Rust/WebAssembly encoder, with SIMD where the runtime has it.
 - **Lossless after the palette.** One adaptive palette per animation, exact
@@ -119,8 +121,10 @@ Decoded pixels match omggif's exactly. Two things differ:
 
 - `GifWriter` writes LZW codes without building omggif's full dictionary, so
   it is much faster and its files are larger.
-- After `await initializeWasmGlobally()`, `GifReader` prepares frames in
-  WebAssembly; otherwise it uses JavaScript. Both produce the same pixels.
+- `GifReader` decodes in WebAssembly when it is available: in Node.js the
+  module loads on first use, and in browsers after
+  `await initializeWasmGlobally()`. Until then it uses JavaScript. Both produce
+  the same pixels.
 
 Beyond omggif, `GifReader` adds `preparePlayback()` for composited frames and
 `decodeAndBlitCompositedFrameRGBA()` for one composited frame.
@@ -139,6 +143,11 @@ Measured on an Apple M3 Pro with Node.js 22.23.2: 40 fresh processes per
 workload and library, wtfgif 3.1.1 at `f1b1430`. Raw samples are in
 [`benchmarks/corpus.json`](benchmarks/corpus.json).
 <!-- benchmark:readme-corpus:end -->
+
+### Speed against file size
+
+<!-- benchmark:readme-pareto:start -->
+<!-- benchmark:readme-pareto:end -->
 
 ### In the browser
 
@@ -163,13 +172,20 @@ per encoder; raw data in [`benchmarks/encoder-race.json`](benchmarks/encoder-rac
 - **One palette, no dithering.** GIF allows a separate 256-color palette per
   frame, and encoders can dither to fake missing colors. wtfgif builds one
   palette from all frames and gives each pixel its nearest color. That's
-  faster and keeps files small, but smooth gradients can band.
-- **Startup work.** `initializeWasmGlobally()` loads WebAssembly and prepares
-  the encoder. The benchmarks keep this one-time step outside the timed encode,
-  so do it at startup, not right before your first GIF.
+  faster and keeps files small, but smooth gradients can band. sharp, which can
+  choose a palette for each frame, measures higher RGB quality on most
+  benchmark workloads.
+<!-- benchmark:readme-startup:start -->
+<!-- benchmark:readme-startup:end -->
+- **Memory stays allocated.** WebAssembly memory can grow but never shrink, and
+  wtfgif keeps its buffers for the next encode. After one 1920×1080×30
+  encode, the module held 372 MiB until the process exited. Budget for the
+  largest animation a long-lived process will encode, and keep inputs well
+  under the limit in memory-capped runtimes such as Cloudflare Workers.
 
 [BENCHMARKS.md](BENCHMARKS.md) has the full methodology, every fixture, and the
-raw results. Reproduce them with `npm run bench` and `npm run bench:race`.
+raw results. Reproduce them with `npm run bench` (the corpus and the
+speed-against-size comparison) and `npm run bench:race`.
 
 ## API
 
@@ -193,6 +209,10 @@ prepares it. Call it once before encoding.
 | `loop` | `number` or `null` | play once | `0` repeats forever. Other values set the GIF's repeat count. |
 | `alphaThreshold` | `number` | `128` | Alpha values below this become transparent. |
 | `independentFrames` | `boolean` | `false` | Write every frame as a complete, full-canvas image. Files get larger, but frames can be reordered without decoding (see `CompiledGif` below). |
+
+Numeric options must be integers in range; fractions, `NaN`, and strings throw
+instead of being rounded. A frame buffer may be longer than `width × height × 4`
+bytes; the extra bytes are ignored.
 
 ### `wtfgif`
 
