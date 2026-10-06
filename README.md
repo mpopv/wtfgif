@@ -160,9 +160,10 @@ per encoder; raw data in [`benchmarks/encoder-race.json`](benchmarks/encoder-rac
   animations shrink a lot; photographic and noisy frames stay near their
   uncompressed size. To make a finished GIF smaller, run it through a GIF
   optimizer such as gifsicle.
-- **One palette per animation.** wtfgif builds a single adaptive palette of up
-  to 256 colors from all frames, without dithering. Pixels map to their
-  nearest palette color.
+- **One palette, no dithering.** GIF allows a separate 256-color palette per
+  frame, and encoders can dither to fake missing colors. wtfgif builds one
+  palette from all frames and gives each pixel its nearest color. That's
+  faster and keeps files small, but smooth gradients can band.
 - **Startup work.** `initializeWasmGlobally()` loads WebAssembly and prepares
   the encoder. The benchmarks keep this one-time step outside the timed encode,
   so do it at startup, not right before your first GIF.
