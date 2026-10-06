@@ -135,19 +135,25 @@ Beyond omggif, `GifReader` adds `preparePlayback()` for composited frames and
 ## Performance and tradeoffs
 
 <!-- benchmark:readme-corpus:start -->
-On 10 arbitrary-RGBA workloads, wtfgif's first encode is **123×–585× faster**
-than image-q + omggif (**238× geometric mean**) and **13×–137× faster** than
-[sharp](https://sharp.pixelplumbing.com/), the native libvips encoder, at its fastest setting (**37× geometric mean**).
-The real 128×128×8 MakeEmoji animation takes **0.63 ms**, against
-150 ms for image-q + omggif and 22 ms for sharp. wtfgif's files are 0.37×–22.42× the size of
+On 10 arbitrary-RGBA workloads, wtfgif's first encode is **119×–593× faster**
+than image-q + omggif (**230× geometric mean**) and **13×–132× faster** than
+[sharp](https://sharp.pixelplumbing.com/), the native libvips encoder, at its fastest setting (**36× geometric mean**).
+The real 128×128×8 MakeEmoji animation takes **0.66 ms**, against
+154 ms for image-q + omggif and 23 ms for sharp. wtfgif's files are 0.37×–22.42× the size of
 image-q + omggif's (1.99× geometric mean) and 0.41×–2.46× the size of sharp's
 (1.18×). sharp, which can choose a palette for each frame, measures higher
 RGB quality on 6 of the 10 workloads.
 
+With `mode: "smallest"`, the same pixels take 0.41×–0.95× the bytes of the fastest
+mode (**0.62× geometric mean**) and 2.1× its time. That is still **59×–412×**
+faster than image-q + omggif and **4×–46×** faster than sharp, with files
+1.23× and 0.73× their size (geometric means). MakeEmoji takes
+1.33 ms and 40 KiB.
+
 ![wtfgif speedup over image-q + omggif and sharp on ten RGBA workloads](docs/corpus-speedup.svg)
 
 Measured on an Apple M3 Pro with Node.js 22.23.2: 40 fresh processes per
-workload and library, wtfgif 3.2.0 at `ec326c9`. Raw samples are in
+workload and library, wtfgif 3.3.0 at `84eda6f`. Raw samples are in
 [`benchmarks/corpus.json`](benchmarks/corpus.json).
 <!-- benchmark:readme-corpus:end -->
 
@@ -158,7 +164,7 @@ workload and library, wtfgif 3.2.0 at `ec326c9`. Raw samples are in
 
 The same MakeEmoji animation through every encoder that runs in Node, with
 sharp at four effort levels. On the frontier, where no other encoder is both
-faster and smaller: wtfgif (independent frames), wtfgif, image-q + omggif, and gifenc. Labels give RGB
+faster and smaller: wtfgif fastest, wtfgif smallest, image-q + omggif, and gifenc. Labels give RGB
 PSNR, since size alone does not show palette quality. Medians of 40 fresh processes per
 encoder; raw data in [`benchmarks/pareto.json`](benchmarks/pareto.json). gif.js
 needs browser workers, so it appears only in the Chrome comparison below.
@@ -167,12 +173,13 @@ needs browser workers, so it appears only in the Chrome comparison below.
 ### In the browser
 
 <!-- benchmark:readme-browser:start -->
-![Encode time in Chrome for six GIF encoders](docs/encoder-race.svg)
+![Encode time in Chrome for wtfgif's two modes and five other GIF encoders](docs/encoder-race.svg)
 
 Encoding the same 8-frame 128×128 MakeEmoji animation through each library's
-public API in Chrome 154.0.8037.98, wtfgif took **0.67 ms**. The other five took
-88–135 ms (**131×–200× slower**). wtfgif's GIF was
-73 KiB; theirs were 38 KiB–79 KiB. Medians of 15 fresh browser processes
+public API in Chrome 154.0.8037.98, wtfgif took **0.69 ms** (73 KiB) in its fastest mode and
+**1.30 ms** (40 KiB) in its smallest mode. The other five took
+90–136 ms (**132×–198× slower than the fastest mode**)
+and wrote 38 KiB–79 KiB. Medians of 15 fresh browser processes
 per encoder; raw data in [`benchmarks/encoder-race.json`](benchmarks/encoder-race.json).
 <!-- benchmark:readme-browser:end -->
 
@@ -196,8 +203,8 @@ per encoder; raw data in [`benchmarks/encoder-race.json`](benchmarks/encoder-rac
   and initializing took **29 ms** (median across 400 fresh processes),
   once per process and outside the timed encodes above. Do it at startup, not
   right before your first GIF. If each process encodes a single GIF, as in a
-  cold serverless start, compare 29 ms with image-q + omggif's
-  150 ms for MakeEmoji, not 0.63 ms.
+  cold serverless start, compare 30 ms with image-q + omggif's
+  154 ms for MakeEmoji, not 0.66 ms.
 <!-- benchmark:readme-startup:end -->
 - **Memory stays allocated.** WebAssembly memory can grow but never shrink, and
   wtfgif keeps its buffers for the next encode. After one 1920×1080×30
