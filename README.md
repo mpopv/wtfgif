@@ -28,6 +28,12 @@ standard GIF that every browser and image library can read.
   Vercel Edge. No native addon.
 - **Typed.** Ships its own TypeScript declarations.
 
+<!-- benchmark:readme-pareto-chart:start -->
+![Encode time against file size for 16 GIF encoder configurations](docs/encoder-pareto.svg)
+
+*Encode time against file size for 16 encoder configurations on the same animation. [How it was measured](#speed-against-file-size).*
+<!-- benchmark:readme-pareto-chart:end -->
+
 ## Install
 
 ```sh
@@ -160,9 +166,8 @@ workload and library, wtfgif 3.3.0 at `84eda6f`. Raw samples are in
 ### Speed against file size
 
 <!-- benchmark:readme-pareto:start -->
-![Encode time against file size for GIF encoders that run in Node](docs/encoder-pareto.svg)
-
-The same MakeEmoji animation through every encoder that runs in Node: pure
+The chart at the top of this page runs the same MakeEmoji animation through
+every encoder that runs in Node: pure
 JavaScript libraries, sharp at four effort levels, and Wasm builds of gifski,
 libvips, ImageMagick, and FFmpeg. gif-encoder-2 (82%), gifencoder (82%), and ffmpeg.wasm (86%) get some pixels' transparency wrong. On the frontier, where no other encoder is both
 faster and smaller: wtfgif fastest, wtfgif smallest, image-q + omggif, and gifenc. Labels give RGB

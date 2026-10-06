@@ -227,6 +227,12 @@ function paretoRows(receipt) {
 		.map((row) => ({ ...row, label: labels.get(row.implementation) }));
 }
 
+function readmeParetoChart(receipt) {
+	return `![Encode time against file size for ${receipt.results.length} GIF encoder configurations](docs/encoder-pareto.svg)
+
+*Encode time against file size for ${receipt.results.length} encoder configurations on the same animation. [How it was measured](#speed-against-file-size).*`;
+}
+
 function readmePareto(receipt) {
 	const rows = paretoRows(receipt);
 	const frontier = rows.filter((row) => row.paretoOptimal);
@@ -235,9 +241,8 @@ function readmePareto(receipt) {
 	);
 	const list = (values) =>
 		new Intl.ListFormat("en", { type: "conjunction" }).format(values);
-	return `![Encode time against file size for GIF encoders that run in Node](docs/encoder-pareto.svg)
-
-The same MakeEmoji animation through every encoder that runs in Node: pure
+	return `The chart at the top of this page runs the same MakeEmoji animation through
+every encoder that runs in Node: pure
 JavaScript libraries, sharp at four effort levels, and Wasm builds of gifski,
 libvips, ImageMagick, and FFmpeg. ${list(inexact.map((row) => `${row.label} (${row.quality.alphaAgreementPercent.toFixed(0)}%)`))} get some pixels' transparency wrong. On the frontier, where no other encoder is both
 faster and smaller: ${new Intl.ListFormat("en", { type: "conjunction" }).format(frontier.map((row) => row.label))}. Labels give RGB
@@ -358,6 +363,7 @@ const [corpus, race, pareto, readmeSource, benchmarksSource] =
 const readmeBlocks = [
 	["readme-corpus", readmeCorpus(corpus)],
 	["readme-startup", readmeStartup(corpus)],
+	["readme-pareto-chart", readmeParetoChart(pareto)],
 	["readme-pareto", readmePareto(pareto)],
 	["readme-browser", readmeBrowser(race)],
 ];
