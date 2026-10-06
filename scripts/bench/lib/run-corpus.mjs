@@ -42,6 +42,7 @@ export function benchmarkFixture({
 	iterations,
 	includeStress,
 	runtimes,
+	strict = true,
 }) {
 	const samples = new Map(implementations.map((id) => [id, []]));
 	const initializeSamples = new Map(implementations.map((id) => [id, []]));
@@ -78,7 +79,9 @@ export function benchmarkFixture({
 		if (output.length !== firstRun.bytes) {
 			throw new Error(`${value.id}: worker output length is inconsistent`);
 		}
-		const quality = validateAndMeasure(output, value, ALPHA_THRESHOLD);
+		const quality = validateAndMeasure(output, value, ALPHA_THRESHOLD, {
+			strict,
+		});
 		const rawSamples = samples.get(implementation);
 		return {
 			fixtureId: value.id,
@@ -94,6 +97,8 @@ export function benchmarkFixture({
 			bytes: firstRun.bytes,
 			outputSha256: firstRun.outputSha256,
 			quality: {
+				alphaAgreementPercent: quality.alphaAgreementPercent,
+				delaysExact: quality.delaysExact,
 				opaquePixels: quality.opaquePixels,
 				psnrDb: Number.isFinite(quality.psnrDb) ? quality.psnrDb : null,
 				losslessOpaqueRgb: !Number.isFinite(quality.psnrDb),

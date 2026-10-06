@@ -230,10 +230,16 @@ function paretoRows(receipt) {
 function readmePareto(receipt) {
 	const rows = paretoRows(receipt);
 	const frontier = rows.filter((row) => row.paretoOptimal);
+	const inexact = rows.filter(
+		(row) => (row.quality.alphaAgreementPercent ?? 100) < 99.95,
+	);
+	const list = (values) =>
+		new Intl.ListFormat("en", { type: "conjunction" }).format(values);
 	return `![Encode time against file size for GIF encoders that run in Node](docs/encoder-pareto.svg)
 
-The same MakeEmoji animation through every encoder that runs in Node, with
-sharp at four effort levels. On the frontier, where no other encoder is both
+The same MakeEmoji animation through every encoder that runs in Node: pure
+JavaScript libraries, sharp at four effort levels, and Wasm builds of gifski,
+libvips, ImageMagick, and FFmpeg. ${list(inexact.map((row) => `${row.label} (${row.quality.alphaAgreementPercent.toFixed(0)}%)`))} get some pixels' transparency wrong. On the frontier, where no other encoder is both
 faster and smaller: ${new Intl.ListFormat("en", { type: "conjunction" }).format(frontier.map((row) => row.label))}. Labels give RGB
 PSNR, since size alone does not show palette quality. Medians of ${receipt.benchmark.processesPerImplementation} fresh processes per
 encoder; raw data in [\`benchmarks/pareto.json\`](benchmarks/pareto.json). gif.js
@@ -244,7 +250,7 @@ function paretoReceipt(receipt) {
 	const rows = paretoRows(receipt);
 	const table = rows.map(
 		(row) =>
-			`| ${row.paretoOptimal ? `**${row.label}**` : row.label} | ${row.medianMs.toFixed(3)} ms | ${row.bytes.toLocaleString("en-US")} | ${formatPsnr(row)} | ${row.quality.ssimBlackComposite.toFixed(4)} | ${row.paretoOptimal ? "yes" : ""} |`,
+			`| ${row.paretoOptimal ? `**${row.label}**` : row.label} | ${row.medianMs.toFixed(3)} ms | ${row.bytes.toLocaleString("en-US")} | ${formatPsnr(row)} | ${row.quality.ssimBlackComposite.toFixed(4)} | ${Number((row.quality.alphaAgreementPercent ?? 100).toFixed(2))}% | ${row.paretoOptimal ? "yes" : ""} |`,
 	);
 	const configurations = receipt.implementations.map(
 		(value) => `- **${value.label}**: ${value.configuration}.`,
@@ -254,14 +260,22 @@ function paretoReceipt(receipt) {
 first encode of the ${receipt.fixture.label} (${receipt.fixture.width}×${receipt.fixture.height}×${receipt.fixture.frameCount}) per fresh Node process,
 ${receipt.benchmark.processesPerImplementation} processes per configuration.
 
-| Configuration | Median | Bytes | PSNR | SSIM | Frontier |
-| --- | ---: | ---: | ---: | ---: | :---: |
+| Configuration | Median | Bytes | PSNR | SSIM | Alpha match | Frontier |
+| --- | ---: | ---: | ---: | ---: | ---: | :---: |
 ${table.join("\n")}
 
 ${configurations.join("\n")}
 
 A configuration is on the frontier when no other is at least as fast and at
-least as small, and strictly better in one of them. ${receipt.benchmark.excluded}
+least as small, and strictly better in one of them. Libraries without an
+alpha-threshold option receive alpha already thresholded inside their timed
+call, and gif-encoder-2 and gifencoder, which cannot store alpha, mark
+transparent pixels with a color key. Each Wasm library encodes a fixed 2×2
+animation during initialization, as wtfgif and sharp do. The PSNR here counts
+a pixel decoded transparent where the source is opaque as black.
+${receipt.benchmark.excluded} FFmpeg (GPL-2.0) and gifski (AGPL-3.0) are
+development dependencies of this benchmark only; the published package does
+not include or link them.
 Run \`npm run bench:pareto\` to measure it and \`npm run bench:charts\` to render
 [\`docs/encoder-pareto.svg\`](docs/encoder-pareto.svg).`;
 }

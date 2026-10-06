@@ -4,13 +4,31 @@ import { fileURLToPath } from "node:url";
 import { root } from "../lib/paths.mjs";
 import { coordinate, escapeXml, niceMaximum } from "./lib/svg.mjs";
 
-const COLORS = { wtfgif: "#0d8f6f", sharp: "#3b6fd6", other: "#5c6b75" };
+const COLORS = {
+	wtfgif: "#0d8f6f",
+	native: "#3b6fd6",
+	wasm: "#8a4fbf",
+	javascript: "#5c6b75",
+};
+const FAMILY_LABELS = {
+	wtfgif: "wtfgif (Rust/Wasm)",
+	native: "sharp (native libvips)",
+	wasm: "other Wasm builds",
+	javascript: "JavaScript",
+};
+const WASM_LIBRARIES = new Set([
+	"gifski-wasm",
+	"wasm-vips",
+	"magick-wasm",
+	"ffmpeg-wasm",
+]);
 const FRONTIER_COLOR = "#b34b3f";
 
 function family(id) {
 	if (id.startsWith("wtfgif")) return "wtfgif";
-	if (id.startsWith("sharp")) return "sharp";
-	return "other";
+	if (id.startsWith("sharp")) return "native";
+	if (WASM_LIBRARIES.has(id)) return "wasm";
+	return "javascript";
 }
 
 function formatMs(value) {
@@ -113,8 +131,8 @@ function findings(rows, labels) {
 
 export function renderParetoChart(receipt) {
 	const width = 1120;
-	const height = 740;
-	const plot = { left: 96, right: 1080, top: 140, bottom: 610 };
+	const height = 900;
+	const plot = { left: 96, right: 1080, top: 164, bottom: 770 };
 	const rows = receipt.results;
 	const labels = new Map(
 		receipt.implementations.map((value) => [value.id, value.label]),
@@ -144,7 +162,11 @@ export function renderParetoChart(receipt) {
 		y: y(row.bytes),
 		family: family(row.implementation),
 		name: labels.get(row.implementation) ?? row.implementation,
-		detail: `${formatMs(row.medianMs)} · ${(row.bytes / 1024).toFixed(1)} KiB · ${formatQuality(row)}`,
+		detail: `${formatMs(row.medianMs)} · ${(row.bytes / 1024).toFixed(1)} KiB · ${formatQuality(row)}${
+			(row.quality.alphaAgreementPercent ?? 100) < 99.95
+				? ` · ${row.quality.alphaAgreementPercent.toFixed(0)}% alpha`
+				: ""
+		}`,
 	}));
 	const frontier = points
 		.filter((point) => point.row.paretoOptimal)
@@ -162,6 +184,10 @@ export function renderParetoChart(receipt) {
 		`<text x="40" y="74" font-size="14" fill="#51606a">${escapeXml(`${fixture.label}, ${fixture.width}×${fixture.height}×${fixture.frameCount} · first encode in ${receipt.benchmark.processesPerImplementation} fresh Node processes per encoder · down and left is better`)}</text>`,
 		`<text x="40" y="96" font-size="13" fill="#172026">${escapeXml(findings(rows, labels))}</text>`,
 		`<text x="40" y="116" font-size="12" fill="${FRONTIER_COLOR}">${escapeXml("Dashed line: Pareto frontier, where no other encoder is both faster and smaller · PSNR is RGB quality on opaque pixels, higher is better")}</text>`,
+		...Object.entries(FAMILY_LABELS).map(([key, label], index) => {
+			const x = 40 + index * 230;
+			return `<circle cx="${x + 6}" cy="138" r="6" fill="${COLORS[key]}"/><text x="${x + 18}" y="142" font-size="12" fill="#51606a">${escapeXml(label)}</text>`;
+		}),
 	);
 
 	for (let decade = minimumDecade; decade <= maximumDecade; decade += 1) {
@@ -195,7 +221,7 @@ export function renderParetoChart(receipt) {
 		);
 	if (sharpCurve.length > 1) {
 		elements.push(
-			`<polyline points="${sharpCurve.map((point) => `${point.x},${point.y}`).join(" ")}" fill="none" stroke="${COLORS.sharp}" stroke-width="1.5" stroke-opacity="0.45"/>`,
+			`<polyline points="${sharpCurve.map((point) => `${point.x},${point.y}`).join(" ")}" fill="none" stroke="${COLORS.native}" stroke-width="1.5" stroke-opacity="0.45"/>`,
 		);
 	}
 	// Step from each frontier point right to the next one's time, then down
@@ -254,7 +280,8 @@ export function renderParetoChart(receipt) {
 	}
 
 	elements.push(
-		`<text x="40" y="${height - 42}" font-size="12" fill="#687780">${escapeXml(`sharp may use a palette per frame; wtfgif uses one palette without dithering. ${receipt.benchmark.excluded}`)}</text>`,
+		`<text x="40" y="${height - 62}" font-size="12" fill="#687780">${escapeXml("% alpha: share of pixels with the right transparency, shown when below 100%. sharp may use a palette per frame; wtfgif uses one.")}</text>`,
+		`<text x="40" y="${height - 42}" font-size="12" fill="#687780">${escapeXml(receipt.benchmark.excluded)}</text>`,
 		`<text x="40" y="${height - 22}" font-size="12" fill="#687780">${escapeXml(`${receipt.environment.cpu} · Node ${receipt.environment.node} · wtfgif ${receipt.environment.packageVersion} · raw samples in benchmarks/pareto.json`)}</text>`,
 		"</g>",
 		"</svg>",

@@ -1,0 +1,7 @@
+{
+	"name": "canvas",
+	"version": "2.99.0",
+	"private": true,
+	"description": "Empty stand-in for node-canvas. gifencoder lists canvas as a dependency but its library never loads it, and node-canvas 2 has no prebuilt binary for current Node versions.",
+	"main": "index.js"
+}
