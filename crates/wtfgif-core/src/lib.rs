@@ -2,6 +2,12 @@
 
 use wasm_bindgen::prelude::*;
 
+/// Reject from a Wasm export with a JavaScript `Error` rather than a bare
+/// string, so callers get `instanceof Error`, `message`, and a stack.
+fn js_error(message: &str) -> JsValue {
+    JsError::new(message).into()
+}
+
 #[cfg(all(
     feature = "quality-only",
     target_arch = "wasm32",
@@ -389,7 +395,7 @@ pub use wasm_api::*;
 impl WtfGifCore {
     #[wasm_bindgen(constructor)]
     pub fn new(data: &[u8]) -> Result<WtfGifCore, JsValue> {
-        let metadata = parse_metadata(data).map_err(|message| JsValue::from_str(&message))?;
+        let metadata = parse_metadata(data).map_err(|message| js_error(&message))?;
         Ok(WtfGifCore {
             data: data.to_vec(),
             metadata,
@@ -418,18 +424,18 @@ impl WtfGifCore {
             .metadata
             .frames
             .get(frame_index)
-            .ok_or_else(|| JsValue::from_str("Frame index out of range"))?;
-        decode_frame_indices_inner(&self.data, frame).map_err(|message| JsValue::from_str(&message))
+            .ok_or_else(|| js_error("Frame index out of range"))?;
+        decode_frame_indices_inner(&self.data, frame).map_err(|message| js_error(&message))
     }
 
     pub fn decode_frame_rgba(&self, frame_index: usize) -> Result<Vec<u8>, JsValue> {
         decode_frame_pixels_inner(&self.data, &self.metadata, frame_index, PixelFormat::Rgba)
-            .map_err(|message| JsValue::from_str(&message))
+            .map_err(|message| js_error(&message))
     }
 
     pub fn decode_frame_bgra(&self, frame_index: usize) -> Result<Vec<u8>, JsValue> {
         decode_frame_pixels_inner(&self.data, &self.metadata, frame_index, PixelFormat::Bgra)
-            .map_err(|message| JsValue::from_str(&message))
+            .map_err(|message| js_error(&message))
     }
 
     pub fn decode_and_blit_frame_rgba(
@@ -445,7 +451,7 @@ impl WtfGifCore {
             pixels,
             &mut self.decode_scratch.borrow_mut(),
         )
-        .map_err(|message| JsValue::from_str(&message))
+        .map_err(|message| js_error(&message))
     }
 
     pub fn decode_and_blit_frame_bgra(
@@ -461,7 +467,7 @@ impl WtfGifCore {
             pixels,
             &mut self.decode_scratch.borrow_mut(),
         )
-        .map_err(|message| JsValue::from_str(&message))
+        .map_err(|message| js_error(&message))
     }
 
     /// Decode a common opaque full-canvas frame into reusable Wasm-owned
@@ -476,7 +482,7 @@ impl WtfGifCore {
             PixelFormat::Rgba,
             &mut self.decode_scratch.borrow_mut(),
         )
-        .map_err(|message| JsValue::from_str(&message))
+        .map_err(|message| js_error(&message))
     }
 
     pub fn decode_frame_bgra_scratch(&self, frame_index: usize) -> Result<usize, JsValue> {
@@ -487,7 +493,7 @@ impl WtfGifCore {
             PixelFormat::Bgra,
             &mut self.decode_scratch.borrow_mut(),
         )
-        .map_err(|message| JsValue::from_str(&message))
+        .map_err(|message| js_error(&message))
     }
 
     /// Decode one frame's rectangle into reusable RGBA/BGRA scratch storage.
@@ -501,7 +507,7 @@ impl WtfGifCore {
             PixelFormat::Rgba,
             &mut self.decode_scratch.borrow_mut(),
         )
-        .map_err(|message| JsValue::from_str(&message))
+        .map_err(|message| js_error(&message))
     }
 
     pub fn decode_frame_rect_bgra_scratch(&self, frame_index: usize) -> Result<usize, JsValue> {
@@ -512,7 +518,7 @@ impl WtfGifCore {
             PixelFormat::Bgra,
             &mut self.decode_scratch.borrow_mut(),
         )
-        .map_err(|message| JsValue::from_str(&message))
+        .map_err(|message| js_error(&message))
     }
 
     pub fn decode_scratch_ptr(&self) -> usize {
@@ -521,7 +527,7 @@ impl WtfGifCore {
 
     pub fn decode_all_rgba(&self) -> Result<Vec<u32>, JsValue> {
         prepare_all_composited_frames_inner(&self.data, &self.metadata, PixelFormat::Rgba)
-            .map_err(|message| JsValue::from_str(&message))
+            .map_err(|message| js_error(&message))
     }
 
     pub fn reencode_gif_pixel_perfect(&self) -> Result<Vec<u8>, JsValue> {
@@ -536,10 +542,9 @@ impl WtfGifCore {
                     .and_then(|pixels| total.checked_add(pixels))
                     .ok_or_else(|| "Decoded frame size overflow".to_string())
             });
-        let total_frame_pixels =
-            total_frame_pixels.map_err(|message| JsValue::from_str(&message))?;
+        let total_frame_pixels = total_frame_pixels.map_err(|message| js_error(&message))?;
         reencode_gif_literal_sequential(&self.data, &self.metadata, loop_count, total_frame_pixels)
-            .map_err(|message| JsValue::from_str(&message))
+            .map_err(|message| js_error(&message))
     }
 
     pub fn prepare_composited_rgba(&self, requested_frames: &[u8]) -> Result<Vec<u32>, JsValue> {
@@ -549,7 +554,7 @@ impl WtfGifCore {
             requested_frames,
             PixelFormat::Rgba,
         )
-        .map_err(|message| JsValue::from_str(&message))
+        .map_err(|message| js_error(&message))
     }
 
     pub fn prepare_composited_bgra(&self, requested_frames: &[u8]) -> Result<Vec<u32>, JsValue> {
@@ -559,7 +564,7 @@ impl WtfGifCore {
             requested_frames,
             PixelFormat::Bgra,
         )
-        .map_err(|message| JsValue::from_str(&message))
+        .map_err(|message| js_error(&message))
     }
 
     /// Prepare composited frames in Wasm-owned scratch storage. The returned
@@ -576,7 +581,7 @@ impl WtfGifCore {
             requested_frames,
             PixelFormat::Rgba,
         )
-        .map_err(|message| JsValue::from_str(&message))?;
+        .map_err(|message| js_error(&message))?;
         let length = prepared.len();
         self.decode_scratch.borrow_mut().composited_output = prepared;
         Ok(length)
@@ -592,7 +597,7 @@ impl WtfGifCore {
             requested_frames,
             PixelFormat::Bgra,
         )
-        .map_err(|message| JsValue::from_str(&message))?;
+        .map_err(|message| js_error(&message))?;
         let length = prepared.len();
         self.decode_scratch.borrow_mut().composited_output = prepared;
         Ok(length)
@@ -612,7 +617,7 @@ impl WtfGifCore {
             requested_frames,
             PixelFormat::Rgba,
         )
-        .map_err(|message| JsValue::from_str(&message))
+        .map_err(|message| js_error(&message))
     }
 
     pub fn prepare_composited_delta_bgra(
@@ -625,7 +630,7 @@ impl WtfGifCore {
             requested_frames,
             PixelFormat::Bgra,
         )
-        .map_err(|message| JsValue::from_str(&message))
+        .map_err(|message| js_error(&message))
     }
 
     /// Prepare composited delta frames in Wasm-owned scratch storage. The
@@ -641,7 +646,7 @@ impl WtfGifCore {
             requested_frames,
             PixelFormat::Rgba,
         )
-        .map_err(|message| JsValue::from_str(&message))?;
+        .map_err(|message| js_error(&message))?;
         let length = prepared.len();
         self.decode_scratch.borrow_mut().composited_output = prepared;
         Ok(length)
@@ -657,7 +662,7 @@ impl WtfGifCore {
             requested_frames,
             PixelFormat::Bgra,
         )
-        .map_err(|message| JsValue::from_str(&message))?;
+        .map_err(|message| js_error(&message))?;
         let length = prepared.len();
         self.decode_scratch.borrow_mut().composited_output = prepared;
         Ok(length)

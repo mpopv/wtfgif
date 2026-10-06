@@ -12,6 +12,12 @@ import type {
 import { writeNetscapeLoopCount } from "../utils/netscape";
 import { checkPalette, log2Pow2 } from "../utils/palette";
 import { findChangedRect } from "../utils/pixels";
+import {
+	checkedDimensions,
+	checkedFrameCount,
+	checkedU8,
+	checkedU16,
+} from "../utils/validate";
 import { getWasmEncodeCoreModule } from "../wasm/encodeRuntime";
 import { getWasmQualityCoreModule } from "../wasm/qualityRuntime";
 
@@ -172,11 +178,9 @@ function resolveEncoderBackends(backend: EncodeIndexedGifFramesBackend) {
 export function encodeIndexedGifFrames(
 	options: EncodeIndexedGifFramesOptions,
 ): Uint8Array {
-	const width = options.width | 0;
-	const height = options.height | 0;
-	if (width <= 0 || height <= 0 || width > 65535 || height > 65535) {
-		throw new Error("Width/Height invalid.");
-	}
+	checkedDimensions(options.width, options.height);
+	const width = options.width;
+	const height = options.height;
 
 	const colorCount = checkPalette(options.palette);
 	const frameSize = width * height;
@@ -305,11 +309,9 @@ function encodeRgbaQualityWasm(
 	const wasmCore = getQualityEncoderWasmCoreModule();
 	if (!wasmCore) return null;
 	const frames = options.frames;
-	const width = options.width | 0;
-	const height = options.height | 0;
-	if (width <= 0 || height <= 0 || width > 65535 || height > 65535) {
-		throw new Error("Width/Height invalid.");
-	}
+	checkedDimensions(options.width, options.height);
+	const width = options.width;
+	const height = options.height;
 	const frameSize = width * height;
 	const frameByteSize = frameSize * 4;
 	const frameCount = getRgbaFrameCount(
@@ -376,11 +378,9 @@ function encodeRgbaQualityWasm(
 function encodeRgbaGifFramesGeneral(
 	options: EncodeRgbaGifFramesOptions,
 ): Uint8Array {
-	const width = options.width | 0;
-	const height = options.height | 0;
-	if (width <= 0 || height <= 0 || width > 65535 || height > 65535) {
-		throw new Error("Width/Height invalid.");
-	}
+	checkedDimensions(options.width, options.height);
+	const width = options.width;
+	const height = options.height;
 	if (options.palette !== undefined) checkPalette(options.palette);
 
 	const frameSize = width * height;
@@ -936,8 +936,8 @@ function getIndexedFrameCount(
 ): number {
 	if (frames instanceof Uint8Array) {
 		if (frameCount !== undefined) {
-			const count = frameCount | 0;
-			if (count <= 0 || frames.length !== frameSize * count) {
+			const count = checkedFrameCount(frameCount);
+			if (frames.length !== frameSize * count) {
 				throw new Error(
 					"Indexed frame stream length does not match dimensions.",
 				);
@@ -971,8 +971,8 @@ function getRgbaFrameCount(
 ): number {
 	if (isRgbaFrame(frames)) {
 		if (frameCount !== undefined) {
-			const count = frameCount | 0;
-			if (count <= 0 || frames.length !== frameByteSize * count) {
+			const count = checkedFrameCount(frameCount);
+			if (frames.length !== frameByteSize * count) {
 				throw new Error("RGBA frame stream length does not match dimensions.");
 			}
 			return count;
@@ -1703,14 +1703,6 @@ function paletteToUint32Array(palette: PaletteRGB): Uint32Array {
 	return paletteData;
 }
 
-function checkedU16(value: number, message: string): number {
-	const checked = value | 0;
-	if (checked < 0 || checked > 65535) {
-		throw new Error(message);
-	}
-	return checked;
-}
-
 type NormalizedFrameDelays = number | Uint16Array;
 
 function normalizeFrameDelays(
@@ -1760,14 +1752,6 @@ function normalizeAlphaThreshold(alphaThreshold: number | undefined): number {
 		alphaThreshold ?? TRANSPARENT_ALPHA_THRESHOLD,
 		"Alpha threshold invalid.",
 	);
-}
-
-function checkedU8(value: number, message: string): number {
-	const checked = value | 0;
-	if (checked < 0 || checked > 255) {
-		throw new Error(message);
-	}
-	return checked;
 }
 
 function createIndexedSourceRect(

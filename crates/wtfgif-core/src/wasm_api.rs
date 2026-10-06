@@ -15,48 +15,48 @@ pub fn core_version() -> String {
 pub fn parse_metadata_json(data: &[u8]) -> Result<String, JsValue> {
     parse_metadata(data)
         .map(|metadata| metadata.to_json())
-        .map_err(|message| JsValue::from_str(&message))
+        .map_err(|message| js_error(&message))
 }
 
 #[cfg(not(feature = "encode-only"))]
 #[wasm_bindgen]
 pub fn decode_frame_indices(data: &[u8], frame_index: usize) -> Result<Vec<u8>, JsValue> {
-    let metadata = parse_metadata(data).map_err(|message| JsValue::from_str(&message))?;
+    let metadata = parse_metadata(data).map_err(|message| js_error(&message))?;
     let frame = metadata
         .frames
         .get(frame_index)
-        .ok_or_else(|| JsValue::from_str("Frame index out of range"))?;
-    decode_frame_indices_inner(data, frame).map_err(|message| JsValue::from_str(&message))
+        .ok_or_else(|| js_error("Frame index out of range"))?;
+    decode_frame_indices_inner(data, frame).map_err(|message| js_error(&message))
 }
 
 #[cfg(not(feature = "encode-only"))]
 #[wasm_bindgen]
 pub fn decode_frame_rgba(data: &[u8], frame_index: usize) -> Result<Vec<u8>, JsValue> {
-    let metadata = parse_metadata(data).map_err(|message| JsValue::from_str(&message))?;
+    let metadata = parse_metadata(data).map_err(|message| js_error(&message))?;
     decode_frame_pixels_inner(data, &metadata, frame_index, PixelFormat::Rgba)
-        .map_err(|message| JsValue::from_str(&message))
+        .map_err(|message| js_error(&message))
 }
 
 #[cfg(not(feature = "encode-only"))]
 #[wasm_bindgen]
 pub fn decode_frame_bgra(data: &[u8], frame_index: usize) -> Result<Vec<u8>, JsValue> {
-    let metadata = parse_metadata(data).map_err(|message| JsValue::from_str(&message))?;
+    let metadata = parse_metadata(data).map_err(|message| js_error(&message))?;
     decode_frame_pixels_inner(data, &metadata, frame_index, PixelFormat::Bgra)
-        .map_err(|message| JsValue::from_str(&message))
+        .map_err(|message| js_error(&message))
 }
 
 #[cfg(not(feature = "encode-only"))]
 #[wasm_bindgen]
 pub fn decode_all_rgba(data: &[u8]) -> Result<Vec<u32>, JsValue> {
-    let metadata = parse_metadata(data).map_err(|message| JsValue::from_str(&message))?;
+    let metadata = parse_metadata(data).map_err(|message| js_error(&message))?;
     prepare_all_composited_frames_inner(data, &metadata, PixelFormat::Rgba)
-        .map_err(|message| JsValue::from_str(&message))
+        .map_err(|message| js_error(&message))
 }
 
 #[cfg(not(feature = "encode-only"))]
 #[wasm_bindgen]
 pub fn reencode_gif_pixel_perfect(data: &[u8]) -> Result<Vec<u8>, JsValue> {
-    let metadata = parse_metadata(data).map_err(|message| JsValue::from_str(&message))?;
+    let metadata = parse_metadata(data).map_err(|message| js_error(&message))?;
     let loop_count = metadata.loop_count.map(i32::from).unwrap_or(-1);
     let total_frame_pixels = metadata.frames.iter().try_fold(0usize, |total, frame| {
         usize::from(frame.width)
@@ -64,38 +64,37 @@ pub fn reencode_gif_pixel_perfect(data: &[u8]) -> Result<Vec<u8>, JsValue> {
             .and_then(|pixels| total.checked_add(pixels))
             .ok_or_else(|| "Decoded frame size overflow".to_string())
     });
-    let total_frame_pixels = total_frame_pixels.map_err(|message| JsValue::from_str(&message))?;
+    let total_frame_pixels = total_frame_pixels.map_err(|message| js_error(&message))?;
     reencode_gif_literal_sequential(data, &metadata, loop_count, total_frame_pixels)
-        .map_err(|message| JsValue::from_str(&message))
+        .map_err(|message| js_error(&message))
 }
 
 #[cfg(not(feature = "encode-only"))]
 #[wasm_bindgen]
 pub fn remux_gif_pixel_perfect(data: &[u8]) -> Result<Vec<u8>, JsValue> {
     if data.len() <= 4_096 {
-        validate_gif_structure_no_alloc(data).map_err(|message| JsValue::from_str(&message))?;
+        validate_gif_structure_no_alloc(data).map_err(|message| js_error(&message))?;
         return Ok(data.to_vec());
     }
-    let metadata = parse_metadata(data).map_err(|message| JsValue::from_str(&message))?;
+    let metadata = parse_metadata(data).map_err(|message| js_error(&message))?;
     let loop_count = metadata.loop_count.map(i32::from).unwrap_or(-1);
-    remux_gif_pixel_perfect_inner(data, &metadata, loop_count)
-        .map_err(|message| JsValue::from_str(&message))
+    remux_gif_pixel_perfect_inner(data, &metadata, loop_count).map_err(|message| js_error(&message))
 }
 
 #[cfg(not(feature = "encode-only"))]
 #[wasm_bindgen]
 pub fn prepare_composited_rgba(data: &[u8], requested_frames: &[u8]) -> Result<Vec<u32>, JsValue> {
-    let metadata = parse_metadata(data).map_err(|message| JsValue::from_str(&message))?;
+    let metadata = parse_metadata(data).map_err(|message| js_error(&message))?;
     prepare_composited_frames_inner(data, &metadata, requested_frames, PixelFormat::Rgba)
-        .map_err(|message| JsValue::from_str(&message))
+        .map_err(|message| js_error(&message))
 }
 
 #[cfg(not(feature = "encode-only"))]
 #[wasm_bindgen]
 pub fn prepare_composited_bgra(data: &[u8], requested_frames: &[u8]) -> Result<Vec<u32>, JsValue> {
-    let metadata = parse_metadata(data).map_err(|message| JsValue::from_str(&message))?;
+    let metadata = parse_metadata(data).map_err(|message| js_error(&message))?;
     prepare_composited_frames_inner(data, &metadata, requested_frames, PixelFormat::Bgra)
-        .map_err(|message| JsValue::from_str(&message))
+        .map_err(|message| js_error(&message))
 }
 
 #[cfg(not(feature = "encode-only"))]
@@ -104,9 +103,9 @@ pub fn prepare_composited_delta_rgba(
     data: &[u8],
     requested_frames: &[u8],
 ) -> Result<Vec<u32>, JsValue> {
-    let metadata = parse_metadata(data).map_err(|message| JsValue::from_str(&message))?;
+    let metadata = parse_metadata(data).map_err(|message| js_error(&message))?;
     prepare_composited_delta_frames_inner(data, &metadata, requested_frames, PixelFormat::Rgba)
-        .map_err(|message| JsValue::from_str(&message))
+        .map_err(|message| js_error(&message))
 }
 
 #[cfg(not(feature = "encode-only"))]
@@ -115,9 +114,9 @@ pub fn prepare_composited_delta_bgra(
     data: &[u8],
     requested_frames: &[u8],
 ) -> Result<Vec<u32>, JsValue> {
-    let metadata = parse_metadata(data).map_err(|message| JsValue::from_str(&message))?;
+    let metadata = parse_metadata(data).map_err(|message| js_error(&message))?;
     prepare_composited_delta_frames_inner(data, &metadata, requested_frames, PixelFormat::Bgra)
-        .map_err(|message| JsValue::from_str(&message))
+        .map_err(|message| js_error(&message))
 }
 
 #[cfg(not(feature = "quality-only"))]
@@ -128,7 +127,7 @@ pub fn encode_indexed_literal_lzw_scratch(
     color_count: usize,
 ) -> Result<usize, JsValue> {
     encode_indexed_literal_lzw_scratch_inner(index_stream, min_code_size, color_count)
-        .map_err(|message| JsValue::from_str(&message))
+        .map_err(|message| js_error(&message))
 }
 
 /// Reserves raw input scratch storage. Callers must overwrite the complete
@@ -337,7 +336,7 @@ pub fn encode_indexed_lzw_scratch_from_input(
     color_count: usize,
 ) -> Result<usize, JsValue> {
     encode_indexed_literal_lzw_scratch_from_input_inner(length, min_code_size, color_count)
-        .map_err(|message| JsValue::from_str(&message))
+        .map_err(|message| js_error(&message))
 }
 
 #[cfg(not(feature = "quality-only"))]
@@ -373,7 +372,7 @@ pub fn encode_indexed_literal_gif(
         loop_count,
         None,
     )
-    .map_err(|message| JsValue::from_str(&message))
+    .map_err(|message| js_error(&message))
 }
 
 /// Scratch-input/output form of the constant-delay literal indexed encoder.
@@ -393,9 +392,7 @@ pub fn encode_indexed_literal_gif_scratch_from_input(
     let input_ptr = REUSABLE_LZW_SCRATCH.with(|scratch| {
         let scratch = scratch.borrow();
         if length > scratch.input.len() * std::mem::size_of::<u32>() {
-            return Err(JsValue::from_str(
-                "Indexed input scratch buffer is too short",
-            ));
+            return Err(js_error("Indexed input scratch buffer is too short"));
         }
         Ok(scratch.input.as_ptr().cast::<u8>())
     })?;
@@ -412,7 +409,7 @@ pub fn encode_indexed_literal_gif_scratch_from_input(
         loop_count,
         None,
     )
-    .map_err(|message| JsValue::from_str(&message))?;
+    .map_err(|message| js_error(&message))?;
     let length = encoded.len();
     REUSABLE_GIF_OUTPUT.with(|scratch| {
         *scratch.borrow_mut() = encoded;
@@ -441,7 +438,7 @@ pub fn encode_indexed_literal_gif_with_delays(
         loop_count,
         None,
     )
-    .map_err(|message| JsValue::from_str(&message))
+    .map_err(|message| js_error(&message))
 }
 
 #[cfg(not(feature = "quality-only"))]
@@ -465,7 +462,7 @@ pub fn encode_indexed_literal_delta_gif(
         loop_count,
         None,
     )
-    .map_err(|message| JsValue::from_str(&message))
+    .map_err(|message| js_error(&message))
 }
 
 #[cfg(not(feature = "quality-only"))]
@@ -489,7 +486,7 @@ pub fn encode_indexed_literal_delta_gif_with_delays(
         loop_count,
         None,
     )
-    .map_err(|message| JsValue::from_str(&message))
+    .map_err(|message| js_error(&message))
 }
 
 #[cfg(not(feature = "quality-only"))]
@@ -514,7 +511,7 @@ pub fn encode_rgba_literal_gif(
         false,
         TRANSPARENT_ALPHA_THRESHOLD,
     )
-    .map_err(|message| JsValue::from_str(&message))
+    .map_err(|message| js_error(&message))
 }
 
 #[cfg(not(feature = "quality-only"))]
@@ -540,7 +537,7 @@ pub fn encode_rgba_literal_gif_with_options(
         false,
         alpha_threshold,
     )
-    .map_err(|message| JsValue::from_str(&message))
+    .map_err(|message| js_error(&message))
 }
 
 #[cfg(not(feature = "quality-only"))]
@@ -565,7 +562,7 @@ pub fn encode_rgba_literal_delta_gif(
         true,
         TRANSPARENT_ALPHA_THRESHOLD,
     )
-    .map_err(|message| JsValue::from_str(&message))
+    .map_err(|message| js_error(&message))
 }
 
 #[cfg(not(feature = "quality-only"))]
@@ -591,7 +588,7 @@ pub fn encode_rgba_literal_delta_gif_with_options(
         true,
         alpha_threshold,
     )
-    .map_err(|message| JsValue::from_str(&message))
+    .map_err(|message| js_error(&message))
 }
 
 #[cfg(not(feature = "quality-only"))]
@@ -610,9 +607,9 @@ pub fn encode_rgba_gif_advanced(
     palette_mode: u8,
 ) -> Result<Vec<u8>, JsValue> {
     let quantization =
-        RgbaQuantization::from_u8(quantization).map_err(|message| JsValue::from_str(&message))?;
+        RgbaQuantization::from_u8(quantization).map_err(|message| js_error(&message))?;
     let palette_mode =
-        RgbaPaletteMode::from_u8(palette_mode).map_err(|message| JsValue::from_str(&message))?;
+        RgbaPaletteMode::from_u8(palette_mode).map_err(|message| js_error(&message))?;
     encode_rgba_gif_advanced_inner(
         rgba_stream,
         width,
@@ -626,7 +623,7 @@ pub fn encode_rgba_gif_advanced(
         quantization,
         palette_mode,
     )
-    .map_err(|message| JsValue::from_str(&message))
+    .map_err(|message| js_error(&message))
 }
 
 #[cfg(not(feature = "quality-only"))]
@@ -645,9 +642,9 @@ pub fn encode_rgba_gif_advanced_from_input(
     palette_mode: u8,
 ) -> Result<Vec<u8>, JsValue> {
     let quantization =
-        RgbaQuantization::from_u8(quantization).map_err(|message| JsValue::from_str(&message))?;
+        RgbaQuantization::from_u8(quantization).map_err(|message| js_error(&message))?;
     let palette_mode =
-        RgbaPaletteMode::from_u8(palette_mode).map_err(|message| JsValue::from_str(&message))?;
+        RgbaPaletteMode::from_u8(palette_mode).map_err(|message| js_error(&message))?;
     REUSABLE_LZW_SCRATCH.with(|scratch| {
         // Release the RefCell borrow before encoding: the encoder reuses the
         // same scratch object for its indexed/LZW output buffers. The input
@@ -656,7 +653,7 @@ pub fn encode_rgba_gif_advanced_from_input(
         let input_ptr = {
             let scratch = scratch.borrow();
             if length > scratch.input.len() * std::mem::size_of::<u32>() {
-                return Err(JsValue::from_str("RGBA input scratch buffer is too short"));
+                return Err(js_error("RGBA input scratch buffer is too short"));
             }
             scratch.input.as_ptr().cast::<u8>()
         };
@@ -674,7 +671,7 @@ pub fn encode_rgba_gif_advanced_from_input(
             quantization,
             palette_mode,
         )
-        .map_err(|message| JsValue::from_str(&message))
+        .map_err(|message| js_error(&message))
     })
 }
 
@@ -697,13 +694,13 @@ pub fn encode_rgba_gif_advanced_scratch_from_input(
     palette_mode: u8,
 ) -> Result<usize, JsValue> {
     let quantization =
-        RgbaQuantization::from_u8(quantization).map_err(|message| JsValue::from_str(&message))?;
+        RgbaQuantization::from_u8(quantization).map_err(|message| js_error(&message))?;
     let palette_mode =
-        RgbaPaletteMode::from_u8(palette_mode).map_err(|message| JsValue::from_str(&message))?;
+        RgbaPaletteMode::from_u8(palette_mode).map_err(|message| js_error(&message))?;
     let input_ptr = REUSABLE_LZW_SCRATCH.with(|scratch| {
         let scratch = scratch.borrow();
         if length > scratch.input.len() * std::mem::size_of::<u32>() {
-            return Err(JsValue::from_str("RGBA input scratch buffer is too short"));
+            return Err(js_error("RGBA input scratch buffer is too short"));
         }
         Ok(scratch.input.as_ptr().cast::<u8>())
     })?;
@@ -723,7 +720,7 @@ pub fn encode_rgba_gif_advanced_scratch_from_input(
         palette_mode,
         output,
     )
-    .map_err(|message| JsValue::from_str(&message))?;
+    .map_err(|message| js_error(&message))?;
     let length = encoded.len();
     REUSABLE_GIF_OUTPUT.with(|scratch| {
         *scratch.borrow_mut() = encoded;
