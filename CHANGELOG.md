@@ -2,6 +2,42 @@
 
 All notable changes to wtfgif are documented here.
 
+## 3.2.0 - 2026-10-06
+
+- Publish the 3.1.1 fix for encodes that could return a GIF of an earlier
+  input. 3.1.1 was tagged but never reached npm, so 3.2.0 is the first npm
+  release with it. Every npm release from 3.0.3 through 3.1.0 is affected.
+- Make `GifReader.decodeAndBlitFrameRGBA()` and `decodeAndBlitFrameBGRA()`
+  match omggif on a reused buffer. After a caller decoded frame 0 into a
+  zeroed buffer and frame 1 into the same buffer, the reader assumed it was
+  playing the animation and copied composited frames, with disposal applied,
+  into that buffer. omggif writes only each frame's opaque pixels and never
+  applies disposal, so overlays differed on 6 of the 12 test GIFs and
+  extracted frames could hold earlier frames' pixels. Composited frames remain
+  available from `preparePlayback()` and `decodeAndBlitCompositedFrameRGBA()`.
+  Decoding every frame in order is within a few percent of 3.1.1.
+- Reject encoder options that are not integers in range.
+  `encodeRgbaGifFrames()` in both entry points and `encodeIndexedGifFrames()`
+  truncated options with `| 0`, so `loop: 2 ** 32` looped forever,
+  `delay: 2 ** 32 + 7` became 7, `width: 4.9` became 4, and `NaN` or numeric
+  strings were accepted. They now throw the existing errors. `GifWriter` keeps
+  omggif's behavior, and frame buffers may still be longer than needed.
+- Throw `Error` objects from WebAssembly, with a message and a stack, instead
+  of bare strings.
+- Split the Rust core's 15,600-line `lib.rs` into 20 modules without changing
+  any code. Every benchmark fixture encodes to the same bytes, and first
+  encodes take the same time.
+- Add an encode-decode round-trip fuzz target that checks decoded frames
+  against the source, and fuzz each target for 30 seconds on pull requests and
+  15 minutes in the weekly CI run.
+- Benchmark against sharp (libvips) as a native baseline, and add
+  `npm run bench:pareto`, which charts encode time against file size for every
+  encoder that runs in Node. Receipts now record each library's
+  initialization time, and the README states wtfgif's startup cost and that
+  WebAssembly memory stays allocated after large encodes.
+- Update development dependencies to fix a reported `source-map-js`
+  vulnerability.
+
 ## 3.1.1 - 2026-10-05
 
 - Fix encodes that could return a GIF of an earlier input or fail with an
