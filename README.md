@@ -10,16 +10,18 @@ Workers, and edge runtimes.
 wtfgif turns RGBA frames into an animated GIF in well under a millisecond at
 sticker and emoji sizes, more than 100 times faster than the JavaScript
 encoders it is benchmarked against and faster than sharp's native libvips
-encoder on every benchmark workload. It spends its time on speed rather than on
-squeezing out every byte or the best palette, so its files are usually larger
-than a compression-first encoder's, and an encoder that picks a palette for
-each frame looks better. The result is a standard GIF that every browser and
-image library can read.
+encoder on every benchmark workload. Its two modes trade time for bytes:
+`"fastest"`, the default, and `"smallest"`, which writes files about 40%
+smaller in about twice the time and is still faster than every benchmarked
+alternative. Both decode to the same pixels: one palette per animation, so an
+encoder that picks a palette for each frame looks better. The result is a
+standard GIF that every browser and image library can read.
 
 - **Fast.** A Rust/WebAssembly encoder, with SIMD where the runtime has it.
 - **Lossless after the palette.** One adaptive palette per animation, exact
-  frame delays, and exact binary transparency. Run codes and changed-area
-  frames keep files compact without changing a decoded pixel.
+  frame delays, and exact binary transparency. Run codes, full-dictionary LZW
+  in the smallest mode, and changed-area frames keep files compact without
+  changing a decoded pixel.
 - **A drop-in for omggif.** `GifReader` and `GifWriter` take the same
   arguments and return the same values.
 - **Runs anywhere.** Node.js, browsers, Web Workers, Cloudflare Workers, and
@@ -55,6 +57,7 @@ const gif = encodeRgbaGifFrames({
   frames: [red, blue],
   delay: 50, // Hundredths of a second: 50 is 500 ms per frame.
   loop: 0, // Repeat forever.
+  // mode: "smallest", // About 40% smaller files in about twice the time.
 });
 
 await writeFile("out.gif", gif);
@@ -175,12 +178,12 @@ per encoder; raw data in [`benchmarks/encoder-race.json`](benchmarks/encoder-rac
 
 ### What you give up for speed
 
-- **Larger files than compression-first encoders.** wtfgif codes runs of one
-  color and stores only the changed part of each frame, but skips full LZW
-  dictionary matching. Flat art, transparent backgrounds, and mostly static
-  animations shrink a lot; photographic and noisy frames stay near their
-  uncompressed size. To make a finished GIF smaller, run it through a GIF
-  optimizer such as gifsicle.
+- **Larger files in the fastest mode.** The default codes runs of one color
+  and stores only the changed part of each frame, but skips full LZW dictionary
+  matching. Flat art, transparent backgrounds, and mostly static animations
+  shrink a lot; photographic and noisy frames stay near their uncompressed
+  size. `mode: "smallest"` adds full-dictionary LZW and keeps whichever stream
+  is shorter, at about twice the encode time; see the benchmarks below.
 - **One palette, no dithering.** GIF allows a separate 256-color palette per
   frame, and encoders can dither to fake missing colors. wtfgif builds one
   palette from all frames and gives each pixel its nearest color. That's
@@ -228,6 +231,7 @@ prepares it. Call it once before encoding.
 | `loop` | `number` or `null` | play once | `0` repeats forever. Other values set the GIF's repeat count. |
 | `alphaThreshold` | `number` | `128` | Alpha values below this become transparent. |
 | `independentFrames` | `boolean` | `false` | Write every frame as a complete, full-canvas image. Files get larger, but frames can be reordered without decoding (see `CompiledGif` below). |
+| `mode` | `"fastest"` or `"smallest"` | `"fastest"` | `"smallest"` also codes each image with full-dictionary LZW and keeps the shorter result: about 40% smaller files in about twice the time, never larger, and the same decoded pixels. |
 
 Numeric options must be integers in range; fractions, `NaN`, and strings throw
 instead of being rounded. A frame buffer may be longer than `width × height × 4`
@@ -240,7 +244,7 @@ The full package: the encoder, plus decoding and GIF editing.
 | Export | Purpose |
 | --- | --- |
 | `GifReader`, `GifWriter` | omggif-compatible decoder and indexed-frame writer. |
-| `encodeRgbaGifFrames` | The RGBA encoder with more controls: a fixed `palette`, `quantization` (`"quality"`, `"fast"`, or `"exact"`), and per-frame palettes. Pass `delta: false` for independent frames. |
+| `encodeRgbaGifFrames` | The RGBA encoder with more controls: a fixed `palette`, `quantization` (`"quality"`, `"fast"`, or `"exact"`), and per-frame palettes. Pass `delta: false` for independent frames. `mode: "smallest"` works with the default quality encoder. |
 | `encodeIndexedGifFrames` | Encode frames that are already palette indices. |
 | `compileGif`, `CompiledGif` | Change delays or the loop count, reverse, or boomerang an existing GIF without re-encoding its pixels. |
 | `initializeWasmGlobally`, `initializeWasmModule` | Load the WebAssembly core. |

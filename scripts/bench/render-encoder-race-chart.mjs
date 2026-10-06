@@ -15,6 +15,9 @@ function formatBytes(value) {
 
 function formatComparison(row) {
 	if (row.id === "wtfgif") return "baseline";
+	if (row.id === "wtfgifSmallest") {
+		return `${row.slowerThanWtfgif.toFixed(2)}× fastest's time`;
+	}
 	return `${row.slowerThanWtfgif.toFixed(2)}× slower`;
 }
 
@@ -43,7 +46,7 @@ export function renderEncoderRaceChart(receipt) {
 		chartLeft + (hundredTimesWtfgifMs / maximum) * chartWidth,
 	);
 	const tickCount = 5;
-	const competitors = rows.filter((row) => row.id !== "wtfgif");
+	const competitors = rows.filter((row) => !row.id.startsWith("wtfgif"));
 	const minimumSlowdown = Math.min(
 		...competitors.map((row) => row.slowerThanWtfgif),
 	);
@@ -85,13 +88,18 @@ export function renderEncoderRaceChart(receipt) {
 		const barWidth = coordinate(
 			Math.max(2, (row.medianMs / maximum) * chartWidth),
 		);
-		const color = row.id === "wtfgif" ? "#0d8f6f" : "#aab5bb";
+		const color =
+			row.id === "wtfgif"
+				? "#0d8f6f"
+				: row.id === "wtfgifSmallest"
+					? "#5fb89f"
+					: "#aab5bb";
 		const valueX = coordinate(
 			Math.min(chartRight - 4, chartLeft + barWidth + 9),
 		);
 		const anchor = valueX >= chartRight - 4 ? "end" : "start";
 		elements.push(
-			`<text x="${labelWidth}" y="${y + 21}" text-anchor="end" font-size="15" font-weight="${row.id === "wtfgif" ? 700 : 500}">${escapeXml(row.label)}</text>`,
+			`<text x="${labelWidth}" y="${y + 21}" text-anchor="end" font-size="15" font-weight="${row.id.startsWith("wtfgif") ? 700 : 500}">${escapeXml(row.label)}</text>`,
 			`<rect x="${chartLeft}" y="${y}" width="${barWidth}" height="28" rx="3" fill="${color}"/>`,
 			`<text x="${valueX}" y="${y + 20}" text-anchor="${anchor}" font-size="14" font-weight="700" fill="#172026">${formatMilliseconds(row.medianMs)} · ${formatBytes(row.bytes)} · ${formatComparison(row)}</text>`,
 			`<text x="${chartLeft}" y="${y + 45}" font-size="12" fill="#687780">${row.psnrDb.toFixed(2)} dB PSNR · ${formatAlphaAccuracy(row.alphaAccuracyPercent)}</text>`,

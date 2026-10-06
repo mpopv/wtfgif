@@ -10,9 +10,9 @@ npm run bench
 
 ## Representative corpus
 
-wtfgif is compared with a JavaScript baseline, image-q + omggif, and a native
-one, sharp (libvips with cgif and libimagequant) at its fastest setting. All
-three receive the same RGBA pixels and must discover their own palettes, map
+wtfgif's fastest and smallest modes are compared with a JavaScript baseline,
+image-q + omggif, and a native one, sharp (libvips with cgif and
+libimagequant) at its fastest setting. All receive the same RGBA pixels and must discover their own palettes, map
 every pixel, encode the same animation shape and delays, and return a complete
 GIF. No fixture supplies a known palette. wtfgif receives one independently
 allocated typed array per frame, matching the public API shape used by an app

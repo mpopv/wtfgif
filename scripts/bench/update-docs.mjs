@@ -38,7 +38,18 @@ function corpusSummary(receipt) {
 	const wtfgifInitialization = receipt.results
 		.filter((result) => result.implementation === "wtfgif")
 		.map((result) => result.initializeMedianMs);
+	const smallestRows = rows.map((row) => row.smallest);
 	return {
+		smallestSize: stats(smallestRows.map((row) => row.sizeRatioVsFastest)),
+		smallestTime: stats(smallestRows.map((row) => row.timeRatioVsFastest)),
+		smallestJavascriptSpeed: stats(
+			smallestRows.map((row) => row.speedupVsImageQOmggif),
+		),
+		smallestNativeSpeed: stats(smallestRows.map((row) => row.speedupVsSharp)),
+		smallestJavascriptSize: stats(
+			smallestRows.map((row) => row.sizeRatioVsImageQOmggif),
+		),
+		smallestNativeSize: stats(smallestRows.map((row) => row.sizeRatioVsSharp)),
 		makeEmoji: rows.find((row) => row.fixtureId === "makeemoji-real"),
 		javascriptSpeed: stats(rows.map((row) => row.speedupVsImageQOmggif)),
 		javascriptSize: stats(rows.map((row) => row.sizeRatioVsImageQOmggif)),
@@ -76,6 +87,12 @@ ${makeEmoji.javascript.medianMs.toFixed(0)} ms for image-q + omggif and ${makeEm
 image-q + omggif's (${javascriptSize.mean.toFixed(2)}× geometric mean) and ${nativeSize.minimum.toFixed(2)}×–${nativeSize.maximum.toFixed(2)}× the size of sharp's
 (${nativeSize.mean.toFixed(2)}×). sharp, which can choose a palette for each frame, measures higher
 RGB quality on ${values.nativeHigherPsnr} of the ${values.rows.length} workloads.
+
+With \`mode: "smallest"\`, the same pixels take ${values.smallestSize.minimum.toFixed(2)}×–${values.smallestSize.maximum.toFixed(2)}× the bytes of the fastest
+mode (**${values.smallestSize.mean.toFixed(2)}× geometric mean**) and ${values.smallestTime.mean.toFixed(1)}× its time. That is still **${times(values.smallestJavascriptSpeed.minimum)}–${times(values.smallestJavascriptSpeed.maximum)}**
+faster than image-q + omggif and **${times(values.smallestNativeSpeed.minimum)}–${times(values.smallestNativeSpeed.maximum)}** faster than sharp, with files
+${values.smallestJavascriptSize.mean.toFixed(2)}× and ${values.smallestNativeSize.mean.toFixed(2)}× their size (geometric means). MakeEmoji takes
+${makeEmoji.smallest.medianMs.toFixed(2)} ms and ${(makeEmoji.smallest.bytes / 1024).toFixed(0)} KiB.
 
 ![wtfgif speedup over image-q + omggif and sharp on ten RGBA workloads](docs/corpus-speedup.svg)
 
@@ -126,6 +143,24 @@ sharp the range is ${nativeSpeed.minimum.toFixed(2)}×–${nativeSpeed.maximum.t
 ${nativeSize.minimum.toFixed(2)}×–${nativeSize.maximum.toFixed(2)}× the size (${nativeSize.mean.toFixed(2)}× geometric mean). This is the library's intended
 tradeoff: encode latency takes priority over compression ratio and palette
 quality.
+
+### Smallest mode
+
+| Fixture | Smallest | Bytes | Size vs fastest | Time vs fastest | vs image-q + omggif | vs sharp | Size vs image-q + omggif | Size vs sharp |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+${values.rows
+	.map(
+		(row) =>
+			`| ${row.fixture.label} | ${row.smallest.medianMs.toFixed(3)} ms | ${row.smallest.bytes.toLocaleString("en-US")} | ${row.smallest.sizeRatioVsFastest.toFixed(2)}× | ${row.smallest.timeRatioVsFastest.toFixed(2)}× | **${row.smallest.speedupVsImageQOmggif.toFixed(2)}×** | **${row.smallest.speedupVsSharp.toFixed(2)}×** | ${row.smallest.sizeRatioVsImageQOmggif.toFixed(2)}× | ${row.smallest.sizeRatioVsSharp.toFixed(2)}× |`,
+	)
+	.join("\n")}
+
+The smallest mode decodes to the same pixels as the fastest mode; it also codes
+each image with full-dictionary LZW and keeps the shorter stream, so it is
+never larger. Its files are ${values.smallestSize.minimum.toFixed(2)}×–${values.smallestSize.maximum.toFixed(2)}× the fastest mode's (${values.smallestSize.mean.toFixed(2)}× geometric
+mean) at ${values.smallestTime.minimum.toFixed(2)}×–${values.smallestTime.maximum.toFixed(2)}× its time (${values.smallestTime.mean.toFixed(2)}×).
+
+### Quality
 
 | Fixture | wtfgif PSNR | image-q + omggif PSNR | sharp PSNR | wtfgif SSIM | image-q + omggif SSIM | sharp SSIM |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -244,15 +279,17 @@ function formatKilobytes(bytes) {
 function readmeBrowser(receipt) {
 	const rows = sortedRaceRows(receipt);
 	const wtfgif = rows.find((row) => row.id === "wtfgif");
-	const competitors = rows.filter((row) => row.id !== "wtfgif");
+	const wtfgifSmallest = rows.find((row) => row.id === "wtfgifSmallest");
+	const competitors = rows.filter((row) => !row.id.startsWith("wtfgif"));
 	const smallest = Math.min(...competitors.map((row) => row.bytes));
 	const largest = Math.max(...competitors.map((row) => row.bytes));
-	return `![Encode time in Chrome for six GIF encoders](docs/encoder-race.svg)
+	return `![Encode time in Chrome for wtfgif's two modes and five other GIF encoders](docs/encoder-race.svg)
 
 Encoding the same ${receipt.fixture.frames}-frame ${receipt.fixture.width}×${receipt.fixture.height} MakeEmoji animation through each library's
-public API in ${receipt.environment.browser.replace(/^Google /, "")}, wtfgif took **${wtfgif.medianMs.toFixed(2)} ms**. The other five took
-${Math.min(...competitors.map((row) => row.medianMs)).toFixed(0)}–${Math.max(...competitors.map((row) => row.medianMs)).toFixed(0)} ms (**${Math.min(...competitors.map((row) => row.slowerThanWtfgif)).toFixed(0)}×–${Math.max(...competitors.map((row) => row.slowerThanWtfgif)).toFixed(0)}× slower**). wtfgif's GIF was
-${formatKilobytes(wtfgif.bytes)}; theirs were ${formatKilobytes(smallest)}–${formatKilobytes(largest)}. Medians of ${receipt.environment.iterations} fresh browser processes
+public API in ${receipt.environment.browser.replace(/^Google /, "")}, wtfgif took **${wtfgif.medianMs.toFixed(2)} ms** (${formatKilobytes(wtfgif.bytes)}) in its fastest mode and
+**${wtfgifSmallest.medianMs.toFixed(2)} ms** (${formatKilobytes(wtfgifSmallest.bytes)}) in its smallest mode. The other five took
+${Math.min(...competitors.map((row) => row.medianMs)).toFixed(0)}–${Math.max(...competitors.map((row) => row.medianMs)).toFixed(0)} ms (**${Math.min(...competitors.map((row) => row.slowerThanWtfgif)).toFixed(0)}×–${Math.max(...competitors.map((row) => row.slowerThanWtfgif)).toFixed(0)}× slower than the fastest mode**)
+and wrote ${formatKilobytes(smallest)}–${formatKilobytes(largest)}. Medians of ${receipt.environment.iterations} fresh browser processes
 per encoder; raw data in [\`benchmarks/encoder-race.json\`](benchmarks/encoder-race.json).`;
 }
 
@@ -264,13 +301,12 @@ function browserReceipt(receipt) {
 	const rows = sortedRaceRows(receipt);
 	const wtfgif = rows.find((row) => row.id === "wtfgif");
 	const tableRows = rows.map((row) => {
-		const name = row.id === "wtfgif" ? `**${row.label}**` : row.label;
-		const median =
-			row.id === "wtfgif"
-				? `**${row.medianMs.toFixed(3)} ms**`
-				: `${row.medianMs.toFixed(3)} ms`;
-		const advantage =
-			row.id === "wtfgif" ? "—" : `**${row.slowerThanWtfgif.toFixed(2)}×**`;
+		const ours = row.id.startsWith("wtfgif");
+		const name = ours ? `**${row.label}**` : row.label;
+		const median = ours
+			? `**${row.medianMs.toFixed(3)} ms**`
+			: `${row.medianMs.toFixed(3)} ms`;
+		const advantage = ours ? "—" : `**${row.slowerThanWtfgif.toFixed(2)}×**`;
 		return `| ${name} | ${browserVersion(row)} | ${median} | ${advantage} | ${row.bytes.toLocaleString("en-US")} | ${row.psnrDb.toFixed(2)} dB | ${Number(row.alphaAccuracyPercent.toFixed(2))}% |`;
 	});
 	return `This is public-API time-to-result. It is not a codec-kernel
@@ -280,7 +316,7 @@ is inside their timed jobs. The README chart uses bar length for median encode
 time. It marks 100× wtfgif latency with a dashed reference line. It also gives
 each encoder's emitted GIF size, relative slowdown, PSNR, and alpha agreement.
 
-| Implementation | Version | Median | wtfgif advantage | Bytes | PSNR | Alpha match |
+| Implementation | Version | Median | Slower than wtfgif fastest | Bytes | PSNR | Alpha match |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 ${tableRows.join("\n")}
 
