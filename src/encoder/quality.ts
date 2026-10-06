@@ -1,4 +1,10 @@
 import type { WasmQualityCoreModule } from "../types";
+import {
+	checkedDimensions,
+	checkedFrameCount,
+	checkedU8,
+	checkedU16,
+} from "../utils/validate";
 import { getWasmQualityCoreModule } from "../wasm/qualityRuntime";
 
 const DEFAULT_ALPHA_THRESHOLD = 128;
@@ -365,30 +371,31 @@ function encodeRgbaGifFramesPrepared(
 				? frames.length / frameByteSize
 				: options.frameCount) | 0;
 		const inputLength = frameByteSize * frameCount;
+		const requestedLoop = options.loop ?? -1;
+		const requestedAlphaThreshold =
+			options.alphaThreshold ?? DEFAULT_ALPHA_THRESHOLD;
 		const delay = (requestedDelay ?? 0) | 0;
-		const loop = (options.loop ?? -1) | 0;
-		const alphaThreshold =
-			(options.alphaThreshold ?? DEFAULT_ALPHA_THRESHOLD) | 0;
+		const loop = requestedLoop | 0;
+		const alphaThreshold = requestedAlphaThreshold | 0;
 		const independentFrames = options.independentFrames === true;
+		// `| 0` keeps the checks cheap; comparing with the original values
+		// rejects fractions, NaN, non-numbers, and values that wrapped.
 		if (
+			width !== options.width ||
+			height !== options.height ||
 			(width - 1) >>> 0 >= 65535 ||
 			(height - 1) >>> 0 >= 65535 ||
+			(options.frameCount !== undefined && frameCount !== options.frameCount) ||
 			frameCount <= 0 ||
 			frames.length !== inputLength ||
+			delay !== (requestedDelay ?? 0) ||
 			delay >>> 0 > 65535 ||
+			loop !== requestedLoop ||
 			(loop !== -1 && loop >>> 0 > 65535) ||
+			alphaThreshold !== requestedAlphaThreshold ||
 			alphaThreshold >>> 0 > 255
 		) {
-			throwInvalidContiguousOptions(
-				width,
-				height,
-				frames.length,
-				inputLength,
-				frameCount,
-				delay,
-				loop,
-				alphaThreshold,
-			);
+			throwInvalidContiguousOptions(options, frames.length);
 		}
 		const memory = scratchMemory!;
 		if (scratchCapacity < inputLength) {
@@ -430,9 +437,7 @@ function encodeRgbaGifFramesPrepared(
 		);
 		return new Uint8Array(outputView);
 	}
-	if (width <= 0 || height <= 0 || width > 65535 || height > 65535) {
-		throw new Error("Width/Height invalid.");
-	}
+	checkedDimensions(options.width, options.height);
 
 	return encodeRgbaGifFramesFallback(
 		options,
@@ -444,28 +449,36 @@ function encodeRgbaGifFramesPrepared(
 }
 
 function throwInvalidContiguousOptions(
-	width: number,
-	height: number,
+	options: EncodeRgbaGifFramesOptions,
 	frameBytes: number,
-	inputLength: number,
-	frameCount: number,
-	delay: number,
-	loop: number,
-	alphaThreshold: number,
 ): never {
-	if (width <= 0 || height <= 0 || width > 65535 || height > 65535) {
-		throw new Error("Width/Height invalid.");
-	}
-	if (frameCount <= 0 || frameBytes !== inputLength) {
+	checkedDimensions(options.width, options.height);
+	const frameByteSize = options.width * options.height * 4;
+	const frameCount =
+		options.frameCount === undefined
+			? frameBytes / frameByteSize
+			: checkedFrameCount(options.frameCount);
+	if (
+		!Number.isInteger(frameCount) ||
+		frameCount <= 0 ||
+		frameBytes !== frameByteSize * frameCount
+	) {
 		throw new Error("RGBA frame stream length does not match dimensions.");
 	}
-	if (delay < 0 || delay > 65535) throw new Error("Delay invalid.");
-	if ((loop < 0 && loop !== -1) || loop > 65535) {
-		throw new Error("Loop count invalid.");
+	if (typeof options.delay === "number") {
+		checkedU16(options.delay, "Delay invalid.");
 	}
-	if (alphaThreshold < 0 || alphaThreshold > 255) {
-		throw new Error("Alpha threshold invalid.");
+	if (
+		options.loop !== undefined &&
+		options.loop !== null &&
+		options.loop !== -1
+	) {
+		checkedU16(options.loop, "Loop count invalid.");
 	}
+	checkedU8(
+		options.alphaThreshold ?? DEFAULT_ALPHA_THRESHOLD,
+		"Alpha threshold invalid.",
+	);
 	throw new Error("Invalid encode options.");
 }
 
@@ -562,8 +575,8 @@ function getFrameCount(
 ): number {
 	if (isFrame(frames)) {
 		if (requestedCount !== undefined) {
-			const count = requestedCount | 0;
-			if (count <= 0 || frames.length !== frameByteSize * count) {
+			const count = checkedFrameCount(requestedCount);
+			if (frames.length !== frameByteSize * count) {
 				throw new Error("RGBA frame stream length does not match dimensions.");
 			}
 			return count;
@@ -644,16 +657,4 @@ function normalizeDelays(
 		return normalized;
 	}
 	return first;
-}
-
-function checkedU16(value: number, message: string): number {
-	const checked = value | 0;
-	if (checked < 0 || checked > 65535) throw new Error(message);
-	return checked;
-}
-
-function checkedU8(value: number, message: string): number {
-	const checked = value | 0;
-	if (checked < 0 || checked > 255) throw new Error(message);
-	return checked;
 }
