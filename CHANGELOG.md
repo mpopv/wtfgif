@@ -37,6 +37,10 @@ All notable changes to wtfgif are documented here.
   WebAssembly memory stays allocated after large encodes.
 - Update development dependencies to fix a reported `source-map-js`
   vulnerability.
+- The new receipts measure **123.37x-585.47x** faster than image-q + omggif
+  (**237.95x** geometric mean), **13.25x-137.33x** faster than sharp
+  (**37.25x** geometric mean), and the five browser alternatives
+  **130.59x-200.01x** slower in Chrome. Initialization takes 29 ms.
 
 ## 3.1.1 - 2026-10-05
 
