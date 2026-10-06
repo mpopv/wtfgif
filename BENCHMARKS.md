@@ -1,7 +1,8 @@
 # Benchmarks
 
 The default benchmark measures complete RGBA-to-GIF encoding across 10 real and
-synthetic workloads:
+synthetic workloads, then compares every encoder that runs in Node on encode
+time against file size:
 
 ```bash
 npm run bench
@@ -9,26 +10,30 @@ npm run bench
 
 ## Representative corpus
 
-Both implementations receive the same RGBA pixels and must discover a global
-palette of up to 256 colors, map every pixel, encode the same animation shape
-and delays, and return a complete GIF. No fixture supplies a known palette.
-wtfgif receives one independently allocated typed array per frame, matching the
-public API shape used by an app that stitches decoded images together. Those
-arrays are created before timing.
-The image-q + omggif baseline receives its normal contiguous RGBA input. Both
-use an alpha threshold of 179. Every fixture encodes complete frames through the
-public `wtfgif/encode` entry point and the equivalent image-q + omggif pipeline.
+wtfgif is compared with a JavaScript baseline, image-q + omggif, and a native
+one, sharp (libvips with cgif and libimagequant) at its fastest setting. All
+three receive the same RGBA pixels and must discover their own palettes, map
+every pixel, encode the same animation shape and delays, and return a complete
+GIF. No fixture supplies a known palette. wtfgif receives one independently
+allocated typed array per frame, matching the public API shape used by an app
+that stitches decoded images together. Those arrays are created before timing.
+The baselines receive contiguous RGBA. All use an alpha threshold of 179; sharp
+has no threshold option, so its adapter thresholds alpha inside the timed call.
+Every fixture encodes complete frames through the public `wtfgif/encode` entry
+point, the equivalent image-q + omggif pipeline, and sharp's `gif()` output.
 
-Each sample runs in a fresh Node process. Package loading and wtfgif
-initialization happen before the clock; the first and only synchronous encode
-of user input is timed. Initialization reserves a fixed 4 MiB input arena and
+Each sample runs in a fresh Node process. Package loading and each library's
+initialization happen before the clock; the first encode of user input is
+timed, and the receipt records the initialization time separately. sharp's
+initialization encodes one fixed 2×2 animation, so libvips' one-time saver and
+thread-pool setup is not charged to its first real encode. Initialization reserves a fixed 4 MiB input arena and
 runs fixed synthetic high-color, leading-opaque mixed-alpha, clear-canvas,
 normal-resolution Wu-planner, Cartesian-grid, and exact-palette inputs through
 the real encoder paths. These source-independent calls prepare
 JavaScript and Wasm code during app startup. They do not inspect, key, or retain
 the fixture, user pixels, palettes, or encoded results. wtfgif copies every
-fixture byte into its Wasm arena after the clock starts; the baseline likewise
-does all palette, mapping, and encoding work inside its timed call. After
+fixture byte into its Wasm arena after the clock starts; the baselines likewise
+do all palette, mapping, and encoding work inside their timed calls. After
 initialization and input allocation, each process fills 64 MiB of unrelated
 memory and yields one zero-delay event-loop turn without touching the encoder
 or fixture. There are zero fixture-derived warmups and no prior encode results
@@ -95,6 +100,15 @@ gradients, noise, transparency, disjoint frame palettes, similar adjacent
 frames, tiny animations, and a one-megapixel workload. Add the optional
 three-megapixel fixture with `npm run bench:corpus:stress`.
 <!-- benchmark:corpus-receipt:end -->
+
+## Speed against file size
+
+```bash
+npm run bench:pareto
+```
+
+<!-- benchmark:pareto-receipt:start -->
+<!-- benchmark:pareto-receipt:end -->
 
 ## Optimization profile (historical diagnostic receipt)
 

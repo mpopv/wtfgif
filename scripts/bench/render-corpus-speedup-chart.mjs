@@ -3,90 +3,116 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { root } from "../lib/paths.mjs";
 import { geometricMean } from "./lib/metrics.mjs";
-import { coordinate, escapeXml, niceMaximum } from "./lib/svg.mjs";
+import { coordinate, escapeXml } from "./lib/svg.mjs";
 
-function chartRows(receipt) {
+const JAVASCRIPT_COLOR = "#0d8f6f";
+const NATIVE_COLOR = "#3b6fd6";
+
+export function corpusChartRows(receipt) {
 	const fixtures = new Map(
 		receipt.corpus.map((fixture) => [fixture.id, fixture]),
 	);
-	const baselines = new Map(
-		receipt.results
-			.filter((result) => result.implementation === "image-q-rgbquant+omggif")
-			.map((result) => [result.fixtureId, result]),
-	);
+	const { javascript, native } = receipt.benchmark.baselines;
+	const resultFor = (implementation, fixtureId) =>
+		receipt.results.find(
+			(result) =>
+				result.implementation === implementation &&
+				result.fixtureId === fixtureId,
+		);
 	return receipt.results
 		.filter((result) => result.implementation === "wtfgif")
 		.map((result) => ({
 			...result,
-			baseline: baselines.get(result.fixtureId),
+			javascript: resultFor(javascript, result.fixtureId),
+			native: resultFor(native, result.fixtureId),
 			fixture: fixtures.get(result.fixtureId),
 		}));
 }
 
 function formatRgbQuality(result) {
-	if (result.quality.losslessOpaqueRgb) return "lossless RGB";
-	return `${result.quality.psnrDb.toFixed(2)} dB`;
+	if (result.quality.losslessOpaqueRgb) return "lossless";
+	return `${result.quality.psnrDb.toFixed(1)} dB`;
+}
+
+function formatMs(value) {
+	return value < 10 ? `${value.toFixed(3)} ms` : `${value.toFixed(1)} ms`;
+}
+
+function range(values) {
+	return `${Math.min(...values).toFixed(0)}×–${Math.max(...values).toFixed(0)}× (${geometricMean(values).toFixed(0)}× geometric mean)`;
 }
 
 export function renderCorpusSpeedupChart(receipt) {
-	const rows = chartRows(receipt);
-	const width = 1060;
-	const labelWidth = 230;
-	const chartLeft = 260;
-	const chartRight = 940;
+	const rows = corpusChartRows(receipt);
+	const width = 1120;
+	const labelWidth = 220;
+	const chartLeft = 250;
+	const chartRight = 1000;
 	const chartWidth = chartRight - chartLeft;
-	const rowHeight = 56;
-	const firstRowY = 142;
-	const speedups = rows.map((row) => row.speedupVsImageQOmggif);
-	const sizeRatios = rows.map((row) => row.sizeRatioVsImageQOmggif);
-	const minimumSpeedup = Math.min(...speedups);
-	const maximumSpeedup = Math.max(...speedups);
-	const meanSpeedup = geometricMean(speedups);
-	const minimumSizeRatio = Math.min(...sizeRatios);
-	const maximumSizeRatio = Math.max(...sizeRatios);
-	const maximum = niceMaximum(maximumSpeedup);
-	const aboveHundred = speedups.filter((speedup) => speedup > 100).length;
-	const height = firstRowY + rows.length * rowHeight + 96;
-	const thresholdX = coordinate(chartLeft + (100 / maximum) * chartWidth);
+	const rowHeight = 92;
+	const firstRowY = 170;
+	const height = firstRowY + rows.length * rowHeight + 80;
+	const javascriptSpeedups = rows.map((row) => row.speedupVsImageQOmggif);
+	const nativeSpeedups = rows.map((row) => row.speedupVsSharp);
+	// Log axis from 1× to the next power of ten above the largest speedup.
+	const decades = Math.ceil(Math.log10(Math.max(...javascriptSpeedups)));
+	const x = (speedup) =>
+		coordinate(chartLeft + (Math.log10(speedup) / decades) * chartWidth);
+	const javascriptLabel = "image-q + omggif";
+	const nativeLabel = "sharp (libvips)";
 	const elements = [];
 
 	elements.push(
 		`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="title desc">`,
-		'<title id="title">wtfgif speedup by arbitrary-RGBA workload</title>',
-		`<desc id="desc">${escapeXml(`Horizontal bars show wtfgif speedup over image-q plus omggif for ${rows.length} workloads. ${aboveHundred} of ${rows.length} bars exceed the marked 100 times threshold. Labels also report both median encode times, wtfgif's output size relative to the baseline, and RGB quality.`)}</desc>`,
+		'<title id="title">wtfgif speedup over a JavaScript and a native GIF encoder</title>',
+		`<desc id="desc">${escapeXml(`For ${rows.length} RGBA workloads, paired bars on a logarithmic axis show how many times faster wtfgif's first encode is than image-q plus omggif and than sharp. Labels give all three median encode times, wtfgif's output size relative to each, and each encoder's RGB quality.`)}</desc>`,
 		'<rect width="100%" height="100%" fill="#ffffff"/>',
 		'<g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" fill="#172026">',
-		`<text x="40" y="46" font-size="25" font-weight="700">${aboveHundred}/${rows.length} tested RGBA workloads exceed 100×</text>`,
-		`<text x="40" y="74" font-size="14" fill="#51606a">${escapeXml(`Cold-cache first real encode after initialization · 64 MiB eviction · ${receipt.benchmark.processesPerImplementation} fresh Node processes per implementation · higher is faster`)}</text>`,
-		`<text x="40" y="98" font-size="13" fill="#51606a">${escapeXml(`${minimumSpeedup.toFixed(2)}×–${maximumSpeedup.toFixed(2)}× · ${meanSpeedup.toFixed(2)}× geometric mean · output ${minimumSizeRatio.toFixed(2)}×–${maximumSizeRatio.toFixed(2)}× baseline size`)}</text>`,
-		`<line x1="${thresholdX}" y1="112" x2="${thresholdX}" y2="${firstRowY + rows.length * rowHeight - 10}" stroke="#b34b3f" stroke-width="2" stroke-dasharray="5 4"/>`,
-		`<text x="${thresholdX + 7}" y="124" font-size="12" font-weight="700" fill="#9b3d33">100×</text>`,
+		'<text x="40" y="46" font-size="25" font-weight="700">wtfgif first-encode speedup on 10 RGBA workloads</text>',
+		`<text x="40" y="74" font-size="14" fill="#51606a">${escapeXml(`Cold-cache first real encode after initialization · ${receipt.benchmark.processesPerImplementation} fresh Node processes per encoder · logarithmic axis, longer is faster`)}</text>`,
+		`<rect x="40" y="92" width="14" height="14" rx="2" fill="${JAVASCRIPT_COLOR}"/>`,
+		`<text x="62" y="104" font-size="13">${escapeXml(`vs ${javascriptLabel} (JavaScript): ${range(javascriptSpeedups)}`)}</text>`,
+		`<rect x="40" y="114" width="14" height="14" rx="2" fill="${NATIVE_COLOR}"/>`,
+		`<text x="62" y="126" font-size="13">${escapeXml(`vs ${nativeLabel}, effort 1, no dither (native): ${range(nativeSpeedups)}`)}</text>`,
 	);
+
+	for (let decade = 0; decade <= decades; decade += 1) {
+		const gridX = x(10 ** decade);
+		elements.push(
+			`<line x1="${gridX}" y1="${firstRowY - 18}" x2="${gridX}" y2="${firstRowY + rows.length * rowHeight - 14}" stroke="#e3e8eb" stroke-width="1"/>`,
+			`<text x="${gridX}" y="${firstRowY - 24}" text-anchor="middle" font-size="11" fill="#687780">${10 ** decade}×</text>`,
+		);
+	}
 
 	for (const [index, row] of rows.entries()) {
 		const y = firstRowY + index * rowHeight;
-		const barWidth = coordinate(
-			(row.speedupVsImageQOmggif / maximum) * chartWidth,
-		);
 		const label = row.fixture?.label ?? row.fixtureId;
 		const shape = row.fixture
 			? `${row.fixture.width}×${row.fixture.height}×${row.fixture.frameCount}`
 			: "";
-		const quality = row.baseline
-			? `${formatRgbQuality(row)} vs ${formatRgbQuality(row.baseline)} baseline`
-			: formatRgbQuality(row);
+		const bars = [
+			[row.speedupVsImageQOmggif, JAVASCRIPT_COLOR, y],
+			[row.speedupVsSharp, NATIVE_COLOR, y + 22],
+		];
 		elements.push(
 			`<text x="${labelWidth}" y="${y + 18}" text-anchor="end" font-size="14" font-weight="600">${escapeXml(label)}</text>`,
-			`<text x="${labelWidth}" y="${y + 33}" text-anchor="end" font-size="11" fill="#687780">${escapeXml(shape)}</text>`,
-			`<rect x="${chartLeft}" y="${y}" width="${barWidth}" height="27" rx="3" fill="#0d8f6f"/>`,
-			`<text x="${coordinate(chartLeft + barWidth + 8)}" y="${y + 19}" font-size="13" font-weight="700">${row.speedupVsImageQOmggif.toFixed(2)}×</text>`,
-			`<text x="${chartLeft}" y="${y + 41}" font-size="11" fill="#51606a">${escapeXml(`${row.medianMs.toFixed(3)} ms wtfgif vs ${row.baseline.medianMs.toFixed(3)} ms baseline · output ${row.sizeRatioVsImageQOmggif.toFixed(2)}× baseline size`)}</text>`,
-			`<text x="${chartLeft}" y="${y + 54}" font-size="11" fill="#687780">${escapeXml(quality)}</text>`,
+			`<text x="${labelWidth}" y="${y + 34}" text-anchor="end" font-size="11" fill="#687780">${escapeXml(shape)}</text>`,
+		);
+		for (const [speedup, color, barY] of bars) {
+			const barWidth = Math.max(2, x(speedup) - chartLeft);
+			elements.push(
+				`<rect x="${chartLeft}" y="${barY}" width="${coordinate(barWidth)}" height="18" rx="3" fill="${color}"/>`,
+				`<text x="${coordinate(chartLeft + barWidth + 8)}" y="${barY + 14}" font-size="12" font-weight="700">${speedup.toFixed(1)}×</text>`,
+			);
+		}
+		elements.push(
+			`<text x="${chartLeft}" y="${y + 58}" font-size="11" fill="#51606a">${escapeXml(`${formatMs(row.medianMs)} wtfgif · ${formatMs(row.javascript.medianMs)} ${javascriptLabel} · ${formatMs(row.native.medianMs)} sharp`)}</text>`,
+			`<text x="${chartLeft}" y="${y + 73}" font-size="11" fill="#687780">${escapeXml(`wtfgif size ${row.sizeRatioVsImageQOmggif.toFixed(2)}× ${javascriptLabel}, ${row.sizeRatioVsSharp.toFixed(2)}× sharp · RGB ${formatRgbQuality(row)} wtfgif, ${formatRgbQuality(row.javascript)} ${javascriptLabel}, ${formatRgbQuality(row.native)} sharp`)}</text>`,
 		);
 	}
 
 	elements.push(
-		`<text x="40" y="${height - 49}" font-size="12" fill="#687780">Latency includes palette creation, mapping, LZW, and GIF assembly · every output has exact shape, timing, and binary alpha.</text>`,
+		`<text x="40" y="${height - 49}" font-size="12" fill="#687780">Latency includes palette creation, mapping, LZW, and GIF assembly · every output has exact shape, timing, and binary alpha · sharp may use a palette per frame.</text>`,
 		`<text x="40" y="${height - 27}" font-size="12" fill="#687780">${escapeXml(`${receipt.environment.cpu} · Node ${receipt.environment.node} · wtfgif ${receipt.environment.packageVersion} · no known palette, source cache, or reused result`)}</text>`,
 		"</g>",
 		"</svg>",
