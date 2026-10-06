@@ -1,0 +1,472 @@
+{
+	"schemaVersion": 1,
+	"createdAt": "2026-10-06T14:26:29.045Z",
+	"benchmark": {
+		"boundary": "First user-input RGBA-to-complete-GIF call in a fresh process after package loading, each library's source-independent initialization, and 64 MiB unrelated-memory cache eviction; zero fixture-derived warmups.",
+		"inputLayout": "wtfgif receives one independently allocated RGBA typed array per frame; the other libraries receive contiguous RGBA. Inputs are created before cache eviction and timing.",
+		"cacheEvictionBytes": 67108864,
+		"cacheQuiescence": "One zero-delay event-loop turn after eviction; no encoder code or fixture bytes are touched.",
+		"alphaThreshold": 179,
+		"warmups": 0,
+		"order": "Alternated by fixture and fresh process",
+		"quality": "Opaque-source RGB PSNR plus per-frame SSIM after binary-alpha compositing against black.",
+		"iterations": 40,
+		"processesPerImplementation": 40,
+		"excluded": "gif.js and gif.js.optimized render in browser Web Workers and do not run in Node."
+	},
+	"environment": {
+		"platform": "darwin",
+		"arch": "arm64",
+		"node": "v22.23.2",
+		"cpu": "Apple M3 Pro",
+		"packageVersion": "3.2.0",
+		"commit": "ec326c98294ea4ef6180fd6f45e8fb401c1152c1",
+		"dirty": false,
+		"packageLockSha256": "61ceaaa25591a71f9852190fa62f22bbc8abc80d319769732ce9309937c2cad3",
+		"runtimes": {
+			"wtfgif": {
+				"supported": true,
+				"simd": true,
+				"initialized": true
+			},
+			"wtfgif-independent": {
+				"supported": true,
+				"simd": true,
+				"initialized": true
+			},
+			"sharp-effort1": {
+				"sharp": "0.35.5",
+				"vips": "8.18.7"
+			},
+			"sharp-effort4": {
+				"sharp": "0.35.5",
+				"vips": "8.18.7"
+			},
+			"sharp-effort7": {
+				"sharp": "0.35.5",
+				"vips": "8.18.7"
+			},
+			"sharp-effort10": {
+				"sharp": "0.35.5",
+				"vips": "8.18.7"
+			},
+			"sharp-default": {
+				"sharp": "0.35.5",
+				"vips": "8.18.7"
+			}
+		}
+	},
+	"implementations": [
+		{
+			"id": "wtfgif",
+			"label": "wtfgif",
+			"configuration": "global quality quantization, run-aware LZW, and changed-rectangle frames through the wtfgif/encode entry point"
+		},
+		{
+			"id": "wtfgif-independent",
+			"label": "wtfgif (independent frames)",
+			"configuration": "wtfgif/encode with independentFrames: true, writing every frame as a full-canvas image"
+		},
+		{
+			"id": "image-q-rgbquant+omggif",
+			"label": "image-q + omggif",
+			"configuration": "global image-q rgbquant palette, nearest mapping, and omggif LZW"
+		},
+		{
+			"id": "gifenc",
+			"label": "gifenc",
+			"configuration": "global gifenc rgb565 quantize over opaque pixels, applyPalette per frame, gifenc LZW"
+		},
+		{
+			"id": "modern-gif",
+			"label": "modern-gif",
+			"configuration": "modern-gif Encoder with 255 colors on the main thread, alpha thresholded first"
+		},
+		{
+			"id": "sharp-effort1",
+			"label": "sharp effort 1",
+			"configuration": "sharp (libvips + cgif + libimagequant) gif({ effort: 1, dither: 0 }), alpha thresholded first"
+		},
+		{
+			"id": "sharp-effort4",
+			"label": "sharp effort 4",
+			"configuration": "sharp (libvips + cgif + libimagequant) gif({ effort: 4, dither: 0 }), alpha thresholded first"
+		},
+		{
+			"id": "sharp-effort7",
+			"label": "sharp effort 7",
+			"configuration": "sharp (libvips + cgif + libimagequant) gif({ effort: 7, dither: 0 }), alpha thresholded first"
+		},
+		{
+			"id": "sharp-effort10",
+			"label": "sharp effort 10",
+			"configuration": "sharp (libvips + cgif + libimagequant) gif({ effort: 10, dither: 0 }), alpha thresholded first"
+		},
+		{
+			"id": "sharp-default",
+			"label": "sharp defaults",
+			"configuration": "sharp gif() defaults (effort 7, dither 1.0), alpha thresholded first"
+		}
+	],
+	"fixture": {
+		"id": "makeemoji-real",
+		"label": "MakeEmoji production sample",
+		"category": "real-small-images",
+		"width": 128,
+		"height": 128,
+		"frameCount": 8,
+		"pixelCount": 131072,
+		"rgbaSha256": "1ad32f9c37853eaaa3067b66ee37a77f988829c33413f019f4c53fd7d3e34536",
+		"source": {
+			"kind": "repository-fixture",
+			"path": "test/rgba/makeemoji-128x128x8.rgba",
+			"sha256": "1ad32f9c37853eaaa3067b66ee37a77f988829c33413f019f4c53fd7d3e34536"
+		}
+	},
+	"results": [
+		{
+			"fixtureId": "makeemoji-real",
+			"implementation": "wtfgif",
+			"firstObservedMs": 0.6402080000000012,
+			"samplesMs": [
+				0.6402080000000012, 0.6370829999999899, 0.6246250000000089,
+				0.6352080000000058, 0.664709000000002, 1.0802499999999924,
+				0.6429589999999905, 0.6419999999999959, 0.6116669999999971,
+				0.7602909999999952, 0.6221249999999969, 0.6275839999999988,
+				0.6507920000000098, 1.0775420000000082, 0.7205000000000013,
+				0.6216660000000047, 0.6365830000000017, 0.6582500000000095,
+				0.6460000000000008, 0.6596250000000055, 0.6251660000000072,
+				0.6419580000000025, 0.639166000000003, 0.6205829999999963,
+				0.6337919999999997, 0.6328330000000051, 0.6545409999999947,
+				0.6529580000000124, 0.6575419999999923, 0.6664579999999916,
+				0.6890829999999966, 0.6254169999999988, 0.6581249999999983,
+				0.6228749999999934, 0.6882090000000005, 0.6269999999999953,
+				0.6467090000000013, 0.6198329999999999, 0.6362499999999898,
+				0.6332909999999998
+			],
+			"medianMs": 0.6402080000000012,
+			"p95Ms": 0.7602909999999952,
+			"initializeMedianMs": 28.507833000000005,
+			"bytes": 74914,
+			"outputSha256": "5dcab8476e84cbf820460caeb5a1a3196fa15788c1f98e56314b03d9aeeb7e57",
+			"quality": {
+				"opaquePixels": 95952,
+				"psnrDb": 34.11840792162211,
+				"losslessOpaqueRgb": false,
+				"ssimBlackComposite": 0.9841358084071149,
+				"frameSsimBlackComposite": [
+					0.9752466040418621, 0.9717730010277251, 0.9962271993238432,
+					0.988091018602427, 0.9982556830543411, 0.9858481912077237,
+					0.9600077944841335, 0.9976369755148632
+				]
+			},
+			"paretoOptimal": true
+		},
+		{
+			"fixtureId": "makeemoji-real",
+			"implementation": "wtfgif-independent",
+			"firstObservedMs": 0.5967500000000001,
+			"samplesMs": [
+				0.5967500000000001, 0.5705839999999966, 0.6053749999999951,
+				0.616500000000002, 0.615791999999999, 0.6195000000000022,
+				0.5635829999999942, 0.577959000000007, 0.5927919999999887,
+				0.6501669999999962, 0.575333999999998, 0.6067080000000118,
+				0.6376669999999933, 0.5951670000000036, 0.5742910000000023,
+				0.5485840000000053, 0.5617500000000035, 0.5677500000000038,
+				0.5672080000000079, 0.5979580000000055, 0.5832910000000027,
+				0.5803750000000036, 0.5894159999999999, 0.5871250000000003,
+				0.5907910000000101, 0.5769170000000088, 0.5587500000000034,
+				0.5637499999999989, 0.6003330000000062, 0.6096249999999941,
+				0.6187919999999991, 0.5931250000000006, 0.5926249999999982,
+				0.6224169999999987, 0.6182500000000033, 0.5996250000000032,
+				0.5912500000000023, 0.6015000000000015, 0.5872499999999974,
+				0.631292000000002
+			],
+			"medianMs": 0.5926249999999982,
+			"p95Ms": 0.631292000000002,
+			"initializeMedianMs": 28.329250000000002,
+			"bytes": 75558,
+			"outputSha256": "001818cbf3f94b7512a7889bf381e07a886854953b016af67d63b78849694b92",
+			"quality": {
+				"opaquePixels": 95952,
+				"psnrDb": 34.11840792162211,
+				"losslessOpaqueRgb": false,
+				"ssimBlackComposite": 0.9841358084071149,
+				"frameSsimBlackComposite": [
+					0.9752466040418621, 0.9717730010277251, 0.9962271993238432,
+					0.988091018602427, 0.9982556830543411, 0.9858481912077237,
+					0.9600077944841335, 0.9976369755148632
+				]
+			},
+			"paretoOptimal": true
+		},
+		{
+			"fixtureId": "makeemoji-real",
+			"implementation": "image-q-rgbquant+omggif",
+			"firstObservedMs": 150.893417,
+			"samplesMs": [
+				150.893417, 148.66287499999999, 155.1975, 149.284958, 152.208208,
+				150.573292, 143.04754200000002, 150.91062499999998, 150.73587500000002,
+				152.137333, 149.886375, 147.191375, 149.844875, 149.564166,
+				150.59420799999998, 148.042917, 147.561917, 150.43975, 152.784416,
+				149.44962500000003, 150.834042, 147.583125, 149.942792, 152.087959,
+				149.210791, 156.245833, 148.04899999999998, 149.398125, 149.750208,
+				149.710958, 148.4305, 147.45666699999998, 149.9255, 149.844709,
+				150.030625, 149.376917, 147.16187499999998, 154.81475, 150.108708,
+				151.77016700000001
+			],
+			"medianMs": 149.844875,
+			"p95Ms": 154.81475,
+			"initializeMedianMs": 3.5174169999999947,
+			"bytes": 39350,
+			"outputSha256": "b12621063473da914d8b8a8cd1823ebf6a80d748a860c7d257a5788b970e46c2",
+			"quality": {
+				"opaquePixels": 95952,
+				"psnrDb": 31.8369125394233,
+				"losslessOpaqueRgb": false,
+				"ssimBlackComposite": 0.9857705932649479,
+				"frameSsimBlackComposite": [
+					0.9673857090579098, 0.9856833218631713, 0.9929791491061123,
+					0.9867497860945058, 0.998666150782023, 0.9919751874708187,
+					0.9639160018573293, 0.9988094398877126
+				]
+			},
+			"paretoOptimal": true
+		},
+		{
+			"fixtureId": "makeemoji-real",
+			"implementation": "gifenc",
+			"firstObservedMs": 165.85816699999998,
+			"samplesMs": [
+				165.85816699999998, 169.992792, 165.213375, 168.665625,
+				167.15391699999998, 174.145375, 168.65770799999999, 166.631917,
+				170.63987500000002, 167.690583, 167.96045900000001, 165.0925,
+				174.317834, 171.873875, 170.410875, 179.002083, 180.337333, 171.852833,
+				170.976541, 166.93004200000001, 163.22666700000002, 172.117958, 166.107,
+				173.070834, 172.459875, 171.267042, 174.648958, 171.051083,
+				169.44820800000002, 172.602625, 166.531, 171.418666, 174.32975,
+				169.245209, 165.0935, 170.648334, 162.04275, 166.41870799999998,
+				168.029833, 166.273167
+			],
+			"medianMs": 169.44820800000002,
+			"p95Ms": 174.648958,
+			"initializeMedianMs": 0.8635830000000055,
+			"bytes": 39101,
+			"outputSha256": "763eecc57aad17036733782b70ab9a59955c5038086673b745d47c0b8f39eb82",
+			"quality": {
+				"opaquePixels": 95952,
+				"psnrDb": 34.538893234904144,
+				"losslessOpaqueRgb": false,
+				"ssimBlackComposite": 0.983189896918866,
+				"frameSsimBlackComposite": [
+					0.9693366386366328, 0.980751881516038, 0.99578549593846,
+					0.984856819386701, 0.9981551748216972, 0.9852178028209365,
+					0.9526274409049269, 0.9987879213255356
+				]
+			},
+			"paretoOptimal": true
+		},
+		{
+			"fixtureId": "makeemoji-real",
+			"implementation": "modern-gif",
+			"firstObservedMs": 147.638292,
+			"samplesMs": [
+				147.638292, 149.102417, 153.014, 152.30645900000002, 149.267583,
+				154.782167, 152.527916, 150.148583, 153.70133299999998, 151.250792,
+				146.97695899999997, 145.264791, 152.617333, 152.992167, 147.301208,
+				151.68929099999997, 151.848042, 144.687, 151.799916, 152.56341700000002,
+				150.452, 146.50541699999997, 152.32191699999998, 152.55450000000002,
+				148.047167, 155.359334, 150.64195800000002, 146.355792, 152.39175,
+				150.94941699999998, 146.832041, 147.448333, 153.296583, 153.433541,
+				150.35370899999998, 154.014458, 151.549666, 149.8515, 152.211,
+				153.42083399999999
+			],
+			"medianMs": 151.549666,
+			"p95Ms": 154.014458,
+			"initializeMedianMs": 2.5897080000000017,
+			"bytes": 43114,
+			"outputSha256": "dda9abac0fc9b55541a5a148916c7bba119816ae5b3056469a06fb213a7b4ddc",
+			"quality": {
+				"opaquePixels": 95952,
+				"psnrDb": 32.65043729851962,
+				"losslessOpaqueRgb": false,
+				"ssimBlackComposite": 0.9897577177467146,
+				"frameSsimBlackComposite": [
+					0.9834482697969751, 0.9847174904059093, 0.9976650683204812,
+					0.9895748716088358, 0.9983896821699516, 0.9922126524578865,
+					0.973266717061055, 0.9987869901526232
+				]
+			},
+			"paretoOptimal": false
+		},
+		{
+			"fixtureId": "makeemoji-real",
+			"implementation": "sharp-effort1",
+			"firstObservedMs": 22.543459,
+			"samplesMs": [
+				22.543459, 22.061999999999998, 22.646416000000002, 22.709458999999995,
+				22.20766599999999, 22.778916999999993, 22.311458000000002,
+				21.997332999999998, 22.65187499999999, 22.518417, 22.413749999999993,
+				22.497665999999995, 22.780417, 22.381124999999997, 22.115125000000006,
+				22.978625000000008, 22.44095800000001, 21.974082999999993,
+				22.587833000000003, 22.434124999999995, 22.201583, 22.42675, 22.598709,
+				22.600667, 22.121583, 22.457375, 22.972375, 22.241124999999997,
+				22.425041000000007, 22.295249999999996, 22.368124999999992, 22.622625,
+				22.441000000000003, 22.623833000000005, 21.99216700000001,
+				22.813833000000002, 22.623208000000005, 22.37662499999999,
+				22.498041999999998, 22.314333000000005
+			],
+			"medianMs": 22.44095800000001,
+			"p95Ms": 22.813833000000002,
+			"initializeMedianMs": 24.051290999999992,
+			"bytes": 76024,
+			"outputSha256": "52a0efaf1fa76db7ad7ac0b2189c47e82708e17a5704e8bdb1da6cefb09e2f3c",
+			"quality": {
+				"opaquePixels": 95952,
+				"psnrDb": 40.804149485505725,
+				"losslessOpaqueRgb": false,
+				"ssimBlackComposite": 0.997246453718287,
+				"frameSsimBlackComposite": [
+					0.9955375756307451, 0.9940942270566956, 0.9996999208448735,
+					0.9978773954172511, 0.9997721866709183, 0.9996925798150642,
+					0.991379332888221, 0.9999184114225279
+				]
+			},
+			"paretoOptimal": false
+		},
+		{
+			"fixtureId": "makeemoji-real",
+			"implementation": "sharp-effort4",
+			"firstObservedMs": 34.236166,
+			"samplesMs": [
+				34.236166, 34.84887500000001, 34.26033299999999, 34.27775000000001,
+				33.573417000000006, 34.70245799999999, 34.156833000000006, 33.523166,
+				36.052583, 34.393125, 34.349125000000015, 34.20966700000001,
+				34.036249999999995, 33.969458, 33.714083, 34.679833999999985,
+				34.09875000000001, 34.218, 34.281583, 34.36175, 34.76066700000001,
+				34.102666, 34.37854200000001, 34.25487500000001, 33.536249999999995,
+				34.68104199999999, 34.04683299999999, 33.927583999999996,
+				34.05354200000001, 34.10154100000001, 34.19125000000001, 34.120542,
+				33.76504100000001, 34.296334, 33.344708, 34.71762500000001,
+				34.527792000000005, 33.70016700000001, 33.97841699999999, 34.236958
+			],
+			"medianMs": 34.20966700000001,
+			"p95Ms": 34.76066700000001,
+			"initializeMedianMs": 24.032833999999994,
+			"bytes": 76091,
+			"outputSha256": "961be2dceea9981d0ae32985675203fa944aef96a6a2cf166a577f59f02d6580",
+			"quality": {
+				"opaquePixels": 95952,
+				"psnrDb": 41.24851730987431,
+				"losslessOpaqueRgb": false,
+				"ssimBlackComposite": 0.9974775878151848,
+				"frameSsimBlackComposite": [
+					0.9960765475612138, 0.9947665063638882, 0.999762721623892,
+					0.9978726859033572, 0.9999235646705383, 1, 0.9914817094344212,
+					0.9999369669641677
+				]
+			},
+			"paretoOptimal": false
+		},
+		{
+			"fixtureId": "makeemoji-real",
+			"implementation": "sharp-effort7",
+			"firstObservedMs": 133.12870800000002,
+			"samplesMs": [
+				133.12870800000002, 133.17291699999998, 131.01025, 130.03050000000002,
+				130.21675, 131.60975000000002, 132.526541, 130.313209, 135.524541,
+				131.903208, 133.81375000000003, 130.619958, 131.317625, 129.942959,
+				130.89658300000002, 133.25345800000002, 132.207958, 129.38266599999997,
+				131.65891699999997, 132.41008399999998, 131.72062499999998, 130.921292,
+				132.103584, 131.66220800000002, 130.974333, 132.869542, 132.440333,
+				129.495083, 130.699167, 132.571, 131.35445900000002, 133.047,
+				131.702084, 129.0445, 133.639292, 133.47825, 133.47704099999999,
+				131.853584, 131.434916, 133.195541
+			],
+			"medianMs": 131.702084,
+			"p95Ms": 133.639292,
+			"initializeMedianMs": 24.041583000000003,
+			"bytes": 75339,
+			"outputSha256": "ff3df02e79a29243e7f322a792532851a47607017be154bb29bbba7012a22d18",
+			"quality": {
+				"opaquePixels": 95952,
+				"psnrDb": 41.804329340542424,
+				"losslessOpaqueRgb": false,
+				"ssimBlackComposite": 0.9976188305676292,
+				"frameSsimBlackComposite": [
+					0.9960532602105383, 0.995386773156487, 0.9997267424005096,
+					0.9980444480693021, 0.9999211083948364, 1, 0.9918798207367362,
+					0.9999384915726238
+				]
+			},
+			"paretoOptimal": false
+		},
+		{
+			"fixtureId": "makeemoji-real",
+			"implementation": "sharp-effort10",
+			"firstObservedMs": 247.22954199999998,
+			"samplesMs": [
+				247.22954199999998, 248.90629099999998, 245.53645899999998,
+				244.04316699999998, 252.199542, 249.955125, 251.64945799999998,
+				245.30266600000004, 244.073083, 245.5405, 245.1255, 249.73933399999999,
+				247.688958, 243.23325, 244.19162500000002, 248.984042,
+				248.93879199999998, 247.502167, 242.81825000000003, 249.72325,
+				249.063458, 243.75725, 247.125833, 243.74650000000003,
+				246.60250000000002, 246.468959, 246.838709, 245.91058299999997, 244.355,
+				249.197083, 248.623625, 249.76266600000002, 244.56995900000004,
+				250.08433300000002, 245.91004099999998, 244.636125, 247.50720900000002,
+				249.96800000000002, 241.777834, 246.425209
+			],
+			"medianMs": 246.60250000000002,
+			"p95Ms": 250.08433300000002,
+			"initializeMedianMs": 23.955749999999995,
+			"bytes": 75247,
+			"outputSha256": "3589012de9f8983b2492404c5938cb92a0f0f87ac5924d8f5a51e0d2395f168b",
+			"quality": {
+				"opaquePixels": 95952,
+				"psnrDb": 41.80776514105936,
+				"losslessOpaqueRgb": false,
+				"ssimBlackComposite": 0.9976076982019895,
+				"frameSsimBlackComposite": [
+					0.9959735540228893, 0.9951691630598275, 0.9997703642321931,
+					0.9980734254974742, 0.9999212404740413, 1, 0.9920142545209376,
+					0.9999395838085521
+				]
+			},
+			"paretoOptimal": false
+		},
+		{
+			"fixtureId": "makeemoji-real",
+			"implementation": "sharp-default",
+			"firstObservedMs": 146.31204100000002,
+			"samplesMs": [
+				146.31204100000002, 146.376167, 145.963209, 144.954792, 147.564875,
+				146.103458, 145.74870800000002, 144.383917, 144.08629100000002,
+				144.659833, 146.363792, 143.38091699999998, 143.53395799999998,
+				143.4515, 144.8125, 144.495792, 146.206208, 144.342292, 143.357458,
+				144.09375, 146.324125, 143.92958399999998, 143.289041, 144.627833,
+				145.62004100000001, 146.11425000000003, 145.181916, 145.40949999999998,
+				144.640959, 142.68591600000002, 143.636958, 145.313042, 144.87525,
+				143.728791, 144.229041, 145.025958, 147.163584, 152.49170900000001,
+				143.898, 144.858208
+			],
+			"medianMs": 144.8125,
+			"p95Ms": 147.163584,
+			"initializeMedianMs": 23.966875,
+			"bytes": 75642,
+			"outputSha256": "f7e997dc86ca7fac63f4d385dac14d1183290995611d9e7e0eb7319043341087",
+			"quality": {
+				"opaquePixels": 95952,
+				"psnrDb": 41.78931338856033,
+				"losslessOpaqueRgb": false,
+				"ssimBlackComposite": 0.9975962676533822,
+				"frameSsimBlackComposite": [
+					0.9959975199203053, 0.9953743668994043, 0.9997267424005096,
+					0.9980349607195675, 0.9999211083948364, 1, 0.9917769513198103,
+					0.9999384915726238
+				]
+			},
+			"paretoOptimal": false
+		}
+	]
+}
