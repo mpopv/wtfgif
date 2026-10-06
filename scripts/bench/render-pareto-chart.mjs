@@ -94,19 +94,21 @@ function placeLabels(points, bounds, segments) {
 	return placed;
 }
 
-/** One sentence comparing wtfgif with the next-fastest and smallest encoders. */
+/** wtfgif's two modes against the next-fastest and the smallest encoders. */
 function findings(rows, labels) {
-	const wtfgif = rows.find((row) => row.implementation === "wtfgif");
+	const fastest = rows.find((row) => row.implementation === "wtfgif");
+	const smallest = rows.find((row) => row.implementation === "wtfgif-smallest");
 	const others = rows.filter((row) => !row.implementation.startsWith("wtfgif"));
 	const nextFastest = others.toSorted((a, b) => a.medianMs - b.medianMs)[0];
-	const smallest = others.toSorted((a, b) => a.bytes - b.bytes)[0];
+	const smallestOther = others.toSorted((a, b) => a.bytes - b.bytes)[0];
 	const psnr = (row) => row.quality.psnrDb ?? Number.POSITIVE_INFINITY;
-	const psnrGap = psnr(nextFastest) - psnr(wtfgif);
+	const gap = psnr(nextFastest) - psnr(fastest);
 	const quality =
-		Math.abs(psnrGap) < 0.05
+		Math.abs(gap) < 0.05
 			? "equal PSNR"
-			: `${Math.abs(psnrGap).toFixed(1)} dB ${psnrGap > 0 ? "higher" : "lower"} PSNR`;
-	return `wtfgif is ${(nextFastest.medianMs / wtfgif.medianMs).toFixed(0)}× faster than the next encoder, ${labels.get(nextFastest.implementation)}, whose GIF is ${(nextFastest.bytes / wtfgif.bytes).toFixed(2)}× the size with ${quality}. The smallest, ${labels.get(smallest.implementation)}, is ${(smallest.bytes / wtfgif.bytes).toFixed(2)}× the size at ${(smallest.medianMs / wtfgif.medianMs).toFixed(0)}× the time.`;
+			: `${Math.abs(gap).toFixed(1)} dB ${gap > 0 ? "higher" : "lower"} PSNR`;
+	const name = (row) => labels.get(row.implementation);
+	return `wtfgif fastest is ${(nextFastest.medianMs / fastest.medianMs).toFixed(0)}× faster than ${name(nextFastest)} (${(nextFastest.bytes / fastest.bytes).toFixed(2)}× the size, ${quality}). wtfgif smallest is ${(smallest.bytes / fastest.bytes).toFixed(2)}× fastest's size; ${name(smallestOther)}, the smallest other, is ${(smallestOther.bytes / smallest.bytes).toFixed(2)}× that at ${(smallestOther.medianMs / smallest.medianMs).toFixed(0)}× the time.`;
 }
 
 export function renderParetoChart(receipt) {

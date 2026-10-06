@@ -285,7 +285,7 @@ function encodeGifJs(GifClass, workerScript) {
 	});
 }
 
-function encodeWtfgif() {
+function encodeWtfgif(mode) {
 	return encodeRgbaGifFrames({
 		alphaThreshold: ALPHA_THRESHOLD,
 		delay: DELAY_CENTISECONDS,
@@ -293,6 +293,7 @@ function encodeWtfgif() {
 		frames: sourceFrames,
 		height: HEIGHT,
 		loop: 0,
+		mode,
 		width: WIDTH,
 	});
 }
@@ -305,7 +306,8 @@ const operations = {
 	gifenc: encodeGifenc,
 	modernGif: encodeModernGif,
 	omggif: encodeOmggif,
-	wtfgif: encodeWtfgif,
+	wtfgif: () => encodeWtfgif("fastest"),
+	wtfgifSmallest: () => encodeWtfgif("smallest"),
 };
 
 function validate(bytes) {
@@ -386,7 +388,7 @@ function base64(bytes) {
 }
 
 try {
-	if (implementation === "wtfgif") {
+	if (implementation.startsWith("wtfgif")) {
 		await initializeWasmGlobally();
 	}
 	const cacheEviction = new Uint8Array(64 * 1024 * 1024);

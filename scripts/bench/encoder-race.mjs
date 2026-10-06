@@ -35,9 +35,16 @@ if (!Number.isInteger(iterations) || iterations < 1) {
 const implementations = [
 	{
 		id: "wtfgif",
-		label: "wtfgif",
+		label: "wtfgif fastest",
 		packageName: "wtfgif",
 		palette: "adaptive global palette over all frames",
+	},
+	{
+		id: "wtfgifSmallest",
+		label: "wtfgif smallest",
+		packageName: "wtfgif",
+		palette:
+			'adaptive global palette over all frames; mode: "smallest" adds full-dictionary LZW',
 	},
 	{
 		id: "gifenc",

@@ -14,12 +14,21 @@ let sharp;
 // loading happens in initialize(), outside the timed encode.
 export const implementations = {
 	wtfgif: {
-		label: "wtfgif",
+		label: "wtfgif fastest",
 		configuration:
 			"global quality quantization, run-aware LZW, and changed-rectangle frames through the wtfgif/encode entry point",
 		frameArrays: true,
 		initialize: initializeWtfgif,
 		encode: (value, alphaThreshold) => encodeWtfgif(value, alphaThreshold),
+	},
+	"wtfgif-smallest": {
+		label: "wtfgif smallest",
+		configuration:
+			'wtfgif/encode with mode: "smallest": full-dictionary LZW where it is shorter than the run-aware stream',
+		frameArrays: true,
+		initialize: initializeWtfgif,
+		encode: (value, alphaThreshold) =>
+			encodeWtfgif(value, alphaThreshold, { mode: "smallest" }),
 	},
 	"wtfgif-independent": {
 		label: "wtfgif (independent frames)",

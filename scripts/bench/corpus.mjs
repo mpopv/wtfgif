@@ -28,7 +28,12 @@ if (corpus.length === 0)
 // setting is the native baseline: libvips, cgif, and libimagequant.
 const JAVASCRIPT_BASELINE = "image-q-rgbquant+omggif";
 const NATIVE_BASELINE = "sharp-effort1";
-const implementations = ["wtfgif", JAVASCRIPT_BASELINE, NATIVE_BASELINE];
+const implementations = [
+	"wtfgif",
+	"wtfgif-smallest",
+	JAVASCRIPT_BASELINE,
+	NATIVE_BASELINE,
+];
 const runtimes = {};
 
 const results = corpus.flatMap((value, fixtureIndex) => {
@@ -41,13 +46,17 @@ const results = corpus.flatMap((value, fixtureIndex) => {
 		runtimes,
 	});
 	const byId = new Map(rows.map((row) => [row.implementation, row]));
-	const wtf = byId.get("wtfgif");
 	const javascript = byId.get(JAVASCRIPT_BASELINE);
 	const native = byId.get(NATIVE_BASELINE);
-	wtf.speedupVsImageQOmggif = javascript.medianMs / wtf.medianMs;
-	wtf.sizeRatioVsImageQOmggif = wtf.bytes / javascript.bytes;
-	wtf.speedupVsSharp = native.medianMs / wtf.medianMs;
-	wtf.sizeRatioVsSharp = wtf.bytes / native.bytes;
+	for (const wtf of [byId.get("wtfgif"), byId.get("wtfgif-smallest")]) {
+		wtf.speedupVsImageQOmggif = javascript.medianMs / wtf.medianMs;
+		wtf.sizeRatioVsImageQOmggif = wtf.bytes / javascript.bytes;
+		wtf.speedupVsSharp = native.medianMs / wtf.medianMs;
+		wtf.sizeRatioVsSharp = wtf.bytes / native.bytes;
+	}
+	const smallest = byId.get("wtfgif-smallest");
+	smallest.sizeRatioVsFastest = smallest.bytes / byId.get("wtfgif").bytes;
+	smallest.timeRatioVsFastest = smallest.medianMs / byId.get("wtfgif").medianMs;
 	return rows;
 });
 

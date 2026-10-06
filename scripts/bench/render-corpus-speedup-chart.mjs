@@ -25,6 +25,7 @@ export function corpusChartRows(receipt) {
 			...result,
 			javascript: resultFor(javascript, result.fixtureId),
 			native: resultFor(native, result.fixtureId),
+			smallest: resultFor("wtfgif-smallest", result.fixtureId),
 			fixture: fixtures.get(result.fixtureId),
 		}));
 }
@@ -49,7 +50,7 @@ export function renderCorpusSpeedupChart(receipt) {
 	const chartLeft = 250;
 	const chartRight = 1000;
 	const chartWidth = chartRight - chartLeft;
-	const rowHeight = 92;
+	const rowHeight = 108;
 	const firstRowY = 170;
 	const height = firstRowY + rows.length * rowHeight + 80;
 	const javascriptSpeedups = rows.map((row) => row.speedupVsImageQOmggif);
@@ -65,10 +66,10 @@ export function renderCorpusSpeedupChart(receipt) {
 	elements.push(
 		`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="title desc">`,
 		'<title id="title">wtfgif speedup over a JavaScript and a native GIF encoder</title>',
-		`<desc id="desc">${escapeXml(`For ${rows.length} RGBA workloads, paired bars on a logarithmic axis show how many times faster wtfgif's first encode is than image-q plus omggif and than sharp. Labels give all three median encode times, wtfgif's output size relative to each, and each encoder's RGB quality.`)}</desc>`,
+		`<desc id="desc">${escapeXml(`For ${rows.length} RGBA workloads, paired bars on a logarithmic axis show how many times faster wtfgif's first encode in its fastest mode is than image-q plus omggif and than sharp. Labels give all three median encode times, wtfgif's output size relative to each, each encoder's RGB quality, and wtfgif's smallest mode time and size.`)}</desc>`,
 		'<rect width="100%" height="100%" fill="#ffffff"/>',
 		'<g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" fill="#172026">',
-		'<text x="40" y="46" font-size="25" font-weight="700">wtfgif first-encode speedup on 10 RGBA workloads</text>',
+		'<text x="40" y="46" font-size="25" font-weight="700">wtfgif fastest-mode speedup on 10 RGBA workloads</text>',
 		`<text x="40" y="74" font-size="14" fill="#51606a">${escapeXml(`Cold-cache first real encode after initialization · ${receipt.benchmark.processesPerImplementation} fresh Node processes per encoder · logarithmic axis, longer is faster`)}</text>`,
 		`<rect x="40" y="92" width="14" height="14" rx="2" fill="${JAVASCRIPT_COLOR}"/>`,
 		`<text x="62" y="104" font-size="13">${escapeXml(`vs ${javascriptLabel} (JavaScript): ${range(javascriptSpeedups)}`)}</text>`,
@@ -106,8 +107,9 @@ export function renderCorpusSpeedupChart(receipt) {
 			);
 		}
 		elements.push(
-			`<text x="${chartLeft}" y="${y + 58}" font-size="11" fill="#51606a">${escapeXml(`${formatMs(row.medianMs)} wtfgif · ${formatMs(row.javascript.medianMs)} ${javascriptLabel} · ${formatMs(row.native.medianMs)} sharp`)}</text>`,
-			`<text x="${chartLeft}" y="${y + 73}" font-size="11" fill="#687780">${escapeXml(`wtfgif size ${row.sizeRatioVsImageQOmggif.toFixed(2)}× ${javascriptLabel}, ${row.sizeRatioVsSharp.toFixed(2)}× sharp · RGB ${formatRgbQuality(row)} wtfgif, ${formatRgbQuality(row.javascript)} ${javascriptLabel}, ${formatRgbQuality(row.native)} sharp`)}</text>`,
+			`<text x="${chartLeft}" y="${y + 58}" font-size="11" fill="#51606a">${escapeXml(`${formatMs(row.medianMs)} wtfgif fastest · ${formatMs(row.javascript.medianMs)} ${javascriptLabel} · ${formatMs(row.native.medianMs)} sharp`)}</text>`,
+			`<text x="${chartLeft}" y="${y + 73}" font-size="11" fill="#687780">${escapeXml(`fastest size ${row.sizeRatioVsImageQOmggif.toFixed(2)}× ${javascriptLabel}, ${row.sizeRatioVsSharp.toFixed(2)}× sharp · RGB ${formatRgbQuality(row)} wtfgif, ${formatRgbQuality(row.javascript)} ${javascriptLabel}, ${formatRgbQuality(row.native)} sharp`)}</text>`,
+			`<text x="${chartLeft}" y="${y + 88}" font-size="11" fill="#0b6e55">${escapeXml(`smallest mode ${formatMs(row.smallest.medianMs)}, ${row.smallest.sizeRatioVsFastest.toFixed(2)}× fastest's size · ${row.smallest.sizeRatioVsImageQOmggif.toFixed(2)}× ${javascriptLabel}, ${row.smallest.sizeRatioVsSharp.toFixed(2)}× sharp · same pixels`)}</text>`,
 		);
 	}
 

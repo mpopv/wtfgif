@@ -25,7 +25,7 @@ if (!value) throw new Error(`Unknown corpus fixture: ${fixtureId}`);
 
 const implementations = [
 	"wtfgif",
-	"wtfgif-independent",
+	"wtfgif-smallest",
 	"image-q-rgbquant+omggif",
 	"gifenc",
 	"modern-gif",
