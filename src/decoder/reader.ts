@@ -37,8 +37,6 @@ type NormalizedPrepareFramesOptions = PrepareFramesOptions & {
 	dedupe: PreparedFrameDedupeMode;
 };
 
-const SEQUENTIAL_COMPOSITED_PIXEL_LIMIT = 2_500_000;
-
 /* ====== Reader (Decoder) ====== */
 // moved to types.ts
 
@@ -63,27 +61,10 @@ export class GifReader {
 	private readonly activePreparedFrames = new Set<PreparedGifFrames>();
 	private wasmCore: WasmCoreInstance | null = null;
 	private wasmMemory: WebAssembly.Memory | null = null;
-	// A legacy caller that walks every frame in order pays one Wasm boundary
-	// crossing per frame. Once that access pattern is proven, cache the full
-	// composited stream and serve the remaining frames as cheap typed-array
-	// copies. The bounded cache is opt-in by observed access order, so random
-	// single-frame reads keep their existing memory and latency behavior.
-	private sequentialCompositedFrames: Uint32Array | null = null;
-	private sequentialCompositedOrder: "rgba" | "bgra" | null = null;
-	private sequentialCompositedScratchMemory: WebAssembly.Memory | null = null;
-	private sequentialCompositedScratchPointer = 0;
-	private sequentialCompositedScratchLength = 0;
-	private sequentialCompositedScratchCore: WasmCoreInstance | null = null;
-	private sequentialInitialCanvasZero: boolean | null = null;
-	private sequentialInitialCanvasBuffer: ArrayBufferLike | null = null;
-	private sequentialInitialCanvasByteOffset = 0;
-	private sequentialInitialCanvasByteLength = 0;
-	private sequentialInitialCanvasOrder: "rgba" | "bgra" | null = null;
 	private lastDecodeTargetBuffer: ArrayBufferLike | null = null;
 	private lastDecodeTargetByteOffset = 0;
 	private lastDecodeTargetByteLength = 0;
 	private lastDecodeTarget32: Uint32Array | null = null;
-	private lastDecodedFrame = -1;
 	// Small legacy frames benefit from a compact one-table decoder that reads
 	// GIF subblocks in place.  These are lazy so the normal prepared/Wasm paths
 	// pay nothing for the tiny-frame specialization.
@@ -1018,153 +999,6 @@ export class GifReader {
 		this.globalPal32rgba = undefined;
 		this.globalPal32bgra = undefined;
 		this.globalPal32TransparentIndex = undefined;
-		this.clearSequentialCompositedCache();
-		this.sequentialInitialCanvasZero = null;
-		this.sequentialInitialCanvasBuffer = null;
-		this.sequentialInitialCanvasByteOffset = 0;
-		this.sequentialInitialCanvasByteLength = 0;
-		this.sequentialInitialCanvasOrder = null;
-		this.lastDecodedFrame = -1;
-	}
-
-	private clearSequentialCompositedCache(): void {
-		const cachedCore = this.sequentialCompositedScratchCore;
-		this.sequentialCompositedFrames = null;
-		this.sequentialCompositedOrder = null;
-		this.sequentialCompositedScratchMemory = null;
-		this.sequentialCompositedScratchPointer = 0;
-		this.sequentialCompositedScratchLength = 0;
-		this.sequentialCompositedScratchCore = null;
-		if (cachedCore) {
-			if (cachedCore === this.wasmCore) {
-				this.wasmCore = null;
-				this.wasmMemory = null;
-			}
-			cachedCore.free();
-		}
-	}
-
-	private tryDecodeSequentialCompositedFrame(
-		frameNum: number,
-		out32: Uint32Array,
-		order: "rgba" | "bgra",
-	): boolean {
-		const canvasPixels = this.width_ * this.height_;
-		const cached = this.sequentialCompositedFrames;
-		if (cached && this.sequentialCompositedOrder === order) {
-			const scratchMemory = this.sequentialCompositedScratchMemory;
-			const scratchPointer = this.sequentialCompositedScratchPointer;
-			const scratchLength = this.sequentialCompositedScratchLength;
-			if (
-				!scratchMemory ||
-				scratchPointer <= 0 ||
-				scratchPointer + scratchLength * 4 > scratchMemory.buffer.byteLength
-			) {
-				this.clearSequentialCompositedCache();
-				return false;
-			}
-			const current =
-				cached.buffer === scratchMemory.buffer
-					? cached
-					: new Uint32Array(
-							scratchMemory.buffer,
-							scratchPointer,
-							scratchLength,
-						);
-			this.sequentialCompositedFrames = current;
-			const start = frameNum * canvasPixels;
-			out32.set(current.subarray(start, start + canvasPixels), 0);
-			if (frameNum === this.frames.length - 1) {
-				// The ordinary sequential caller has consumed the final frame. Drop
-				// the retained Wasm owner now so short-lived readers do not accumulate
-				// one live Rust allocation per benchmark/job invocation.
-				this.clearSequentialCompositedCache();
-			}
-			this.lastDecodedFrame = frameNum;
-			return true;
-		}
-		if (cached) {
-			this.clearSequentialCompositedCache();
-		}
-		const totalPixels = canvasPixels * this.frames.length;
-		const cacheCandidate =
-			this.frames.length >= 8 &&
-			canvasPixels >= 512 &&
-			Number.isSafeInteger(totalPixels) &&
-			totalPixels <= SEQUENTIAL_COMPOSITED_PIXEL_LIMIT;
-		if (frameNum === 0 && this.lastDecodedFrame === -1 && cacheCandidate) {
-			let zero = true;
-			for (let index = 0; index < canvasPixels; index++) {
-				if (out32[index] !== 0) {
-					zero = false;
-					break;
-				}
-			}
-			this.sequentialInitialCanvasZero = zero;
-			if (zero) {
-				this.sequentialInitialCanvasBuffer = out32.buffer;
-				this.sequentialInitialCanvasByteOffset = out32.byteOffset;
-				this.sequentialInitialCanvasByteLength = out32.byteLength;
-				this.sequentialInitialCanvasOrder = order;
-			}
-		}
-
-		const sameInitialCanvas =
-			this.sequentialInitialCanvasZero === true &&
-			this.sequentialInitialCanvasBuffer === out32.buffer &&
-			this.sequentialInitialCanvasByteOffset === out32.byteOffset &&
-			this.sequentialInitialCanvasByteLength === out32.byteLength &&
-			this.sequentialInitialCanvasOrder === order;
-		// Do not turn an isolated frame read into a whole-animation decode. The
-		// cache is deliberately armed only by the first sequential pair into the
-		// same caller-owned canvas, and is bounded to keep a legacy reader from
-		// unexpectedly retaining a large animation in memory (2.5M output pixels
-		// at most).
-		if (
-			frameNum !== 1 ||
-			this.lastDecodedFrame !== 0 ||
-			!cacheCandidate ||
-			!sameInitialCanvas
-		) {
-			return false;
-		}
-
-		const wasmModule = getWasmCoreModule();
-		if (!wasmModule) {
-			return false;
-		}
-		this.wasmCore ??= new wasmModule.WtfGifCore(this.buf);
-		this.wasmMemory ??= wasmModule.wasm_memory();
-		const requestedFrames = new Uint8Array(this.frames.length).fill(1);
-		const prepareScratch =
-			order === "rgba"
-				? this.wasmCore.prepare_composited_rgba_scratch
-				: this.wasmCore.prepare_composited_bgra_scratch;
-		const preparedLength = prepareScratch.call(this.wasmCore, requestedFrames);
-		const preparedPointer = this.wasmCore.composited_scratch_ptr();
-		if (
-			preparedLength !== totalPixels ||
-			preparedPointer <= 0 ||
-			(preparedPointer & 3) !== 0 ||
-			preparedPointer + preparedLength * 4 > this.wasmMemory.buffer.byteLength
-		) {
-			throw new Error("WebAssembly composited scratch buffer is invalid.");
-		}
-		const cachedFrames = new Uint32Array(
-			this.wasmMemory.buffer,
-			preparedPointer,
-			totalPixels,
-		);
-		this.sequentialCompositedFrames = cachedFrames;
-		this.sequentialCompositedOrder = order;
-		this.sequentialCompositedScratchMemory = this.wasmMemory;
-		this.sequentialCompositedScratchPointer = preparedPointer;
-		this.sequentialCompositedScratchLength = totalPixels;
-		this.sequentialCompositedScratchCore = this.wasmCore;
-		const start = frameNum * canvasPixels;
-		out32.set(cachedFrames.subarray(start, start + canvasPixels), 0);
-		this.lastDecodedFrame = frameNum;
-		return true;
 	}
 
 	/* Fused LZW decode → Uint32 blit with precomputed pal32, transparency, interlace. */
@@ -1224,13 +1058,6 @@ export class GifReader {
 
 		const out32 = this.getDecodeTarget32(pixels);
 
-		if (
-			this.frames.length >= 8 &&
-			this.tryDecodeSequentialCompositedFrame(frameNum, out32, order)
-		) {
-			return;
-		}
-
 		const frame = this.frames[frameNum]!;
 		const framePixels = frame.width * frame.height;
 		const canvasPixels = this.width_ * this.height_;
@@ -1247,11 +1074,9 @@ export class GifReader {
 				framePixels * 2 >= canvasPixels &&
 				this.tryDecodeWasmFrame32(frameNum, pixels, order)
 			) {
-				this.lastDecodedFrame = frameNum;
 				return;
 			}
 			this.lzwDecodeAndBlitSmallFrame(frame, out32, order);
-			this.lastDecodedFrame = frameNum;
 			return;
 		}
 		// The Rust decoder is already faster for medium partial frames; the old
@@ -1296,7 +1121,6 @@ export class GifReader {
 							canvasPixels,
 						),
 					);
-					this.lastDecodedFrame = frameNum;
 					return;
 				}
 				const rectDecode =
@@ -1353,7 +1177,6 @@ export class GifReader {
 							}
 						}
 					}
-					this.lastDecodedFrame = frameNum;
 					return;
 				}
 				const decodeAndBlit =
@@ -1367,7 +1190,6 @@ export class GifReader {
 						? pixels
 						: pixels.subarray(0, canvasPixels * 4),
 				);
-				this.lastDecodedFrame = frameNum;
 				return;
 			}
 		}
@@ -1375,7 +1197,6 @@ export class GifReader {
 		const pal32 = this.getFramePalette(frame, order);
 		const trans = frame.transparent_index ?? 256;
 		this.lzwDecodeToPixels(out32, this.width_, frame, pal32, trans);
-		this.lastDecodedFrame = frameNum;
 	}
 
 	/**
