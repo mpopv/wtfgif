@@ -163,8 +163,6 @@ per encoder; raw data in [`benchmarks/encoder-race.json`](benchmarks/encoder-rac
 - **One palette per animation.** wtfgif builds a single adaptive palette of up
   to 256 colors from all frames, without dithering. Pixels map to their
   nearest palette color.
-- **One-bit transparency.** GIF pixels are opaque or transparent.
-  `alphaThreshold` (128 by default) chooses the cutoff.
 - **Startup work.** `initializeWasmGlobally()` loads WebAssembly and prepares
   the encoder. The benchmarks keep this one-time step outside the timed encode,
   so do it at startup, not right before your first GIF.
